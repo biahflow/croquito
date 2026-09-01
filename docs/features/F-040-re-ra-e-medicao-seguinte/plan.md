@@ -27,7 +27,7 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 | T3 | [Declarar a RE-RA e abrir a medição seguinte na API](tasks/T3-declaracao-e-abertura-na-api.md) | **Entregue** |
 | T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | **Entregue** |
 | T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | **Entregue com desvio** |
-| T6 | [A porta da medição seguinte: herança e prévia antes de gravar](tasks/T6-a-porta-da-medicao-seguinte.md) | **Entregue com desvio** |
+| T6 | [A porta da medição seguinte: herança e prévia antes de gravar](tasks/T6-a-porta-da-medicao-seguinte.md) | **Entregue** (o desvio da prévia no cliente foi fechado pela T7) |
 | T7 | [A prévia é do servidor, não do cliente](tasks/T7-previa-no-servidor.md) | **Entregue** |
 
 > **T5**: a declaração da RE-RA na abertura a partir do orçamento assinado e a memória
@@ -81,6 +81,8 @@ baixo e some da `main` em silêncio.
 - Merge do PR (feito: #109, #112 e #113) e o aceite de código que fecha a
   [issue #100](https://github.com/biahflow/croquito/issues/100): **ocorrido em 2026-08-28** —
   antes de a captura expor os três desvios do pacote, que a T6 fecha.
-- Merge da T6/T7 e **recaptura** dos estados novos: pendentes.
+- **Recaptura** dos seis estados: **feita em 2026-09-01**, sobre a `main` de `482fa8e`, com a
+  T6 e a T7 no código ([evidence.md](evidence.md)).
+- Merge do PR da T6/T7: pendente, e é ato humano.
 - O aceite numa medição real com contrato re-ratificado permanece como dívida escrita na
   [feature](feature.md).

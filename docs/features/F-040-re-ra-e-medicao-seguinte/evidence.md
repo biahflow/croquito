@@ -1,11 +1,11 @@
 # F-040 — Evidência
 
 Feature: [RE-RA declarada e a medição seguinte](feature.md)  
-Estado: `IN_PROGRESS` — a T6 fechou três desvios do pacote de design que a captura expôs e a
-T7 devolveu a conta da prévia ao servidor; pende a **recaptura** dos estados novos
-(`BROWSER_REQUIRED`)  
+Estado: `READY_FOR_HUMAN_REVIEW` — a T6 fechou três desvios do pacote de design que a captura
+expôs, a T7 devolveu a conta da prévia ao servidor, e os **seis estados foram recapturados**
+contra o stack local em 2026-09-01 (`BROWSER_REQUIRED` cumprido)  
 Data: 2026-08-27 (evidência de navegador em 2026-08-28; correção do registro, T6 e T7 em
-2026-08-28)
+2026-08-28; rebase na `main` e recaptura em 2026-09-01)
 
 > **Correção do registro.** Este documento afirmou, em 2026-08-28, que a feature estava
 > completa e que "nenhum critério de aceite" continuava em aberto. Era falso. A própria captura
@@ -21,7 +21,7 @@ Data: 2026-08-27 (evidência de navegador em 2026-08-28; correção do registro,
 | --- | --- |
 | `ARCHITECTURE_DECISION_REQUIRED` | ✅ [ADR-0056](../../adr/0056-re-ra-declarada-e-o-consolidado-da-medicao-seguinte.md) **aceito por ato humano em 2026-08-27** (Daniel Campos) |
 | `DESIGN_APPROVAL_REQUIRED` | ✅ **Aprovado por ato humano em 2026-08-27** (Daniel Campos), revisão 1 ([mock/README.md](mock/README.md)) |
-| `browser-runtime-validation` (`BROWSER_REQUIRED`) | ⚠️ **parcial** — quatro estados capturados em 2026-08-28 contra o stack local, mas a **recaptura dos estados que a T6 acrescentou** (a porta, a herança e a prévia) está pendente |
+| `browser-runtime-validation` (`BROWSER_REQUIRED`) | ✅ **cumprido** — os seis estados recapturados em 2026-09-01 contra o stack local, já com a T6 e a T7 no código e sobre a `main` de 482fa8e (F-046 e F-047 integradas) |
 
 Antes dos dois gates, três **decisões de domínio** foram tomadas por ato humano na abertura:
 a RE-RA aprovada (não o pedido com estado), o vigente derivado como o preço, e a abertura da
@@ -77,7 +77,7 @@ medição seguinte no escopo.
 | 8 | Medir acima do vigente novo recusa `BALANCE_EXCEEDED`; abaixo, exporta | `models.py` sobre o saldo derivado; suíte de export |
 | 9 | Nenhum digest assinado se move | `Estimate` inalterado; consolidado por parâmetro; snapshot OpenAPI aditivo |
 | 10 | `make check` e `make test` verdes | `make check` = 0 (ruff, mypy strict, check_docs, drift, build web; `infra-check` exige terraform ausente no ambiente); `make test` = 0 |
-| 11 | Evidência renderizada da tela real (`BROWSER_REQUIRED`) | ⚠️ quatro estados capturados da tela real contra o stack local em 2026-08-28 — ver abaixo; a **recaptura** dos estados da T6 está pendente |
+| 11 | Evidência renderizada da tela real (`BROWSER_REQUIRED`) | ✅ seis estados capturados da tela real contra o stack local em 2026-09-01 — ver abaixo |
 | 12 | A medição seguinte passa pela abertura, com herança e prévia antes de gravar (T6) | `previa.test.ts`, `MedicaoApp.test.tsx` (`HerancaDaRodadaAnterior`, `PreviaDaReRa`), `requests.test.ts` |
 | 13 | A prévia é calculada pelo **servidor**, pelo mesmo caminho da criação (T7) | `test_valuation_round_preview.py::test_a_previa_devolve_os_mesmos_numeros_da_rodada_criada` (mesmo corpo às duas rotas) e `::test_a_previa_nao_grava_nada`; `grep -rn "BigInt\|reduce(" apps/web/src/medicao/previa.ts` não devolve aritmética |
 
@@ -85,23 +85,30 @@ medição seguinte no escopo.
 
 Classificação: `BROWSER_REQUIRED` (a F-040 é `INTERFACE_CHANGE`).
 
-Capturada em **2026-08-28** contra o stack local (`make dev-services` + `make db-init` +
-`make dev`), com sessão OIDC real no Keycloak local (`orcamentista.local`, tenant
-`tenant-local`) e navegação determinística em Chromium — nenhuma tela é mock, e nenhum passo
-da captura dependeu de modelo. O dado é **sintético**: os códigos, quantidades e preços são os
-do pacote de design aprovado (`PJ14100500(/)` a 62,40, `PJ14150203(A)` a 148,20, 783,86 m²
-contratados em cada; item novo `PJ25400100(B)`), semeados como orçamento assinado sintético e
-como medição do período 1 aprovada. Nenhum documento de cliente entrou no ambiente.
+Recapturada em **2026-09-01** contra o stack local (`make dev-services` + `make db-init` +
+API e web locais), com sessão OIDC real no Keycloak local (`orcamentista.local`, tenant
+`tenant-local`) e navegação determinística em Chromium via Playwright (1440 px de largura,
+`deviceScaleFactor` 2) — nenhuma tela é mock, e nenhum passo da captura dependeu de modelo. O
+dado é **sintético**: os códigos, quantidades e preços são os do pacote de design aprovado
+(`PJ14100500(/)` a 62,40, `PJ14150203(A)` a 148,20, 783,86 m² contratados em cada; item novo
+`PJ25400100(B)`), semeados como orçamento assinado sintético e como medição do período 1
+aprovada, com 300,00 e 120,00 medidos. Nenhum documento de cliente entrou no ambiente.
+
+A captura anterior, de 2026-08-28, mostrava uma tela que não existe mais: ela é anterior à T6
+(a porta, a herança e a prévia) e à T7 (a prévia do servidor). Estas seis substituem aquelas
+quatro.
 
 | Arquivo | Estado | O que a imagem prova |
 | --- | --- | --- |
-| [`evidencia/01-declarar-re-ra.png`](evidencia/01-declarar-re-ra.png) | A declaração da RE-RA na abertura | A abertura a partir do orçamento assinado aceita a declaração com nome curto (`1ª RE-RA`), citação da publicação (`Processo 123/2026 · DO de 14/08/2026`) e o efeito **com sinal** código a código (`+120.00`, `-83.86`, `+45.00`), com o terceiro marcado como **item novo** — e não existe campo onde escrever a quantidade vigente. |
+| [`evidencia/01-declarar-re-ra.png`](evidencia/01-declarar-re-ra.png) | A declaração da RE-RA na abertura pelo orçamento assinado | A abertura aceita a declaração com nome curto (`1ª RE-RA`), citação da publicação (`Processo 123/2026 · DO de 14/08/2026`) e o efeito **com sinal** código a código (`+120.00`, `-83.86`, `+45.00`), com o terceiro marcado como **item novo** — e não existe campo onde escrever a quantidade vigente. Desde a T7 a prévia acompanha também esta porta. |
 | [`evidencia/02-memoria-contratado-vigente.png`](evidencia/02-memoria-contratado-vigente.png) | A memória: contratado → vigente → saldo | A rodada nasceu já re-ratificada, com o selo **re-ratificada** por escrito, a declaração carimbada com autor e citação, e a conta visível: 783,86 → **903,86**, 783,86 → **700,00**, e o item novo 0,00 → **45,00** materializado do catálogo contratual. O contratado não se moveu. |
-| [`evidencia/03-porta-medicao-seguinte.png`](evidencia/03-porta-medicao-seguinte.png) | A porta da medição seguinte | A rodada do período 1 **aprovada** aparece na lista com o selo `aprovada` e com o botão **“Abrir a medição 2”** ao lado de “Abrir rodada” — o período é calculado da rodada anterior, não digitado. Rodada não aprovada não recebe o botão. |
-| [`evidencia/04-sem-re-ra.png`](evidencia/04-sem-re-ra.png) | O controle: rodada sem RE-RA | A mesma abertura, sem declaração nenhuma, no mesmo lugar da tela: o contratado vem do orçamento assinado (2 códigos, sem o item novo) e **nenhum segundo número de quantidade aparece** — sem RE-RA, o vigente É o contratado, e a tela não fala de re-ratificação. |
+| [`evidencia/03-porta-medicao-seguinte.png`](evidencia/03-porta-medicao-seguinte.png) | A porta da medição seguinte | A rodada do período 1 **aprovada** aparece na lista com o selo `aprovada` e com o botão **“Abrir a medição 2”** ao lado de “Abrir rodada”. Desde a T6 o botão **não cria rodada**: ele leva à abertura com a origem, o período e a rodada anterior já resolvidos. |
+| [`evidencia/04-sem-re-ra.png`](evidencia/04-sem-re-ra.png) | O controle: abertura sem RE-RA | A mesma abertura, sem declaração nenhuma, no mesmo lugar da tela: o contratado vem do orçamento assinado (2 códigos, sem o item novo) e **nenhum segundo número de quantidade aparece** — sem RE-RA, o vigente É o contratado, e a tela não fala de re-ratificação. |
+| [`evidencia/05-heranca-da-rodada-anterior.png`](evidencia/05-heranca-da-rodada-anterior.png) | **T6, decisão 4** — a herança antes de declarar | Escolhida a medição seguinte, a tela mostra o que vem da rodada anterior código a código: contratado, vigente, período 1, acumulado e saldo (783,86 · 783,86 · 300,00 · 300,00 · 483,86), o total medido no período (`R$ 36.504,00`, que é o do boletim aprovado) e o período **2 calculado, não digitado**. Sem RE-RA, contratado e vigente repetem o mesmo número de propósito. |
+| [`evidencia/06-previa-da-re-ra.png`](evidencia/06-previa-da-re-ra.png) | **T6 decisão 6 + T7** — a prévia do servidor, antes de gravar | Declarada a RE-RA na medição seguinte, a projeção aparece **antes do `POST` que grava**: contratado → vigente hoje → RE-RA → vigente novo → acumulado → saldo novo, com 783,86 `+120,00` → 903,86 (saldo 603,86), 783,86 `-83,86` → 700,00 (saldo 580,00) e o item novo com descrição, unidade e preço **materializados do catálogo contratual**. O texto declara na tela quem faz a conta: “Quem faz essa conta é o servidor, pelo mesmo caminho que gravará a rodada; aqui nada foi gravado ainda.” |
 
-As imagens são frozen evidence da revisão sob revisão: elas mostram a `main` com os PRs #109,
-#112 e #113 já integrados.
+As imagens são frozen evidence da revisão sob revisão: elas mostram a `main` em `482fa8e`
+— com a F-046 e a F-047 já integradas — mais a T6 e a T7 desta feature.
 
 ## Os três desvios do pacote aprovado, e como a T6 os fecha
 
@@ -134,9 +141,9 @@ na memória, é mudança pequena e o pacote vira revisão 2.
    API grava em `declared_by` (identidade do servidor, nunca do corpo). Na imagem 02 isso
    aparece como o UUID do usuário sintético local. Copy e apresentação da autoria não estavam
    cobertas pela aprovação do pacote.
-2. **A evidência de navegador dos estados novos não foi recapturada.** As quatro imagens acima
-   são da revisão anterior e não mostram a porta nova, a herança nem a prévia. A recaptura é
-   tarefa própria e é condição para a feature voltar a `READY_FOR_HUMAN_REVIEW`.
+2. ~~A evidência de navegador dos estados novos não foi recapturada.~~ **Fechado em
+   2026-09-01**: os seis estados acima foram capturados com a T6 e a T7 no código, sobre a
+   `main` que já traz a F-046 e a F-047.
 
 ### Resolvidos pela T7
 
@@ -150,6 +157,25 @@ a lacuna irmã que a T6 tinha listado.
 | Duas identidades do domínio rederivadas no navegador: o acumulado (`vigente − saldo`) e o medido do período (soma das linhas de `GET /bulletin`) | Nenhuma. `accumulated_quantity` e `measured_quantity` vêm por código na resposta da prévia, produzidos pelo mesmo caminho que grava o consolidado |
 | Os números da prévia protegidos por um par de testes que fixava **o caso sintético** dos dois lados | Protegidos pela **estrutura**: prévia e criação chamam `_contracted_valuation_origin` e `_apply_declared_acts`, e um teste manda o mesmo corpo às duas rotas |
 | A prévia não existia na abertura a partir do **orçamento assinado**, porque o cliente não recebia o contratado código a código nessa porta | Existe nas duas portas contratadas: quem projeta é o servidor, e ele conhece o contratado do orçamento assinado tão bem quanto o da rodada anterior. O limite que motivava a lacuna deixou de existir |
+
+## O rebase de 2026-09-01, e o que ele exercitou
+
+A branch estava empilhada sobre um ponto anterior a `#124`, `#125`, `#127` e `#128`. O rebase
+na `main` conflitou apenas na jornada de medição do cliente — `MedicaoApp.tsx`,
+`MedicaoApp.test.tsx`, `api.ts`, `requests.ts` e os testes dos dois —, e todos os conflitos
+eram **união**: cada lado acrescentou imports e blocos de teste ao mesmo arquivo. Nenhum teste
+dos dois lados se perdeu (58 + 44 em `MedicaoApp.test.tsx`, 37 + 31 em `requests.test.ts`,
+34 + 22 em `api.test.ts`, todos presentes no resultado). Não havia migração na F-040, então não
+houve o que relinearizar.
+
+A interação com a F-046 foi verificada e é sã por construção: a praça de várias folhas funde as
+folhas num único `WorksiteBulletin` antes de entrar em `valuation.bulletins`, que é exatamente
+onde `_origin_from_previous_round` soma o medido do período. A medição seguinte de uma praça de
+N folhas herda o consolidado inteiro, não uma folha.
+
+Portões sobre o resultado do rebase: `make check` = 0; `make test` = 3223 passados, 17 pulados;
+web 1712 passados em 64 arquivos; field 261 em 24. As migrações `0001 → 0028` aplicaram do zero
+em PostgreSQL durante o `db-init` da captura, o que exercita a linearidade da cadeia.
 
 ## Riscos remanescentes
 
