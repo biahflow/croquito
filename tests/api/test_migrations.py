@@ -442,6 +442,12 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             # duas vezes o mesmo ato. Índices por `tenant_id` e por `job_id`, os dois caminhos
             # de leitura reais.
             "element_proposal_rejections",
+            # `0029` (F-043): o gabarito de ordem fixa da prefeitura, publicado pela
+            # plataforma. `tenant_id` anulável e hoje sempre nulo, como em `site_setup_kits`:
+            # o gabarito vale para todos, e a coluna existe porque o gabarito de uma segunda
+            # prefeitura é extensão previsível. Índice só por `tenant_id`, o único caminho de
+            # leitura — a listagem é do acervo inteiro, de poucas linhas.
+            "estimate_templates",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

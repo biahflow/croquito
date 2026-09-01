@@ -3812,6 +3812,205 @@
         "title": "EstimateSiteSetupKitParameter",
         "type": "object"
       },
+      "EstimateTemplateListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateTemplateResponse"
+            },
+            "title": "Templates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "templates"
+        ],
+        "title": "EstimateTemplateListResponse",
+        "type": "object"
+      },
+      "EstimateTemplateOption": {
+        "additionalProperties": false,
+        "description": "Um gabarito como a ESCOLHA da rodada o oferece (F-043 T3).\n\nMais pobre que `EstimateTemplateResponse` pelo mesmo motivo de\n`EstimateSiteSetupKitOption`: `created_by` de um gabarito de plataforma é a identidade de\num operador de outro tenant, e quem escolhe um gabarito não tem por que saber quem o\npublicou. `withdrawn_at` também não sai — esta lista só traz o que está em circulação.\n\n`priced_row_count` existe para a tela poder dizer o tamanho do gabarito ANTES de o\norçamento ser confrontado com ele.",
+        "properties": {
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "estimate_template_id": {
+            "format": "uuid",
+            "title": "Estimate Template Id",
+            "type": "string"
+          },
+          "memory_sheet_name": {
+            "title": "Memory Sheet Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "platform",
+              "tenant"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "priced_row_count": {
+            "title": "Priced Row Count",
+            "type": "integer"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sheet_name": {
+            "title": "Sheet Name",
+            "type": "string"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          },
+          "template_version": {
+            "title": "Template Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "estimate_template_id",
+          "name",
+          "template_version",
+          "origin",
+          "source_label",
+          "sheet_name",
+          "memory_sheet_name",
+          "row_count",
+          "priced_row_count",
+          "document_sha256"
+        ],
+        "title": "EstimateTemplateOption",
+        "type": "object"
+      },
+      "EstimateTemplateOptionListResponse": {
+        "additionalProperties": false,
+        "description": "Os gabaritos que ESTA rodada pode usar: os de plataforma em circulação e os do tenant.",
+        "properties": {
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateTemplateOption"
+            },
+            "title": "Templates",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "templates"
+        ],
+        "title": "EstimateTemplateOptionListResponse",
+        "type": "object"
+      },
+      "EstimateTemplateResponse": {
+        "additionalProperties": false,
+        "description": "Um gabarito publicado como a administração o lê.\n\nAs linhas NÃO saem daqui: são 433 no gabarito real, e nem a listagem nem a confirmação de\npublicação têm o que fazer com elas. O que sai é o que distingue duas linhas e o que\ndenuncia um gabarito truncado — `row_count`.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "estimate_template_id": {
+            "format": "uuid",
+            "title": "Estimate Template Id",
+            "type": "string"
+          },
+          "memory_sheet_name": {
+            "title": "Memory Sheet Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "platform",
+              "tenant"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sheet_name": {
+            "title": "Sheet Name",
+            "type": "string"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          },
+          "template_version": {
+            "title": "Template Version",
+            "type": "string"
+          },
+          "withdrawn_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawn At"
+          }
+        },
+        "required": [
+          "estimate_template_id",
+          "name",
+          "template_version",
+          "origin",
+          "source_label",
+          "sheet_name",
+          "memory_sheet_name",
+          "row_count",
+          "document_sha256",
+          "available",
+          "created_by",
+          "created_at"
+        ],
+        "title": "EstimateTemplateResponse",
+        "type": "object"
+      },
       "EvidenceRegion": {
         "additionalProperties": false,
         "properties": {
@@ -3963,12 +4162,24 @@
       },
       "ExportEstimateRequest": {
         "additionalProperties": false,
-        "description": "Despacho da planilha do orçamento: espelho de `ApproveEstimateRequest`.\n\nNão há nada a escolher no despacho — nem formato, nem layout, nem \"exportar assim\nmesmo\". O orçamento publicado é o da cabeça da rodada, o layout é o da prefeitura\n(`default_template()`) e a aprovação válida é precondição, não opção.",
+        "description": "Despacho da planilha do orçamento: espelho de `ApproveEstimateRequest`.\n\nContinua sem nada a escolher sobre o CONTEÚDO — nem formato, nem \"exportar assim mesmo\":\no orçamento publicado é o da cabeça da rodada, e a aprovação válida é precondição, não\nopção.\n\nO que a F-043 T3 acrescenta é a escolha do **gabarito**, e ela é de outra natureza: o\ngabarito não muda o que o orçamento diz, muda a ORDEM e o conjunto de linhas em que ele é\nimpresso para a prefeitura. Sem `estimate_template_id` o despacho é o de sempre\n(`default_template()`, a ordem do próprio orçamento); com ele, a planilha percorre o\ngabarito declarado — todas as linhas, inclusive as de quantidade zero.\n\nÉ opcional de propósito: a rodada que não entrega àquela prefeitura não tem gabarito a\ncitar, e exigir um faria a jornada de hoje parar de funcionar.",
         "properties": {
           "base_version": {
             "minimum": 1.0,
             "title": "Base Version",
             "type": "integer"
+          },
+          "estimate_template_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate Template Id"
           }
         },
         "required": [
@@ -7001,6 +7212,36 @@
           "latency_ms"
         ],
         "title": "ProviderLineage",
+        "type": "object"
+      },
+      "PublishEstimateTemplateRequest": {
+        "additionalProperties": false,
+        "description": "Publica no acervo da PLATAFORMA um gabarito de ordem fixa da prefeitura (F-043 T2).\n\nTrês campos, e a assimetria entre eles é deliberada. `name` e `source_label` são rótulos\nADMINISTRATIVOS — quem publica escolhe como o gabarito aparece na lista, e o documento não\nos carrega. Já a revisão **não** entra por aqui: ela é lida de dentro do documento\n(`EstimateTemplateLayout.revision_label`), porque é ela que a planilha gerada IMPRIME. Um\nrótulo de revisão digitado ao lado do conteúdo poderia discordar dele, e o arquivo passaria\na dizer uma revisão e descrever outra — que é exatamente o silêncio que o `revision_label`\nexiste para desfazer.\n\n`document` chega como objeto CRU, e não como `EstimateTemplateLayout` tipado, pelo mesmo\nmotivo de `PublishSiteSetupKitRequest.document`: um modelo do domínio embutido faria o\nPydantic recusar durante o parsing do corpo, e as invariantes do gabarito — código fora do\nformato de catálogo, código repetido, item repetido — sairiam como erro de esquema do\nFastAPI em vez do `application/problem+json` com o código estável do domínio.",
+        "properties": {
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Name",
+            "type": "string"
+          },
+          "source_label": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Source Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source_label",
+          "document"
+        ],
+        "title": "PublishEstimateTemplateRequest",
         "type": "object"
       },
       "PublishReferenceCatalogIndexRequest": {
@@ -12283,6 +12524,55 @@
         ]
       }
     },
+    "/v1/estimate-rounds/{round_id}/estimate-templates": {
+      "get": {
+        "description": "Os gabaritos que ESTA rodada pode usar ao publicar a planilha (F-043 T3).\n\nExiste separada de `GET /v1/platform/estimate-templates` porque quem escolhe é a\norçamentista, e ela não é `platform_operator` — a rota de plataforma administra o\nacervo, esta o oferece. Sem ela, o gabarito seria publicável e inalcançável.\n\nDois filtros, e só dois, no molde de `list_estimate_site_setup_kits`: **origem\nvisível**, que é `visible_templates` — plataforma mais o gabarito deste tenant, nunca\no de outro —, e **em circulação**, porque o que foi retirado deixa de ser oferecido sem\nsumir do registro nem quebrar a planilha que já o citou.\n\nA rodada continua sendo do tenant — rodada alheia é `404`, e o papel é exigido antes de\nqualquer lookup.",
+        "operationId": "list_estimate_round_templates_v1_estimate_rounds__round_id__estimate_templates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateOptionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Estimate Round Templates",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
     "/v1/estimate-rounds/{round_id}/estimate/approve": {
       "post": {
         "description": "Assina nominalmente o orçamento da cabeça, amarrando o ato ao digest do conteúdo.\n\nEste é o ato que o portão de despacho cobra. Ele não recalcula, não confere preço e\nnão decide nada sobre o orçamento: registra QUEM assumiu o orçamento como está,\nQUANDO e SOBRE QUAL conteúdo — e é essa terceira parte que impede a assinatura de\nsobreviver a uma mudança do que foi assinado.\n\nO papel é `aprovador`, e não `orcamentista` (ADR-0046, decisão 5): na cadeia real\nquem assina o orçamento não é quem o montou. A recusa de **auto-aprovação** fecha o\nburaco que sobraria: acumular os dois papéis no mesmo token não contorna, porque a\ncomparação é de IDENTIDADE contra quem montou (`estimate_built_by`), não de papel.\nSem ela o papel novo seria cerimônia.\n\nA identidade é do JWT e só dele (critério 4 da F-035). O corpo carrega apenas\n`base_version`, e `ApproveEstimateRequest` documenta por que não existe campo de nome\nnem de observação. A revisão nova AVANÇA `version`, porque assinar é ato humano\ndeliberado e a próxima decisão do orçamentista tem de partir do que ele viu assinado.\n\nOrçamento ainda não montado é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem;\norçamento que não revalida é `422`, pela mesma razão do `GET`: ninguém assina um\nartefato que o domínio recusa.\n\nAssinar de novo é o caminho normal da aprovação caduca do desenho aprovado, e não um\nerro: o ato é idempotente por conteúdo (mesmo aprovador, mesmo digest e mesmo\ninstante produzem o mesmo `decision_id`), mas cada chamada é uma revisão nova da\ncadeia append-only — o histórico guarda as duas assinaturas, que é o que um registro\nde aprovação existe para fazer.",
@@ -16180,6 +16470,161 @@
         "summary": "Get Metrics Summary",
         "tags": [
           "metrics"
+        ]
+      }
+    },
+    "/v1/platform/estimate-templates": {
+      "get": {
+        "description": "O acervo DE PLATAFORMA inteiro, inclusive o que está fora de circulação.\n\n`tenant_id IS NULL` é filtro, não otimização, pela mesma razão de\n`list_site_setup_kits`: gabarito que um tenant autorou é dado dele, e listá-lo aqui\ndaria a um operador de plataforma a lista dos artefatos de todos os clientes.\n\nLeitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de plataforma.\nO que foi retirado continua na lista, com `withdrawn_at` carimbado.\n\nOrdenação em Python, como em `list_reference_catalogs`: SQLite (testes) e PostgreSQL\n(hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.",
+        "operationId": "list_estimate_templates_v1_platform_estimate_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Estimate Templates",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "description": "Publica o gabarito de ordem fixa da prefeitura para TODOS os tenants (F-043 T2).\n\nAté esta rota existir, o gabarito só existia como arquivo JSON lido por caminho no CLI\ndo worker: a API não conhecia `WorkbookTemplate`, e a jornada web não tinha como\noferecê-lo. O dono decidiu em 2026-08-28 que ele vive como artefato de plataforma, no\nmolde do acervo de catálogos da F-037.\n\nO que entra é um `EstimateTemplateLayout` cru, validado pelo domínio ANTES de virar\nlinha: código fora do formato de catálogo, código repetido entre as linhas e item\nrepetido recusam com `422 DOMAIN_VALIDATION_FAILED` e o código estável do domínio,\nnunca como erro de esquema do FastAPI.\n\nDuas recusas, as duas ANTES de qualquer escrita:\n\n- **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e\n  não descobre o que existe no acervo;\n- **mesma `(name, revision_label)` já publicada**:\n  `409 ESTIMATE_TEMPLATE_ALREADY_PUBLISHED`. Gabarito é imutável — a planilha gerada\n  imprime a revisão que a produziu, e reescrever o conteúdo por baixo faria o arquivo\n  dizer uma revisão e descrever outra.\n\nA recusa de republicação é conferida AQUI, e não deixada para\n`uq_estimate_template_identity`: o gabarito de plataforma tem `tenant_id` nulo, e\n`NULL` não colide com `NULL` nem em PostgreSQL nem em SQLite.\n\nNão há upload nem objeto no store: o documento é o que a própria API validou, sem bytes\nde arquivo de terceiro a preservar, e ele é lido inteiro toda vez que uma planilha sai.",
+        "operationId": "publish_estimate_template_v1_platform_estimate_templates_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishEstimateTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Estimate Template",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/estimate-templates/{estimate_template_id}/withdraw": {
+      "post": {
+        "description": "Tira o gabarito de circulação: ele deixa de ser oferecido e **não** é apagado.\n\nApagar quebraria a leitura de toda planilha já publicada com ele — o arquivo imprime a\nrevisão do gabarito, e o registro é o que permite dizer de onde ela veio. Por isso o\nato carimba `withdrawn_at`, e nada mais.\n\nSem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de\ncirculação devolve o registro como está, sem recarimbar a data nem auditar de novo.",
+        "operationId": "withdraw_estimate_template_v1_platform_estimate_templates__estimate_template_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "estimate_template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Estimate Template Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Estimate Template",
+        "tags": [
+          "platform"
         ]
       }
     },

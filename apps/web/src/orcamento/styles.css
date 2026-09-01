@@ -1923,3 +1923,53 @@ p {
 
 /* Fecha o `.jornada-orcamento` aberto no topo do arquivo. */
 }
+
+/* A escolha do gabarito no despacho (F-043 T3, estado 02 do pacote aprovado).
+   Sem cor nova: reaproveita `--surface-subtle`, `--line` e `--ink-secondary`, e o aviso usa
+   `.campo-aviso`, que já existe. O resumo é um bloco de definição porque o que ele diz são
+   pares rótulo/valor — e cor nunca é o único indicador aqui: cada linha se nomeia. */
+.gabarito-escolha {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.gabarito-resumo {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--surface-subtle);
+}
+
+.gabarito-resumo h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.gabarito-resumo dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.gabarito-resumo dl > div {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.gabarito-resumo dt {
+  font-weight: 600;
+  min-width: 5.5rem;
+}
+
+.gabarito-resumo dd {
+  margin: 0;
+  color: var(--ink-secondary);
+}
+
+.gabarito-resumo .campo-dica {
+  margin: 0.5rem 0 0;
+}

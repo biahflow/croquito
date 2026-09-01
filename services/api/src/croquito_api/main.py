@@ -38,7 +38,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from croquito_api import estimate_rounds, precedents, site_setup_kits
+from croquito_api import estimate_rounds, estimate_templates, precedents, site_setup_kits
 from croquito_api.auth import (
     OidcAuthenticator,
     Principal,
@@ -57,6 +57,7 @@ from croquito_api.database import (
     ElementProposalRejectionRecord,
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
+    EstimateTemplateRecord,
     ExportArtifactRecord,
     FieldEvidenceAnalysisRecord,
     FieldPhotoValueConfirmationRecord,
@@ -279,7 +280,7 @@ from croquito_valuation.takeoff import (
     apply_divergence_resolution,
     apply_takeoff_decisions,
 )
-from croquito_valuation.template import default_template
+from croquito_valuation.template import EstimateTemplateLayout, default_template
 from croquito_valuation.workbook_writer import consolidate_by_code
 from croquito_valuation.worksite_calc import build_worksite_takeoff_valuation
 from croquito_worker.association import AssociationSet
@@ -654,6 +655,58 @@ class SiteSetupKitResponse(ApiModel):
 
 class SiteSetupKitListResponse(ApiModel):
     kits: list[SiteSetupKitResponse]
+
+
+class PublishEstimateTemplateRequest(ApiModel):
+    """Publica no acervo da PLATAFORMA um gabarito de ordem fixa da prefeitura (F-043 T2).
+
+    Três campos, e a assimetria entre eles é deliberada. `name` e `source_label` são rótulos
+    ADMINISTRATIVOS — quem publica escolhe como o gabarito aparece na lista, e o documento não
+    os carrega. Já a revisão **não** entra por aqui: ela é lida de dentro do documento
+    (`EstimateTemplateLayout.revision_label`), porque é ela que a planilha gerada IMPRIME. Um
+    rótulo de revisão digitado ao lado do conteúdo poderia discordar dele, e o arquivo passaria
+    a dizer uma revisão e descrever outra — que é exatamente o silêncio que o `revision_label`
+    existe para desfazer.
+
+    `document` chega como objeto CRU, e não como `EstimateTemplateLayout` tipado, pelo mesmo
+    motivo de `PublishSiteSetupKitRequest.document`: um modelo do domínio embutido faria o
+    Pydantic recusar durante o parsing do corpo, e as invariantes do gabarito — código fora do
+    formato de catálogo, código repetido, item repetido — sairiam como erro de esquema do
+    FastAPI em vez do `application/problem+json` com o código estável do domínio.
+    """
+
+    name: str = Field(min_length=3, max_length=200)
+    source_label: str = Field(min_length=3, max_length=200)
+    document: dict[str, Any]
+
+
+class EstimateTemplateResponse(ApiModel):
+    """Um gabarito publicado como a administração o lê.
+
+    As linhas NÃO saem daqui: são 433 no gabarito real, e nem a listagem nem a confirmação de
+    publicação têm o que fazer com elas. O que sai é o que distingue duas linhas e o que
+    denuncia um gabarito truncado — `row_count`.
+    """
+
+    estimate_template_id: UUID
+    name: str
+    template_version: str
+    """Espelho de `EstimateTemplateLayout.revision_label`, lido de dentro do documento."""
+    origin: Literal["platform", "tenant"]
+    """Derivado de `tenant_id` na leitura, nunca uma terceira coluna que possa discordar."""
+    source_label: str
+    sheet_name: str
+    memory_sheet_name: str
+    row_count: int
+    document_sha256: str
+    available: bool
+    created_by: str
+    created_at: datetime
+    withdrawn_at: datetime | None = None
+
+
+class EstimateTemplateListResponse(ApiModel):
+    templates: list[EstimateTemplateResponse]
 
 
 class PresignReferenceCatalogIndexRequest(ApiModel):
@@ -2604,6 +2657,38 @@ class EstimateSiteSetupKitListResponse(ApiModel):
     kits: list[EstimateSiteSetupKitOption]
 
 
+class EstimateTemplateOption(ApiModel):
+    """Um gabarito como a ESCOLHA da rodada o oferece (F-043 T3).
+
+    Mais pobre que `EstimateTemplateResponse` pelo mesmo motivo de
+    `EstimateSiteSetupKitOption`: `created_by` de um gabarito de plataforma é a identidade de
+    um operador de outro tenant, e quem escolhe um gabarito não tem por que saber quem o
+    publicou. `withdrawn_at` também não sai — esta lista só traz o que está em circulação.
+
+    `priced_row_count` existe para a tela poder dizer o tamanho do gabarito ANTES de o
+    orçamento ser confrontado com ele.
+    """
+
+    estimate_template_id: UUID
+    name: str
+    template_version: str
+    origin: Literal["platform", "tenant"]
+    source_label: str
+    sheet_name: str
+    memory_sheet_name: str
+    row_count: int
+    priced_row_count: int
+    document_sha256: str
+
+
+class EstimateTemplateOptionListResponse(ApiModel):
+    """Os gabaritos que ESTA rodada pode usar: os de plataforma em circulação e os do tenant."""
+
+    round_id: UUID
+    version: int
+    templates: list[EstimateTemplateOption]
+
+
 class SiteSetupPreviewRequest(ApiModel):
     """Pré-visualização da aplicação do acervo: leitura, e por isso sem guarda de escrita.
 
@@ -2753,12 +2838,22 @@ class ApproveEstimateRequest(ApiModel):
 class ExportEstimateRequest(ApiModel):
     """Despacho da planilha do orçamento: espelho de `ApproveEstimateRequest`.
 
-    Não há nada a escolher no despacho — nem formato, nem layout, nem "exportar assim
-    mesmo". O orçamento publicado é o da cabeça da rodada, o layout é o da prefeitura
-    (`default_template()`) e a aprovação válida é precondição, não opção.
+    Continua sem nada a escolher sobre o CONTEÚDO — nem formato, nem "exportar assim mesmo":
+    o orçamento publicado é o da cabeça da rodada, e a aprovação válida é precondição, não
+    opção.
+
+    O que a F-043 T3 acrescenta é a escolha do **gabarito**, e ela é de outra natureza: o
+    gabarito não muda o que o orçamento diz, muda a ORDEM e o conjunto de linhas em que ele é
+    impresso para a prefeitura. Sem `estimate_template_id` o despacho é o de sempre
+    (`default_template()`, a ordem do próprio orçamento); com ele, a planilha percorre o
+    gabarito declarado — todas as linhas, inclusive as de quantidade zero.
+
+    É opcional de propósito: a rodada que não entrega àquela prefeitura não tem gabarito a
+    citar, e exigir um faria a jornada de hoje parar de funcionar.
     """
 
     base_version: int = Field(ge=1)
+    estimate_template_id: UUID | None = None
 
 
 class SetEstimateTargetRequest(ApiModel):
@@ -4576,6 +4671,21 @@ def _validate_site_setup_kit(raw: Mapping[str, Any]) -> SiteSetupKit:
     """
     try:
         return SiteSetupKit.model_validate(raw)
+    except ValidationError as error:
+        raise _valuation_model_problem(error) from error
+
+
+def _validate_estimate_template(raw: Mapping[str, Any]) -> EstimateTemplateLayout:
+    """Valida o gabarito publicado, com a MESMA disciplina de `_validate_site_setup_kit`.
+
+    O documento chega como objeto cru no corpo (não como campo tipado) pelo mesmo motivo: um
+    `EstimateTemplateLayout` embutido faria o Pydantic recusar durante o PARSING do corpo, e as
+    invariantes do gabarito — código fora do formato de catálogo, código repetido entre linhas,
+    item repetido — sairiam como erro de esquema do FastAPI em vez do envelope
+    `application/problem+json` das demais rotas.
+    """
+    try:
+        return EstimateTemplateLayout.model_validate(raw)
     except ValidationError as error:
         raise _valuation_model_problem(error) from error
 
@@ -8152,6 +8262,250 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 resource_id=record.id,
                 request_id=request.state.request_id,
                 details={"site_setup_kit_id": record.id, "kit_version": record.kit_version},
+            )
+        session.commit()
+        return response
+
+    def _load_platform_estimate_template(
+        session: Session, *, estimate_template_id: UUID
+    ) -> EstimateTemplateRecord:
+        """O gabarito DE PLATAFORMA com este id, ou `404`.
+
+        A cláusula `tenant_id IS NULL` não é redundante com o id, pela mesma razão de
+        `_load_platform_site_setup_kit`: sem ela, um operador de plataforma poderia retirar de
+        circulação um gabarito autorado por um tenant — que é dado do cliente. Nenhuma rota
+        escreve gabarito com dono hoje, e é justamente por isso que a cláusula precisa já estar
+        aqui: ela não é consertável depois que o primeiro existir.
+        """
+        record = session.scalar(
+            select(EstimateTemplateRecord).where(
+                EstimateTemplateRecord.id == str(estimate_template_id),
+                EstimateTemplateRecord.tenant_id.is_(None),
+            )
+        )
+        if record is None:
+            raise _problem(
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Gabarito de orçamento não encontrado.",
+            )
+        return record
+
+    @application.post(
+        "/v1/platform/estimate-templates",
+        response_model=EstimateTemplateResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["platform"],
+    )
+    async def publish_estimate_template(
+        payload: PublishEstimateTemplateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> EstimateTemplateResponse:
+        """Publica o gabarito de ordem fixa da prefeitura para TODOS os tenants (F-043 T2).
+
+        Até esta rota existir, o gabarito só existia como arquivo JSON lido por caminho no CLI
+        do worker: a API não conhecia `WorkbookTemplate`, e a jornada web não tinha como
+        oferecê-lo. O dono decidiu em 2026-08-28 que ele vive como artefato de plataforma, no
+        molde do acervo de catálogos da F-037.
+
+        O que entra é um `EstimateTemplateLayout` cru, validado pelo domínio ANTES de virar
+        linha: código fora do formato de catálogo, código repetido entre as linhas e item
+        repetido recusam com `422 DOMAIN_VALIDATION_FAILED` e o código estável do domínio,
+        nunca como erro de esquema do FastAPI.
+
+        Duas recusas, as duas ANTES de qualquer escrita:
+
+        - **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e
+          não descobre o que existe no acervo;
+        - **mesma `(name, revision_label)` já publicada**:
+          `409 ESTIMATE_TEMPLATE_ALREADY_PUBLISHED`. Gabarito é imutável — a planilha gerada
+          imprime a revisão que a produziu, e reescrever o conteúdo por baixo faria o arquivo
+          dizer uma revisão e descrever outra.
+
+        A recusa de republicação é conferida AQUI, e não deixada para
+        `uq_estimate_template_identity`: o gabarito de plataforma tem `tenant_id` nulo, e
+        `NULL` não colide com `NULL` nem em PostgreSQL nem em SQLite.
+
+        Não há upload nem objeto no store: o documento é o que a própria API validou, sem bytes
+        de arquivo de terceiro a preservar, e ele é lido inteiro toda vez que uma planilha sai.
+        """
+        _require_platform_operator(principal)
+        operation = "platform.estimate-templates"
+        request_hash = _request_hash(payload)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return EstimateTemplateResponse.model_validate(existing_response)
+
+        template = _validate_estimate_template(payload.document)
+        published = session.scalar(
+            select(EstimateTemplateRecord).where(
+                EstimateTemplateRecord.tenant_id.is_(None),
+                EstimateTemplateRecord.name == payload.name,
+                EstimateTemplateRecord.template_version == template.revision_label,
+            )
+        )
+        if published is not None:
+            raise estimate_templates.already_published(payload.name, template.revision_label)
+
+        document = template.model_dump(mode="json")
+        record = EstimateTemplateRecord(
+            id=str(new_uuid7()),
+            # A ausência é a origem: gabarito de plataforma não tem dono, como na F-037.
+            tenant_id=None,
+            name=payload.name,
+            # A REVISÃO vem de dentro do documento; o rótulo de origem é administrativo e vem
+            # do corpo, porque o gabarito não o carrega.
+            template_version=template.revision_label,
+            source_label=payload.source_label,
+            document_json=document,
+            document_sha256=estimate_templates.template_document_digest(document),
+            withdrawn_at=None,
+            created_by=principal.subject,
+            created_at=datetime.now(UTC),
+        )
+        session.add(record)
+        response = EstimateTemplateResponse.model_validate(
+            estimate_templates.template_record_payload(record, template)
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_TEMPLATE_PUBLISHED",
+            resource_type="estimate_template",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+            # Sem tenant alvo: o ato vale para todos, e o `tenant_id` gravado é o do OPERADOR
+            # (ADR-0047 decisão 11). Só identificador e revisão — o nome de exibição é rótulo
+            # digitado, e rótulo não entra em auditoria.
+            details={
+                "estimate_template_id": record.id,
+                "template_version": record.template_version,
+            },
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/platform/estimate-templates",
+        response_model=EstimateTemplateListResponse,
+        tags=["platform"],
+    )
+    async def list_estimate_templates(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> EstimateTemplateListResponse:
+        """O acervo DE PLATAFORMA inteiro, inclusive o que está fora de circulação.
+
+        `tenant_id IS NULL` é filtro, não otimização, pela mesma razão de
+        `list_site_setup_kits`: gabarito que um tenant autorou é dado dele, e listá-lo aqui
+        daria a um operador de plataforma a lista dos artefatos de todos os clientes.
+
+        Leitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de plataforma.
+        O que foi retirado continua na lista, com `withdrawn_at` carimbado.
+
+        Ordenação em Python, como em `list_reference_catalogs`: SQLite (testes) e PostgreSQL
+        (hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.
+        """
+        _require_platform_operator(principal)
+        records = session.scalars(
+            select(EstimateTemplateRecord).where(EstimateTemplateRecord.tenant_id.is_(None))
+        ).all()
+        ordered = sorted(
+            records, key=lambda record: (record.name, record.template_version, record.id)
+        )
+        return EstimateTemplateListResponse(
+            templates=[
+                EstimateTemplateResponse.model_validate(
+                    estimate_templates.template_record_payload(
+                        record, estimate_templates.load_template(record)
+                    )
+                )
+                for record in ordered
+            ]
+        )
+
+    @application.post(
+        "/v1/platform/estimate-templates/{estimate_template_id}/withdraw",
+        response_model=EstimateTemplateResponse,
+        tags=["platform"],
+    )
+    async def withdraw_estimate_template(
+        estimate_template_id: UUID,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> EstimateTemplateResponse:
+        """Tira o gabarito de circulação: ele deixa de ser oferecido e **não** é apagado.
+
+        Apagar quebraria a leitura de toda planilha já publicada com ele — o arquivo imprime a
+        revisão do gabarito, e o registro é o que permite dizer de onde ela veio. Por isso o
+        ato carimba `withdrawn_at`, e nada mais.
+
+        Sem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de
+        circulação devolve o registro como está, sem recarimbar a data nem auditar de novo.
+        """
+        _require_platform_operator(principal)
+        operation = f"platform.estimate-templates.withdraw:{estimate_template_id}"
+        request_hash = _request_hash(_PARAMETERLESS_COMMAND)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return EstimateTemplateResponse.model_validate(existing_response)
+
+        record = _load_platform_estimate_template(
+            session, estimate_template_id=estimate_template_id
+        )
+        already_withdrawn = record.withdrawn_at is not None
+        if not already_withdrawn:
+            record.withdrawn_at = datetime.now(UTC)
+        response = EstimateTemplateResponse.model_validate(
+            estimate_templates.template_record_payload(
+                record, estimate_templates.load_template(record)
+            )
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        if not already_withdrawn:
+            _record_audit(
+                session,
+                principal=principal,
+                action="ESTIMATE_TEMPLATE_WITHDRAWN",
+                resource_type="estimate_template",
+                resource_id=record.id,
+                request_id=request.state.request_id,
+                details={
+                    "estimate_template_id": record.id,
+                    "template_version": record.template_version,
+                },
             )
         session.commit()
         return response
@@ -17690,8 +18044,33 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         # para um orçamento que não pode ser despachado.
         estimate.ensure_exportable()
 
+        # O GABARITO escolhido, quando há um (F-043 T3). Ele entra como seção do template e
+        # nada mais: quem decide o escritor é `render_estimate_workbook`, olhando para
+        # `estimate_grid`. Gabarito retirado de circulação ou de outro tenant é `404` aqui
+        # pela mesma cláusula da listagem — a escolha não pode alcançar o que a lista não
+        # oferece.
+        template = default_template()
+        chosen_template: EstimateTemplateRecord | None = None
+        if payload.estimate_template_id is not None:
+            chosen_template = session.scalar(
+                select(EstimateTemplateRecord).where(
+                    EstimateTemplateRecord.id == str(payload.estimate_template_id),
+                    estimate_templates.visible_templates(principal.tenant_id),
+                    EstimateTemplateRecord.withdrawn_at.is_(None),
+                )
+            )
+            if chosen_template is None:
+                raise _problem(
+                    "NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Gabarito de orçamento não encontrado ou fora de circulação.",
+                )
+            template = template.model_copy(
+                update={"estimate_grid": estimate_templates.load_template(chosen_template)}
+            )
+
         # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
-        rendered = estimate_rounds.render_estimate_workbook(estimate, default_template())
+        rendered = estimate_rounds.render_estimate_workbook(estimate, template)
         object_key = estimate_rounds.estimate_workbook_key(
             tenant_id=principal.tenant_id,
             round_id=record.id,
@@ -17721,6 +18100,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     **head_digests,
                     estimate_rounds.ESTIMATE_WORKBOOK_DIGEST: rendered.audit.workbook_sha256,
                 },
+                # Qual gabarito produziu ESTE arquivo. Sem o carimbo, a rodada não saberia
+                # dizer depois com qual revisão publicou — e a revisão é justamente o que o
+                # arquivo imprime para se identificar fora do sistema.
+                **(
+                    {}
+                    if chosen_template is None
+                    else {
+                        "estimate_template_json": {
+                            "estimate_template_id": chosen_template.id,
+                            "name": chosen_template.name,
+                            "template_version": chosen_template.template_version,
+                            "document_sha256": chosen_template.document_sha256,
+                        }
+                    }
+                ),
             },
         )
         record.updated_at = datetime.now(UTC)
@@ -17878,6 +18272,54 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     site_setup_kits.kit_option_payload(kit, site_setup_kits.load_kit(kit))
                 )
                 for kit in ordered
+            ],
+        )
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/estimate-templates",
+        response_model=EstimateTemplateOptionListResponse,
+        tags=["estimate"],
+    )
+    async def list_estimate_round_templates(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> EstimateTemplateOptionListResponse:
+        """Os gabaritos que ESTA rodada pode usar ao publicar a planilha (F-043 T3).
+
+        Existe separada de `GET /v1/platform/estimate-templates` porque quem escolhe é a
+        orçamentista, e ela não é `platform_operator` — a rota de plataforma administra o
+        acervo, esta o oferece. Sem ela, o gabarito seria publicável e inalcançável.
+
+        Dois filtros, e só dois, no molde de `list_estimate_site_setup_kits`: **origem
+        visível**, que é `visible_templates` — plataforma mais o gabarito deste tenant, nunca
+        o de outro —, e **em circulação**, porque o que foi retirado deixa de ser oferecido sem
+        sumir do registro nem quebrar a planilha que já o citou.
+
+        A rodada continua sendo do tenant — rodada alheia é `404`, e o papel é exigido antes de
+        qualquer lookup.
+        """
+        _require_estimate_reader(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        records = session.scalars(
+            select(EstimateTemplateRecord).where(
+                estimate_templates.visible_templates(principal.tenant_id),
+                EstimateTemplateRecord.withdrawn_at.is_(None),
+            )
+        ).all()
+        # Ordenação em Python, como nas demais listagens: SQLite e PostgreSQL não ordenam
+        # texto do mesmo jeito, e a tela lê a ordem.
+        ordered = sorted(records, key=lambda item: (item.name, item.template_version, item.id))
+        return EstimateTemplateOptionListResponse(
+            round_id=round_id,
+            version=record.version,
+            templates=[
+                EstimateTemplateOption.model_validate(
+                    estimate_templates.template_option_payload(
+                        item, estimate_templates.load_template(item)
+                    )
+                )
+                for item in ordered
             ],
         )
 
