@@ -1,7 +1,7 @@
 # F-046 — Evidência
 
 Feature: [A praça de várias pranchas](feature.md)
-Estado: `READY_FOR_REVIEW`
+Estado: `READY_FOR_HUMAN_REVIEW` — integrada na `main` pelos PRs #125, #127 e #128; falta o aceite humano
 Data: 2026-08-29 (segunda rodada de captura, depois do PR #127)
 
 Esta é a evidência da [T6](tasks/T6-evidencia-de-navegador.md), a validação de navegador da

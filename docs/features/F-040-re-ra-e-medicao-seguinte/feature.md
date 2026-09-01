@@ -7,8 +7,12 @@
 > **Estado em 2026-09-01.** A condição que o `DONE` de 2026-08-28 deixou pendente — a recaptura
 > dos estados que a T6 acrescentou — foi **cumprida**: os seis estados foram capturados contra
 > o stack local, já com a T6 e a T7 no código e sobre a `main` de `482fa8e` (F-046 e F-047
-> integradas). O que resta é ato humano: **merge do PR da T6/T7**, e a confirmação de que o
-> aceite de 2026-08-28 permanece agora que o pacote de design está inteiro no código.
+> integradas). A T6 e a T7 entraram na `main` pelo PR
+> [#129](https://github.com/biahflow/croquito/pull/129).
+>
+> O que resta é ato humano: a **confirmação** de que o aceite de 2026-08-28 permanece agora que
+> o pacote de design está inteiro no código, e o aceite numa medição real com contrato
+> re-ratificado — nenhuma foi feita, e o dado de toda a evidência é sintético.
 >
 > Histórico. Encerrada como `DONE` em 2026-08-28: a evidência de navegador (`BROWSER_REQUIRED`, AC 11) foi capturada
 > nessa data contra o stack local — quatro estados da tela real, registrados em

@@ -1,7 +1,7 @@
 # F-040 — Evidência
 
 Feature: [RE-RA declarada e a medição seguinte](feature.md)  
-Estado: `READY_FOR_HUMAN_REVIEW` — a T6 fechou três desvios do pacote de design que a captura
+Estado: `READY_FOR_HUMAN_REVIEW` — integrada na `main` pelo PR #129; a T6 fechou três desvios do pacote de design que a captura
 expôs, a T7 devolveu a conta da prévia ao servidor, e os **seis estados foram recapturados**
 contra o stack local em 2026-09-01 (`BROWSER_REQUIRED` cumprido)  
 Data: 2026-08-27 (evidência de navegador em 2026-08-28; correção do registro, T6 e T7 em

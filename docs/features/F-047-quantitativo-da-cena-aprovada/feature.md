@@ -2,8 +2,26 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`READY_FOR_HUMAN_REVIEW`
 
+> **Construída e integrada em 2026-08-29.** As tarefas do plano, mais as que nasceram na
+> execução, estão na `main` pelo PR [#126](https://github.com/biahflow/croquito/pull/126):
+> `element_ref` na entidade e no contrato gerado, o ato humano de identidade na revisão, o
+> `quantitativos.csv` agrupado por elemento, o `QuantitySource` que atravessa a fronteira das
+> duas jornadas, o elo declarado entre a rodada de medição e o croqui aprovado, a divergência
+> com tolerância nomeada, a proposta assistida de agrupamento e as duas telas.
+>
+> A captura de navegador (`BROWSER_REQUIRED`) está cumprida e registrou um **achado
+> bloqueante** que a suíte não pegava, porque os testes rodam em SQLite: a rota que resolve a
+> divergência respondia `500` em PostgreSQL — a chave de idempotência não cabia na coluna. O PR
+> [#124](https://github.com/biahflow/croquito/pull/124) o resolveu, com um portão que varre por
+> AST todas as operações, e a captura foi refeita — ver [evidence.md](evidence.md).
+>
+> O que resta é ato humano: o **aceite** que fecha a
+> [issue #102](https://github.com/biahflow/croquito/issues/102), numa obra real em que o croqui
+> aprovado alimente a medição. Nenhuma passou por esse caminho ainda: o dado das capturas é
+> sintético.
+>
 > Registrada em 2026-08-28, por seleção humana, a partir da
 > [issue #102](https://github.com/biahflow/croquito/issues/102). O
 > [ADR-0058](../../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)
@@ -14,9 +32,7 @@
 > O [Design Approval Package](mock/README.md) revisão 1 foi **aprovado por ato humano em
 > 2026-08-28**, com duas confirmações no mesmo ato: a borda exata da tolerância **não** abre
 > issue (`>`, nunca `>=`), e a **proposta assistida de agrupamento entra nesta feature**. Com os
-> dois gates passados, o [plano](plan.md) e os oito Task Contracts estão escritos. O
-> [pacote de design, revisão 1](mock/README.md), foi produzido em 2026-08-28 e aguarda o ato
-> humano.
+> dois gates passados, o [plano](plan.md) e os oito Task Contracts foram escritos.
 
 ## Classification
 
