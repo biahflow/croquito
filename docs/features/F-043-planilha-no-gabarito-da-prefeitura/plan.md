@@ -23,7 +23,7 @@ A publicação do gabarito como artefato de plataforma vem em seguida, e a escol
 | # | Tarefa | Estado |
 |---|---|---|
 | T1 | [Gabarito de ordem fixa e memória de cálculo](tasks/T1-gabarito-e-memoria.md) | **Entregue** |
-| T2 | Publicar o gabarito como artefato de plataforma | Não iniciada |
+| T2 | [Publicar o gabarito como artefato de plataforma](tasks/T2-gabarito-como-artefato-de-plataforma.md) | **Entregue** |
 | T3 | Escolher o gabarito na jornada web | Não iniciada |
 
 ## O que a T1 provou contra o documento real

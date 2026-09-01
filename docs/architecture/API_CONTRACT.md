@@ -410,6 +410,59 @@ materializadas numa rodada citam a versão do acervo. Repetir sobre um acervo j�
 devolve o registro como está, sem recarimbar a data e sem auditar de novo. Acervo inexistente
 — ou acervo de tenant — é `404 NOT_FOUND`. Auditado como `SITE_SETUP_KIT_WITHDRAWN`.
 
+### `POST /v1/platform/estimate-templates`
+
+Requer `platform_operator` e `Idempotency-Key`. Entrada: `name` (3 a 200 caracteres),
+`source_label` (3 a 200) e `document`, que é o `EstimateTemplateLayout` cru — o gabarito de
+ordem fixa da prefeitura, com `sheet_name`, `revision_label`, `columns` e `rows`.
+
+A assimetria entre os campos é deliberada. `name` e `source_label` são rótulos
+**administrativos**: quem publica escolhe como o gabarito aparece na lista, e o documento não
+os carrega. Já a **revisão não entra pelo corpo** — ela é lida de dentro do documento
+(`revision_label`), porque é ela que a planilha gerada imprime. Um rótulo de revisão digitado
+ao lado do conteúdo poderia discordar dele, e o arquivo passaria a dizer uma revisão e
+descrever outra.
+
+Não há upload nem objeto no object store, pela mesma razão do acervo de parcelas: o documento
+é o que a própria API validou, sem bytes de arquivo de terceiro a preservar, e ele é lido
+inteiro toda vez que uma planilha sai.
+
+Responde `201` com `estimate_template_id`, `name`, `template_version`, `origin` (`platform`),
+`source_label`, `sheet_name`, `memory_sheet_name`, `row_count`, `document_sha256`,
+`available`, `created_by`, `created_at` e `withdrawn_at`. As **linhas não saem na resposta**:
+são 433 no gabarito real, e o que decide escolha é identidade, revisão e tamanho — é o
+`row_count` que denuncia, à vista, um gabarito truncado.
+
+Recusas, todas antes de qualquer escrita:
+
+- `403 FORBIDDEN` sem o papel, antes de qualquer lookup;
+- `422 DOMAIN_VALIDATION_FAILED` com o código do domínio para invariante do gabarito
+  (`TEMPLATE_ESTIMATE_GRID_CODE_INVALID`, `TEMPLATE_ESTIMATE_GRID_DUPLICATE_CODE`,
+  `TEMPLATE_ESTIMATE_GRID_DUPLICATE_ITEM`, `TEMPLATE_DUPLICATE_COLUMN`);
+- `409 ESTIMATE_TEMPLATE_ALREADY_PUBLISHED` para `(name, revision_label)` já publicada, com
+  `details.name` e `details.template_version`. Gabarito é imutável: revisão nova é **entrada
+  nova**. Esta recusa é conferida na rota, e não deixada para a constraint — o gabarito de
+  plataforma tem `tenant_id` nulo, e `NULL` não colide com `NULL`.
+
+Auditado como `ESTIMATE_TEMPLATE_PUBLISHED`, no tenant do operador, com o identificador e a
+revisão nos detalhes.
+
+### `GET /v1/platform/estimate-templates`
+
+Requer `platform_operator`. Leitura sem `Idempotency-Key` e sem auditoria. Devolve o acervo
+**de plataforma** inteiro, inclusive o que saiu de circulação (com `available: false` e
+`withdrawn_at`), ordenado deterministicamente por `(name, template_version, id)`. Gabarito de
+tenant **não** aparece aqui, pela mesma razão do acervo de parcelas.
+
+### `POST /v1/platform/estimate-templates/{estimate_template_id}/withdraw`
+
+Requer `platform_operator` e `Idempotency-Key`; **sem corpo**. Marca o gabarito como fora de
+circulação (`available: false` e `withdrawn_at`) e **não apaga**: a planilha já publicada
+imprime a revisão do gabarito que a gerou, e o registro é o que permite dizer de onde ela
+veio. Repetir sobre um gabarito já retirado devolve o registro como está, sem recarimbar a
+data e sem auditar de novo. Gabarito inexistente — ou gabarito de tenant — é `404 NOT_FOUND`.
+Auditado como `ESTIMATE_TEMPLATE_WITHDRAWN`.
+
 ## Cena e revisão
 
 ### `GET /v1/jobs/{job_id}/scene`

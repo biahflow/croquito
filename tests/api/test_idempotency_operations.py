@@ -73,6 +73,7 @@ _ORIGIN_MAX: Final = max(len(value) for value in ("survey", "standalone"))
 #: usa na interpolação. Campo novo sem entrada aqui REPROVA o teste de propósito: decidir o
 #: máximo de um campo é ato consciente, não default silencioso.
 _FIELD_MAX_LENGTHS: Final[dict[str, int]] = {
+    "estimate_template_id": _UUID_LENGTH,
     "evidence_id": _UUID_LENGTH,
     "job_id": _UUID_LENGTH,
     "payload.evidence_id": _UUID_LENGTH,

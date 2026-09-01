@@ -418,6 +418,65 @@ class SiteSetupKitRecord(Base):
     )
 
 
+class EstimateTemplateRecord(Base):
+    """Gabarito de ordem fixa da prefeitura, publicado pela plataforma (F-043 T2).
+
+    O gabarito é a lista ordenada de linhas que a planilha do orçamento percorre — todas elas,
+    inclusive as de quantidade zero. Até esta tabela existir ele era um arquivo JSON lido por
+    caminho no CLI do worker, e a jornada web não tinha como oferecê-lo: o dono decidiu, em
+    2026-08-28, que ele vive como artefato de plataforma, no molde da F-037.
+
+    `tenant_id` é **anulável e hoje sempre nulo**: o gabarito é da prefeitura e vale para todos.
+    A coluna existe porque o gabarito de uma segunda prefeitura, autorado por um tenant, é
+    extensão previsível — e acrescentá-la depois custaria uma migração com dado dentro. Nenhuma
+    rota a escreve. Ainda assim, **toda leitura escreve `tenant_id IS NULL OR tenant_id =
+    :tenant`**, pela mesma razão que vale em `SiteSetupKitRecord`: uma consulta que se acostume
+    a `IS NULL` sozinho vira defeito de isolamento no dia em que a coluna for preenchida.
+
+    `template_version` espelha `EstimateTemplateLayout.revision_label` e é lido de DENTRO do
+    documento, nunca do corpo da requisição. É o rótulo que a planilha gerada imprime, e é o
+    controle do risco que a feature nomeia: a prefeitura revisa o gabarito, e um arquivo gerado
+    na revisão velha continua parecendo certo. `String(120)` acompanha o `max_length` do modelo
+    — apertar a coluna abaixo dele passa em SQLite e dá `500` em PostgreSQL, que foi como o
+    defeito da chave de idempotência atravessou a suíte inteira (PR #124).
+
+    Como no acervo de parcelas de canteiro, o documento mora no BANCO e não no object store:
+    não há bytes de arquivo de terceiro a preservar — o que entra é um documento que a própria
+    API validou —, e ele é lido inteiro toda vez que uma planilha é publicada.
+
+    Publicação é IMUTÁVEL: `(tenant_id, name, template_version)` é único, e republicar a mesma
+    versão é recusa, nunca sobrescrita. A `UniqueConstraint` NÃO cobre sozinha o acervo de
+    plataforma, porque `NULL` não colide com `NULL` em PostgreSQL nem em SQLite; a recusa é
+    conferida na rota, com código estável, e a constraint é a rede embaixo dela.
+
+    Retirar de circulação carimba `withdrawn_at` e não apaga: uma planilha publicada continua
+    citando a revisão do gabarito que a gerou.
+    """
+
+    __tablename__ = "estimate_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "name", "template_version", name="uq_estimate_template_identity"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    """`NULL` é gabarito de plataforma; hoje nenhuma rota escreve outra coisa."""
+    name: Mapped[str] = mapped_column(String(200))
+    template_version: Mapped[str] = mapped_column(String(120))
+    """Espelho de `EstimateTemplateLayout.revision_label`, lido de dentro do documento."""
+    source_label: Mapped[str] = mapped_column(String(200))
+    document_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    """O `EstimateTemplateLayout` serializado, já validado pelo domínio antes de virar linha."""
+    document_sha256: Mapped[str] = mapped_column(String(64))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class PrecedentObservationRecord(Base):
     """Uma decisão de código já tomada, guardada para reencontrar o rótulo na praça seguinte.
 

@@ -3812,6 +3812,111 @@
         "title": "EstimateSiteSetupKitParameter",
         "type": "object"
       },
+      "EstimateTemplateListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateTemplateResponse"
+            },
+            "title": "Templates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "templates"
+        ],
+        "title": "EstimateTemplateListResponse",
+        "type": "object"
+      },
+      "EstimateTemplateResponse": {
+        "additionalProperties": false,
+        "description": "Um gabarito publicado como a administração o lê.\n\nAs linhas NÃO saem daqui: são 433 no gabarito real, e nem a listagem nem a confirmação de\npublicação têm o que fazer com elas. O que sai é o que distingue duas linhas e o que\ndenuncia um gabarito truncado — `row_count`.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "estimate_template_id": {
+            "format": "uuid",
+            "title": "Estimate Template Id",
+            "type": "string"
+          },
+          "memory_sheet_name": {
+            "title": "Memory Sheet Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "platform",
+              "tenant"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "sheet_name": {
+            "title": "Sheet Name",
+            "type": "string"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          },
+          "template_version": {
+            "title": "Template Version",
+            "type": "string"
+          },
+          "withdrawn_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawn At"
+          }
+        },
+        "required": [
+          "estimate_template_id",
+          "name",
+          "template_version",
+          "origin",
+          "source_label",
+          "sheet_name",
+          "memory_sheet_name",
+          "row_count",
+          "document_sha256",
+          "available",
+          "created_by",
+          "created_at"
+        ],
+        "title": "EstimateTemplateResponse",
+        "type": "object"
+      },
       "EvidenceRegion": {
         "additionalProperties": false,
         "properties": {
@@ -7001,6 +7106,36 @@
           "latency_ms"
         ],
         "title": "ProviderLineage",
+        "type": "object"
+      },
+      "PublishEstimateTemplateRequest": {
+        "additionalProperties": false,
+        "description": "Publica no acervo da PLATAFORMA um gabarito de ordem fixa da prefeitura (F-043 T2).\n\nTrês campos, e a assimetria entre eles é deliberada. `name` e `source_label` são rótulos\nADMINISTRATIVOS — quem publica escolhe como o gabarito aparece na lista, e o documento não\nos carrega. Já a revisão **não** entra por aqui: ela é lida de dentro do documento\n(`EstimateTemplateLayout.revision_label`), porque é ela que a planilha gerada IMPRIME. Um\nrótulo de revisão digitado ao lado do conteúdo poderia discordar dele, e o arquivo passaria\na dizer uma revisão e descrever outra — que é exatamente o silêncio que o `revision_label`\nexiste para desfazer.\n\n`document` chega como objeto CRU, e não como `EstimateTemplateLayout` tipado, pelo mesmo\nmotivo de `PublishSiteSetupKitRequest.document`: um modelo do domínio embutido faria o\nPydantic recusar durante o parsing do corpo, e as invariantes do gabarito — código fora do\nformato de catálogo, código repetido, item repetido — sairiam como erro de esquema do\nFastAPI em vez do `application/problem+json` com o código estável do domínio.",
+        "properties": {
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Name",
+            "type": "string"
+          },
+          "source_label": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Source Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source_label",
+          "document"
+        ],
+        "title": "PublishEstimateTemplateRequest",
         "type": "object"
       },
       "PublishReferenceCatalogIndexRequest": {
@@ -16180,6 +16315,161 @@
         "summary": "Get Metrics Summary",
         "tags": [
           "metrics"
+        ]
+      }
+    },
+    "/v1/platform/estimate-templates": {
+      "get": {
+        "description": "O acervo DE PLATAFORMA inteiro, inclusive o que está fora de circulação.\n\n`tenant_id IS NULL` é filtro, não otimização, pela mesma razão de\n`list_site_setup_kits`: gabarito que um tenant autorou é dado dele, e listá-lo aqui\ndaria a um operador de plataforma a lista dos artefatos de todos os clientes.\n\nLeitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de plataforma.\nO que foi retirado continua na lista, com `withdrawn_at` carimbado.\n\nOrdenação em Python, como em `list_reference_catalogs`: SQLite (testes) e PostgreSQL\n(hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.",
+        "operationId": "list_estimate_templates_v1_platform_estimate_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Estimate Templates",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "description": "Publica o gabarito de ordem fixa da prefeitura para TODOS os tenants (F-043 T2).\n\nAté esta rota existir, o gabarito só existia como arquivo JSON lido por caminho no CLI\ndo worker: a API não conhecia `WorkbookTemplate`, e a jornada web não tinha como\noferecê-lo. O dono decidiu em 2026-08-28 que ele vive como artefato de plataforma, no\nmolde do acervo de catálogos da F-037.\n\nO que entra é um `EstimateTemplateLayout` cru, validado pelo domínio ANTES de virar\nlinha: código fora do formato de catálogo, código repetido entre as linhas e item\nrepetido recusam com `422 DOMAIN_VALIDATION_FAILED` e o código estável do domínio,\nnunca como erro de esquema do FastAPI.\n\nDuas recusas, as duas ANTES de qualquer escrita:\n\n- **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e\n  não descobre o que existe no acervo;\n- **mesma `(name, revision_label)` já publicada**:\n  `409 ESTIMATE_TEMPLATE_ALREADY_PUBLISHED`. Gabarito é imutável — a planilha gerada\n  imprime a revisão que a produziu, e reescrever o conteúdo por baixo faria o arquivo\n  dizer uma revisão e descrever outra.\n\nA recusa de republicação é conferida AQUI, e não deixada para\n`uq_estimate_template_identity`: o gabarito de plataforma tem `tenant_id` nulo, e\n`NULL` não colide com `NULL` nem em PostgreSQL nem em SQLite.\n\nNão há upload nem objeto no store: o documento é o que a própria API validou, sem bytes\nde arquivo de terceiro a preservar, e ele é lido inteiro toda vez que uma planilha sai.",
+        "operationId": "publish_estimate_template_v1_platform_estimate_templates_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishEstimateTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Estimate Template",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/estimate-templates/{estimate_template_id}/withdraw": {
+      "post": {
+        "description": "Tira o gabarito de circulação: ele deixa de ser oferecido e **não** é apagado.\n\nApagar quebraria a leitura de toda planilha já publicada com ele — o arquivo imprime a\nrevisão do gabarito, e o registro é o que permite dizer de onde ela veio. Por isso o\nato carimba `withdrawn_at`, e nada mais.\n\nSem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de\ncirculação devolve o registro como está, sem recarimbar a data nem auditar de novo.",
+        "operationId": "withdraw_estimate_template_v1_platform_estimate_templates__estimate_template_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "estimate_template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Estimate Template Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Estimate Template",
+        "tags": [
+          "platform"
         ]
       }
     },
