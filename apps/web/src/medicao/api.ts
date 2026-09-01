@@ -50,6 +50,7 @@ import {
   platesExtractionBody,
   divergenceResolutionBody,
   sceneLinkBody,
+  roundPreviewBody,
   takeoffDecisionBody,
   versionBody,
 } from "./requests";
@@ -784,6 +785,58 @@ export type AmendmentDraft = {
   lines: AmendmentLineDraft[];
 };
 
+/**
+ * Uma linha da prévia da abertura (F-040 T7): o antes e o depois do MESMO número.
+ *
+ * Tudo é string decimal vinda do servidor. A tela exibe o que veio — `format.ts` só troca a
+ * pontuação — porque a jornada de medição não soma, não multiplica e não arredonda
+ * (`apps/web/AGENTS.md`, critério VAL-07).
+ *
+ * `current_*` é o que vale HOJE (podendo já trazer RE-RA herdada da rodada anterior) e
+ * `new_*` é o que valeria depois do que está declarado nesta abertura. Sem declaração os dois
+ * repetem o mesmo número de propósito: é o que faz a diferença aparecer quando ela existir.
+ */
+export type RoundPreviewLine = {
+  code: string;
+  item_number: string;
+  description: string;
+  unit: string;
+  contracted_unit_price: string;
+  current_unit_price: string;
+  new_unit_price: string;
+  contracted_quantity: string;
+  current_quantity: string;
+  current_balance_quantity: string;
+  accumulated_quantity: string;
+  /** Medido no período que fechou; `null` na origem por orçamento assinado. */
+  measured_quantity: string | null;
+  /** Se o vigente de hoje já difere do contratado — RE-RA herdada, não a declarada aqui. */
+  re_ratified: boolean;
+  /** O efeito declarado, com sinal explícito; `null` quando a RE-RA não cita o código. */
+  amendment_delta: string | null;
+  new_current_quantity: string;
+  new_balance_quantity: string;
+  is_new_item: boolean;
+};
+
+export type RoundPreviewResponse = {
+  worksite_key: string;
+  worksite_name: string;
+  period_number: number;
+  previous_period_number: number | null;
+  measured_total_amount: string | null;
+  lines: RoundPreviewLine[];
+};
+
+/** O que a prévia pergunta: a origem contratada, o período e o que está declarado. */
+export type RoundPreviewDraft = {
+  estimateRoundId?: string;
+  previousRoundId?: string;
+  periodNumber: string;
+  priceAdjustment?: PriceAdjustmentDraft;
+  amendment?: AmendmentDraft;
+};
+
 export type CreateRoundDraft = {
   worksiteKey: string;
   worksiteName: string;
@@ -1023,6 +1076,26 @@ export function createRound(
     accessToken,
     createRoundBody(draft),
   );
+}
+
+/**
+ * O contratado que a rodada VAI nascer com, sem gravar nada (F-040 T7).
+ *
+ * É `POST` porque a declaração viaja no CORPO, mas **não é mutação**: por isso não manda
+ * `Idempotency-Key` nem `base_version` — não há nada a repetir nem a versionar. Quem faz a
+ * conta é o servidor; a tela só exibe as strings que ele devolveu.
+ */
+export function previewRound(
+  accessToken: string,
+  draft: RoundPreviewDraft,
+  options?: { signal?: AbortSignal },
+): Promise<RoundPreviewResponse> {
+  return apiJson<RoundPreviewResponse>("/v1/valuation-round-previews", accessToken, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(roundPreviewBody(draft)),
+    signal: options?.signal,
+  });
 }
 
 /**

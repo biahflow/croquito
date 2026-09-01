@@ -23,6 +23,7 @@ import type {
   DivergenceResolutionDraft,
   PriceAdjustmentDraft,
   SceneLinkDraft,
+  RoundPreviewDraft,
   TakeoffDecisionBatchDraft,
 } from "./api";
 
@@ -125,6 +126,35 @@ export function createRoundBody(draft: CreateRoundDraft): Record<string, unknown
   const contractLabel = draft.contractLabel?.trim();
   if (contractLabel) {
     body.contract_label = contractLabel;
+  }
+  const reajuste = priceAdjustmentBody(draft.priceAdjustment);
+  if (reajuste !== null) {
+    body.price_adjustment = reajuste;
+  }
+  const reRa = amendmentBody(draft.amendment);
+  if (reRa !== null) {
+    body.amendment = reRa;
+  }
+  return body;
+}
+
+/**
+ * Corpo do `POST /v1/valuation-round-previews` (F-040 T7).
+ *
+ * Só o que decide NÚMERO: a origem contratada, o período e os atos declarados. `reference_label`,
+ * `contract_label` e os campos da obra ficam de fora porque não mudam contratado, vigente nem
+ * saldo — e o servidor recusaria o que não pertence à prévia.
+ *
+ * `base_version` não entra: a prévia não grava, e não há versão a guardar.
+ */
+export function roundPreviewBody(draft: RoundPreviewDraft): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    period_number: Number(draft.periodNumber.trim()),
+  };
+  if (draft.estimateRoundId) {
+    body.estimate_round_id = draft.estimateRoundId;
+  } else if (draft.previousRoundId) {
+    body.previous_round_id = draft.previousRoundId;
   }
   const reajuste = priceAdjustmentBody(draft.priceAdjustment);
   if (reajuste !== null) {

@@ -2,8 +2,37 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
 
+> **Estado em 2026-09-01.** A condição que o `DONE` de 2026-08-28 deixou pendente — a recaptura
+> dos estados que a T6 acrescentou — foi **cumprida**: os seis estados foram capturados contra
+> o stack local, já com a T6 e a T7 no código e sobre a `main` de `482fa8e` (F-046 e F-047
+> integradas). O que resta é ato humano: **merge do PR da T6/T7**, e a confirmação de que o
+> aceite de 2026-08-28 permanece agora que o pacote de design está inteiro no código.
+>
+> Histórico. Encerrada como `DONE` em 2026-08-28: a evidência de navegador (`BROWSER_REQUIRED`, AC 11) foi capturada
+> nessa data contra o stack local — quatro estados da tela real, registrados em
+> [evidence.md](evidence.md) — e o **aceite humano** que fecha a
+> [issue #100](https://github.com/biahflow/croquito/issues/100) ocorreu em 2026-08-28. O
+> código já estava na `main` (PRs #109, #112 e #113).
+>
+> **Reaberta na prática pela T6, em 2026-08-28.** A captura da evidência de navegador expôs que
+> **três decisões do [pacote de design aprovado](mock/README.md)** não estavam no código — as
+> decisões 1, 4 e 6 — e que, por causa disso, **não havia como declarar uma RE-RA na medição
+> seguinte pela tela**, embora a API sempre a tenha aceitado. A
+> [T6](tasks/T6-a-porta-da-medicao-seguinte.md) fecha as três, e a
+> [T7](tasks/T7-previa-no-servidor.md) leva a conta da prévia para o servidor. A recaptura que
+> faltava foi feita em 2026-09-01 e está em [evidence.md](evidence.md).
+>
+> **Dívida que fica escrita**: nenhuma medição real com contrato re-ratificado foi feita — o
+> aceite de 2026-08-28 é sobre o mecanismo, e a primeira rodada de obra com RE-RA declarada
+> segue sendo o teste de verdade. Ficam também os desvios listados em
+> [evidence.md](evidence.md): a memória sem RE-RA não imprime contratado e vigente repetidos
+> (a repetição de propósito existe na herança da medição seguinte, que é onde a decisão 4 a
+> pede), e a autoria da declaração aparece como o `sub` do principal, não como nome legível. A
+> prévia, que a T6 tinha só na medição seguinte, existe nas **duas** portas contratadas desde a
+> T7.
+>
 > Registrada em 2026-08-27, por seleção humana, a partir da
 > [issue #100](https://github.com/biahflow/croquito/issues/100). Três decisões de domínio
 > foram tomadas por ato humano na abertura e estão em **Scope** — elas são o que separa esta

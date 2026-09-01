@@ -6,7 +6,9 @@ import type {
   BulletinResponse,
   IdentityLinkPreviewResponse,
   OverlayResponse,
+  RoundSummary,
   TakeoffItem,
+  RoundPreviewResponse,
   ValuationOrigin,
   WorksiteResponse,
   WorksiteSheet,
@@ -19,6 +21,7 @@ import {
   DeclararIdentidade,
   FaixaDeFolhas,
   FolhaSemPacote,
+  HerancaDaRodadaAnterior,
   LerFolhasEmLote,
   MedicaoApp,
   OverlaySemRerender,
@@ -27,6 +30,7 @@ import {
   OrigemDoOrcamento,
   OverlayDoTakeoff,
   PainelSemAcesso,
+  PreviaDaReRa,
   ProgressoExportacao,
   RegimeDeConferencia,
   RegistroDaAprovacao,
@@ -34,6 +38,7 @@ import {
   ReRatificacaoFieldset,
   TelaAuditoriaReprovada,
 } from "./MedicaoApp";
+import type { EstadoDaPrevia } from "./previa";
 import { AVISO_DOSSIE_GERADO, AVISO_DOSSIE_PREVIA } from "./labels";
 
 /**
@@ -1357,3 +1362,179 @@ describe("DeclararIdentidade", () => {
     expect(html).not.toContain("Total hoje, sem o vínculo");
   });
 });
+
+/**
+ * A herança e a prévia da abertura (F-040, decisões 4 e 6 do pacote aprovado).
+ *
+ * As duas são componentes exportados justamente para serem provadas aqui, fora do App: o que
+ * se mede é o que a orçamentista lê ANTES de gravar.
+ *
+ * Desde a T7 elas recebem a resposta do SERVIDOR, e não uma conta feita no navegador. O que
+ * estes testes provam, portanto, é exibição e estado — inclusive os dois estados que a T6 não
+ * tinha, porque não havia rede a falhar: "projetando" e "não consegui projetar".
+ */
+const PREVIA_PRONTA: RoundPreviewResponse = {
+  worksite_key: "praca-orcada-sintetica",
+  worksite_name: "PRACA ORCADA SINTETICA",
+  period_number: 2,
+  previous_period_number: 1,
+  measured_total_amount: "250.00",
+  lines: [
+    {
+      code: "CE04100010(/)",
+      item_number: "1.1",
+      description: "ALAMBRADO GALVANIZADO",
+      unit: "m",
+      contracted_unit_price: "50.00",
+      current_unit_price: "50.00",
+      new_unit_price: "50.00",
+      contracted_quantity: "12.00",
+      current_quantity: "12.00",
+      current_balance_quantity: "7.00",
+      accumulated_quantity: "5.00",
+      measured_quantity: "5.00",
+      re_ratified: false,
+      amendment_delta: "+3.00",
+      new_current_quantity: "15.00",
+      new_balance_quantity: "10.00",
+      is_new_item: false,
+    },
+    {
+      code: "CE04100020(/)",
+      item_number: "2",
+      description: "PORTAO SINTETICO GALVANIZADO",
+      unit: "un",
+      contracted_unit_price: "30.00",
+      current_unit_price: "30.00",
+      new_unit_price: "30.00",
+      contracted_quantity: "0.00",
+      current_quantity: "0.00",
+      current_balance_quantity: "0.00",
+      accumulated_quantity: "0.00",
+      measured_quantity: "0.00",
+      re_ratified: false,
+      amendment_delta: "+2.00",
+      new_current_quantity: "2.00",
+      new_balance_quantity: "2.00",
+      is_new_item: true,
+    },
+  ],
+};
+
+const PRONTA: EstadoDaPrevia = { status: "pronta", previa: PREVIA_PRONTA };
+
+describe("HerancaDaRodadaAnterior", () => {
+  it("mostra o que vem da rodada anterior código a código, antes de qualquer declaração", () => {
+    const html = renderToStaticMarkup(<HerancaDaRodadaAnterior estado={PRONTA} />);
+
+    expect(html).toContain("O que vem da rodada anterior");
+    expect(html).toContain("CE04100010(/)");
+    expect(html).toContain("Contratado");
+    expect(html).toContain("Vigente");
+    expect(html).toContain("Período 1");
+    expect(html).toContain("Acumulado");
+    expect(html).toContain("Saldo");
+    // Contratado e vigente repetem o mesmo número DE PROPÓSITO (decisão 4 do pacote).
+    expect(html.match(/12,00/g)?.length).toBe(2);
+    expect(html).toContain("5,00");
+    expect(html).toContain("7,00");
+    expect(html).toContain("R$ 250,00");
+    expect(html).toContain("vigente é igual a contratado");
+  });
+
+  it("a linha que nasce da RE-RA declarada agora não é herança da rodada anterior", () => {
+    const html = renderToStaticMarkup(<HerancaDaRodadaAnterior estado={PRONTA} />);
+
+    expect(html).not.toContain("PORTAO SINTETICO GALVANIZADO");
+  });
+
+  it("antes da resposta, não afirma herança nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior estado={{ status: "carregando" }} />,
+    );
+
+    expect(html).toContain("Lendo o que vem da rodada anterior");
+    expect(html).not.toContain("Contratado");
+  });
+
+  it("prévia indisponível diz o motivo e afirma que a abertura continua possível", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior
+        estado={{ status: "indisponivel", motivo: "A rede não respondeu." }}
+      />,
+    );
+
+    expect(html).toContain("Não foi possível projetar");
+    expect(html).toContain("A rede não respondeu.");
+    expect(html).toContain("continua podendo ser aberta");
+    expect(html).toContain('role="alert"');
+  });
+
+  it("sem contratado código a código, declara a ausência em vez de tabela vazia", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior
+        estado={{ status: "pronta", previa: { ...PREVIA_PRONTA, lines: [] } }}
+      />,
+    );
+
+    expect(html).toContain("não devolveu o contratado código a código");
+    expect(html).toContain('role="alert"');
+  });
+});
+
+describe("PreviaDaReRa", () => {
+  it("mostra contratado → efeito → vigente → saldo novo, e diz que é prévia", () => {
+    const html = renderToStaticMarkup(<PreviaDaReRa estado={PRONTA} declarada />);
+
+    expect(html).toContain("Prévia: o que a declaração faz, antes de gravar");
+    expect(html).toContain("Vigente novo");
+    expect(html).toContain("Saldo novo");
+    expect(html).toContain("+3,00");
+    expect(html).toContain("15,00");
+    expect(html).toContain("10,00");
+    // O vigente é resultado de uma conta visível, e a tela diz que não se digita (decisão 6).
+    expect(html).toContain("não é digitado");
+    // A autoridade sobre o número é do servidor, e a tela declara isso.
+    expect(html).toContain("Quem faz essa conta é o servidor");
+    expect(html).toContain("nada foi gravado ainda");
+  });
+
+  it("marca o item novo por escrito e mostra o preço materializado do catálogo", () => {
+    const html = renderToStaticMarkup(<PreviaDaReRa estado={PRONTA} declarada />);
+
+    expect(html).toContain("item novo");
+    expect(html).toContain("PORTAO SINTETICO GALVANIZADO");
+    expect(html).toContain("R$ 30,00");
+    expect(html).toContain("2,00");
+  });
+
+  it("recusa do servidor aparece por extenso, sem impedir a declaração", () => {
+    const html = renderToStaticMarkup(
+      <PreviaDaReRa
+        estado={{
+          status: "indisponivel",
+          motivo: "O item novo cita um código que o catálogo contratual não traz.",
+        }}
+        declarada
+      />,
+    );
+
+    expect(html).toContain("Não foi possível projetar o efeito");
+    expect(html).toContain("o catálogo contratual não traz");
+    expect(html).toContain("A abertura continua possível");
+    expect(html).toContain('role="alert"');
+  });
+
+  it("enquanto o servidor projeta, a tela diz que está projetando", () => {
+    const html = renderToStaticMarkup(
+      <PreviaDaReRa estado={{ status: "carregando" }} declarada />,
+    );
+
+    expect(html).toContain("Projetando o efeito da declaração");
+  });
+
+  it("sem declaração, não há prévia na tela", () => {
+    expect(renderToStaticMarkup(<PreviaDaReRa estado={PRONTA} declarada={false} />)).toBe("");
+  });
+});
+

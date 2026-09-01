@@ -70,6 +70,12 @@ JOURNEY_ROUTE_PREFIXES: Final[Mapping[str, Journey]] = {
     "/v1/uploads": "croqui",
     "/v1/projects": "croqui",
     "/v1/valuation-rounds": "medicao",
+    # A prévia da abertura (F-040 T7) é da medição, e precisa de entrada PRÓPRIA: o prefixo
+    # acima não a alcança, porque "valuation-round-previews" não começa por
+    # "valuation-rounds". Pendurá-la sob `/v1/valuation-rounds/...` a faria disputar o
+    # `{round_id}` com a leitura da rodada — e o portão de jornada é justamente o que não
+    # deve depender de ordem de declaração de rota.
+    "/v1/valuation-round-previews": "medicao",
     # A escolha da origem de uma medição é pergunta da MEDIÇÃO, e por isso mora aqui. Pô-la
     # sob `/v1/estimate-rounds` faria um tenant com o orçamento `disabled` e a medição
     # `enabled` levar `403` numa tela de medição (F-036).

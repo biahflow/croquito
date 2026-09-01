@@ -11,7 +11,7 @@ import re
 import time
 from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Final, Literal, cast
@@ -1778,6 +1778,95 @@ class CreateValuationRoundRequest(ApiModel):
                 "sem contratado não há quantidade contratual a re-ratificar"
             )
         return self
+
+
+class ValuationRoundPreviewRequest(ApiModel):
+    """A projeção da abertura, antes de gravar (F-040 T7).
+
+    Espelha `CreateValuationRoundRequest` no que decide NÚMERO — origem, período e os atos
+    declarados — e omite o que só existe depois de gravar: `reference_label`,
+    `contract_label` e os campos da obra não mudam o contratado, o vigente nem o saldo.
+
+    Só as duas origens **contratadas**. `catalog_upload_id` abre rodada sem contratado: não há
+    contratado, vigente nem saldo a projetar, e oferecer a prévia ali prometeria uma conta que
+    não existe.
+    """
+
+    estimate_round_id: UUID | None = None
+    previous_round_id: UUID | None = None
+    period_number: int = Field(ge=1, le=999)
+    price_adjustment: PriceAdjustmentRequest | None = None
+    amendment: AmendmentRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> ValuationRoundPreviewRequest:
+        provided = [
+            name
+            for name, value in (
+                ("estimate_round_id", self.estimate_round_id),
+                ("previous_round_id", self.previous_round_id),
+            )
+            if value is not None
+        ]
+        if len(provided) != 1:
+            raise ValueError(
+                "informe exatamente uma origem contratada: estimate_round_id OU previous_round_id"
+            )
+        return self
+
+
+class ValuationRoundPreviewLine(ApiModel):
+    """Um código na prévia: o que ele é hoje, o que a declaração faz com ele e o que sobra.
+
+    Toda quantidade e todo dinheiro saem como **string decimal**, na mesma disciplina do resto
+    da medição: a tela exibe o que veio, e não recompõe a conta (`apps/web/AGENTS.md`).
+
+    Os pares `current_*` e `new_*` são o antes e o depois do mesmo número: `current_quantity` é
+    o vigente HOJE — que já pode trazer RE-RA herdada da rodada anterior —, e `new_quantity` é
+    o vigente depois do que está declarado nesta abertura. Sem declaração os dois repetem o
+    mesmo número de propósito, que é o que faz a diferença aparecer no dia em que ela existir.
+    """
+
+    code: str
+    item_number: str
+    description: str
+    unit: str
+    contracted_unit_price: str
+    current_unit_price: str
+    #: Vigente depois do reajuste declarado nesta abertura; sem reajuste repete o vigente.
+    new_unit_price: str
+    contracted_quantity: str
+    current_quantity: str
+    current_balance_quantity: str
+    #: O acumulado NÃO se move com a RE-RA: período já medido guarda a quantidade que valeu
+    #: nele (ADR-0055, decisão 6). Ele é o mesmo antes e depois da declaração.
+    accumulated_quantity: str
+    #: Quanto o código mediu no período que fechou na rodada anterior. `null` na origem por
+    #: orçamento assinado, onde não existe período anterior a citar.
+    measured_quantity: str | None = None
+    #: Se o vigente de HOJE já difere do contratado — RE-RA herdada, não a declarada aqui.
+    re_ratified: bool
+    #: O efeito declarado nesta abertura, com sinal explícito. `null` quando a RE-RA não cita
+    #: o código: ausência de declaração não é delta zero declarado.
+    amendment_delta: str | None = None
+    new_current_quantity: str
+    new_balance_quantity: str
+    #: A linha nasce com esta RE-RA: o código não existia no consolidado e o servidor
+    #: materializou descrição, unidade e preço do catálogo contratual (ADR-0056, decisão 7).
+    is_new_item: bool = False
+
+
+class ValuationRoundPreviewResponse(ApiModel):
+    """O consolidado que a rodada VAI nascer com, código a código, sem nada gravado."""
+
+    worksite_key: str
+    worksite_name: str
+    period_number: int
+    #: O período que fechou na rodada anterior, na origem da medição seguinte.
+    previous_period_number: int | None = None
+    #: O total medido naquele período, como o boletim aprovado o declarou.
+    measured_total_amount: str | None = None
+    lines: list[ValuationRoundPreviewLine]
 
 
 class ValuationRoundResponse(ApiModel):
@@ -4792,6 +4881,18 @@ class _ValuationOrigin:
     contract_workbook_json: dict[str, Any] | None
     upload: UploadRecord | None
     """O registro de upload a marcar `VERIFIED`, quando a origem foi um upload do cliente."""
+    previous_period_number: int | None = None
+    """O período que FECHOU na rodada anterior, quando a origem foi a medição seguinte."""
+    previous_measured: Mapping[str, Decimal] = field(default_factory=dict)
+    """Quanto cada código mediu naquele período aprovado.
+
+    A criação não lê nenhum dos três campos abaixo: eles já estão dentro do consolidado que
+    ela grava. Quem os lê é a PRÉVIA (F-040 T7), que precisa mostrar o período que fechou
+    código a código sem que a tela vá somar as linhas do boletim por fora — foi essa
+    derivação no cliente que a T7 veio desfazer.
+    """
+    previous_measured_total: str | None = None
+    """O total medido no período que fechou, como o boletim aprovado o declarou."""
 
 
 def _price_adjustment_from_request(
@@ -5132,6 +5233,186 @@ def _origin_from_previous_round(
         estimate_digest=record.estimate_digest,
         contract_workbook_json=nxt.model_dump(mode="json"),
         upload=None,
+        previous_period_number=record.period_number,
+        previous_measured=measured,
+        previous_measured_total=str(valuation.total_amount),
+    )
+
+
+def _contracted_valuation_origin(
+    session: Session,
+    application: FastAPI,
+    *,
+    estimate_round_id: UUID | None,
+    previous_round_id: UUID | None,
+    period_number: int,
+    principal: Principal,
+) -> _ValuationOrigin:
+    """As duas portas CONTRATADAS, antes de qualquer ato declarado na abertura.
+
+    Existe separada de `_resolve_valuation_origin` porque a prévia da F-040 T7 precisa do
+    consolidado nos dois estados — antes e depois da RE-RA declarada — e precisa que os dois
+    saiam do mesmo caminho que a criação usa. Separar aqui é o que torna "a prévia e a rodada
+    criada devolvem os mesmos números" uma propriedade da estrutura, e não uma coincidência
+    entre duas implementações parecidas.
+    """
+    if estimate_round_id is not None:
+        return _origin_from_signed_estimate(
+            session, application, estimate_round_id=estimate_round_id, principal=principal
+        )
+    assert previous_round_id is not None
+    return _origin_from_previous_round(
+        session,
+        application,
+        previous_round_id=previous_round_id,
+        declared_period_number=period_number,
+        principal=principal,
+    )
+
+
+def _apply_declared_acts(
+    session: Session,
+    application: FastAPI,
+    *,
+    origin: _ValuationOrigin,
+    price_adjustment: PriceAdjustmentRequest | None,
+    amendment: AmendmentRequest | None,
+    principal: Principal,
+    storage_flavor: str,
+) -> _ValuationOrigin:
+    """Reajuste e RE-RA sobre o consolidado da origem, na ordem declarada.
+
+    Reajuste e RE-RA entram no consolidado ANTES de ele ser gravado e compõem na ordem
+    declarada (ADR-0056, decisão 6): depois disso ele é imutável na rodada (ADR-0048,
+    decisão 7), e é essa imutabilidade que faz a declaração valer para o período inteiro.
+
+    Nada aqui grava: o que sai é um `_ValuationOrigin` novo. Quem persiste é a criação da
+    rodada; a prévia chama exatamente esta função e descarta o resultado.
+    """
+    if price_adjustment is None and amendment is None:
+        return origin
+    assert origin.contract_workbook_json is not None
+    contract = ContractWorkbook.model_validate(dict(origin.contract_workbook_json))
+    if price_adjustment is not None:
+        adjustment = _price_adjustment_from_request(
+            application,
+            session,
+            payload=price_adjustment,
+            contract=contract,
+            principal=principal,
+            storage_flavor=storage_flavor,
+        )
+        try:
+            reajustado = contract.model_copy(
+                update={"adjustments": [*contract.adjustments, adjustment]}
+            )
+            # `model_copy` não revalida: a releitura é o que faz a cobertura por código do
+            # `catalog_version` ser conferida pelo domínio, e não só pela fronteira.
+            contract = ContractWorkbook.model_validate(reajustado.model_dump(mode="json"))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+    if amendment is not None:
+        declared = _amendment_from_request(
+            application, payload=amendment, origin=origin, principal=principal
+        )
+        try:
+            contract = apply_declared_amendment(contract, declared)
+        except ValuationValidationError as error:
+            raise _valuation_domain_problem(error) from error
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+    return replace(origin, contract_workbook_json=contract.model_dump(mode="json"))
+
+
+def _preview_contract(origin: _ValuationOrigin) -> ContractWorkbook:
+    """O consolidado da origem, revalidado. As duas portas contratadas sempre produzem um."""
+    assert origin.contract_workbook_json is not None
+    try:
+        return ContractWorkbook.model_validate(dict(origin.contract_workbook_json))
+    except ValidationError as error:
+        raise _valuation_model_problem(error) from error
+
+
+def _signed(delta: Decimal) -> str:
+    """O delta como a tela o lê: sinal SEMPRE explícito, para "+120,00" não virar "120,00"."""
+    return str(delta) if delta < 0 else f"+{delta}"
+
+
+def _valuation_round_preview(
+    *,
+    before: _ValuationOrigin,
+    after: _ValuationOrigin,
+    period_number: int,
+) -> ValuationRoundPreviewResponse:
+    """A prévia: o consolidado antes e depois dos atos declarados, código a código.
+
+    Os dois consolidados vêm das MESMAS funções que a criação da rodada usa
+    (`_contracted_valuation_origin` e `_apply_declared_acts`); aqui não se decide nada de
+    domínio, só se lê o que elas produziram. Vigente, saldo e preço vigente continuam
+    DERIVADOS do consolidado (ADR-0055 decisão 3, ADR-0056 decisão 3) e não são gravados em
+    lugar nenhum — a prévia não grava coisa alguma.
+
+    O efeito declarado é a diferença entre o que este ato acrescentou e o que já havia:
+    `after.amendments` é `before.amendments` mais as declaradas agora, e é só sobre essas que
+    a coluna "RE-RA" fala. Uma RE-RA herdada da rodada anterior já está dentro do vigente de
+    hoje, e contá-la de novo mostraria o mesmo efeito duas vezes.
+    """
+    consolidado_hoje = _preview_contract(before)
+    consolidado_novo = _preview_contract(after)
+    herdadas = {line.code: line for line in consolidado_hoje.lines}
+    declarados: dict[str, Decimal] = {}
+    for amendment in consolidado_novo.amendments[len(consolidado_hoje.amendments) :]:
+        for amendment_line in amendment.lines:
+            declarados[amendment_line.code] = (
+                declarados.get(amendment_line.code, Decimal("0.00")) + amendment_line.quantity_delta
+            )
+    tem_periodo_anterior = before.previous_period_number is not None
+    zero = Decimal("0.00")
+    lines: list[ValuationRoundPreviewLine] = []
+    for line in consolidado_novo.lines:
+        hoje = herdadas.get(line.code)
+        # Linha que nasce com esta RE-RA: hoje ela não existe, e é isso que "0.00" diz. Não é
+        # um número inventado — é o contratado de um código que o contrato ainda não tinha.
+        contratado = hoje.contract_quantity if hoje is not None else zero
+        vigente_hoje = consolidado_hoje.current_quantity(hoje) if hoje is not None else zero
+        saldo_hoje = consolidado_hoje.current_balance_quantity(hoje) if hoje is not None else zero
+        preco_hoje = (
+            consolidado_hoje.current_unit_price(hoje) if hoje is not None else line.unit_price
+        )
+        lines.append(
+            ValuationRoundPreviewLine(
+                code=line.code,
+                item_number=line.item_number,
+                description=line.description,
+                unit=line.unit,
+                contracted_unit_price=str(line.unit_price),
+                current_unit_price=str(preco_hoje),
+                new_unit_price=str(consolidado_novo.current_unit_price(line)),
+                contracted_quantity=str(contratado),
+                current_quantity=str(vigente_hoje),
+                current_balance_quantity=str(saldo_hoje),
+                accumulated_quantity=str(line.accumulated_quantity),
+                measured_quantity=(
+                    str(before.previous_measured.get(line.code, zero))
+                    if tem_periodo_anterior
+                    else None
+                ),
+                re_ratified=vigente_hoje != contratado,
+                amendment_delta=(
+                    _signed(declarados[line.code]) if line.code in declarados else None
+                ),
+                new_current_quantity=str(consolidado_novo.current_quantity(line)),
+                new_balance_quantity=str(consolidado_novo.current_balance_quantity(line)),
+                is_new_item=hoje is None,
+            )
+        )
+    return ValuationRoundPreviewResponse(
+        worksite_key=after.worksite_key,
+        worksite_name=after.worksite_name,
+        period_number=period_number,
+        previous_period_number=before.previous_period_number,
+        measured_total_amount=before.previous_measured_total,
+        lines=lines,
     )
 
 
@@ -5145,58 +5426,23 @@ def _resolve_valuation_origin(
 ) -> _ValuationOrigin:
     """As três portas da criação da rodada; o contrato já garantiu que só uma foi usada."""
     if payload.estimate_round_id is not None or payload.previous_round_id is not None:
-        if payload.estimate_round_id is not None:
-            origin = _origin_from_signed_estimate(
-                session,
-                application,
-                estimate_round_id=payload.estimate_round_id,
-                principal=principal,
-            )
-        else:
-            assert payload.previous_round_id is not None
-            origin = _origin_from_previous_round(
-                session,
-                application,
-                previous_round_id=payload.previous_round_id,
-                declared_period_number=payload.period_number,
-                principal=principal,
-            )
-        if payload.price_adjustment is None and payload.amendment is None:
-            return origin
-        # Reajuste e RE-RA entram no consolidado ANTES de ele ser gravado e compõem na ordem
-        # declarada (ADR-0056, decisão 6): depois disso ele é imutável na rodada (ADR-0048,
-        # decisão 7), e é essa imutabilidade que faz a declaração valer para o período inteiro.
-        assert origin.contract_workbook_json is not None
-        contract = ContractWorkbook.model_validate(dict(origin.contract_workbook_json))
-        if payload.price_adjustment is not None:
-            adjustment = _price_adjustment_from_request(
-                application,
-                session,
-                payload=payload.price_adjustment,
-                contract=contract,
-                principal=principal,
-                storage_flavor=storage_flavor,
-            )
-            try:
-                reajustado = contract.model_copy(
-                    update={"adjustments": [*contract.adjustments, adjustment]}
-                )
-                # `model_copy` não revalida: a releitura é o que faz a cobertura por código do
-                # `catalog_version` ser conferida pelo domínio, e não só pela fronteira.
-                contract = ContractWorkbook.model_validate(reajustado.model_dump(mode="json"))
-            except ValidationError as error:
-                raise _valuation_model_problem(error) from error
-        if payload.amendment is not None:
-            declared = _amendment_from_request(
-                application, payload=payload.amendment, origin=origin, principal=principal
-            )
-            try:
-                contract = apply_declared_amendment(contract, declared)
-            except ValuationValidationError as error:
-                raise _valuation_domain_problem(error) from error
-            except ValidationError as error:
-                raise _valuation_model_problem(error) from error
-        return replace(origin, contract_workbook_json=contract.model_dump(mode="json"))
+        origin = _contracted_valuation_origin(
+            session,
+            application,
+            estimate_round_id=payload.estimate_round_id,
+            previous_round_id=payload.previous_round_id,
+            period_number=payload.period_number,
+            principal=principal,
+        )
+        return _apply_declared_acts(
+            session,
+            application,
+            origin=origin,
+            price_adjustment=payload.price_adjustment,
+            amendment=payload.amendment,
+            principal=principal,
+            storage_flavor=storage_flavor,
+        )
 
     # Caminho de sempre: obra declarada e catálogo por upload, sem contratado a conferir.
     assert payload.catalog_upload_id is not None
@@ -12472,6 +12718,63 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         session.commit()
         return response
+
+    @application.post(
+        "/v1/valuation-round-previews",
+        response_model=ValuationRoundPreviewResponse,
+        tags=["valuation"],
+    )
+    async def preview_valuation_round(
+        payload: ValuationRoundPreviewRequest,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationRoundPreviewResponse:
+        """O contratado que a rodada VAI nascer com, antes de gravar (F-040 T7).
+
+        Somente leitura, e por isso **sem** `Idempotency-Key`, sem `base_version` e sem
+        revisão nova: não há nada a repetir nem a versionar. Nada é gravado — nem a rodada,
+        nem o consolidado, nem o upload do reajuste, que aqui só é conferido.
+
+        Ela existe porque a conta é do SERVIDOR. Até a T6 a tela projetava o efeito da RE-RA
+        somando no cliente, o que contraria a regra da jornada de medição em
+        `apps/web/AGENTS.md` e obrigava o navegador a redescobrir duas identidades do domínio
+        (o acumulado e o medido do período) que nenhuma leitura expunha.
+
+        As recusas são as MESMAS da criação, e é de propósito: quem projeta uma abertura que
+        seria recusada precisa ler a recusa aqui — item novo fora do catálogo contratual
+        (`AMENDMENT_NEW_ITEM_CODE_MISSING`), rodada anterior não aprovada, período fora de
+        sequência, catálogo ilegível (`CATALOG_REQUIRED`). Uma prévia que só recusasse no
+        `POST` da criação seria uma prévia que mente.
+
+        `POST` porque a declaração viaja no CORPO: a RE-RA tem linhas, notas e rótulos, e
+        espremê-la em query string a exporia na URL e nos logs.
+        """
+        _require_valuation_reviewer(principal)
+        origin = _contracted_valuation_origin(
+            session,
+            application,
+            estimate_round_id=payload.estimate_round_id,
+            previous_round_id=payload.previous_round_id,
+            period_number=payload.period_number,
+            principal=principal,
+        )
+        projetado = _apply_declared_acts(
+            session,
+            application,
+            origin=origin,
+            price_adjustment=payload.price_adjustment,
+            amendment=payload.amendment,
+            principal=principal,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        preview = _valuation_round_preview(
+            before=origin, after=projetado, period_number=payload.period_number
+        )
+        # Nenhuma das duas funções acima grava, mas a garantia de que esta rota é somente
+        # leitura não pode depender de auditar as duas para sempre: o rollback a torna
+        # estrutural, e `test_a_previa_nao_grava_nada` a fixa.
+        session.rollback()
+        return preview
 
     @application.get(
         "/v1/valuation-rounds",
