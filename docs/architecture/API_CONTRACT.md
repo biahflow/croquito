@@ -2700,6 +2700,17 @@ gravado: assinar não muda o conteúdo orçado e não pode mudar o endereço da 
 exportação não altera o orçamento — a revisão nova carrega o mesmo `estimate_json` e
 acrescenta só a referência e o digest do arquivo. A resposta não carrega URL.
 
+
+Desde a F-043 T3 o corpo aceita `estimate_template_id` **opcional**. Sem ele, a planilha sai
+como sempre saiu — na ordem do próprio orçamento. Com ele, ela percorre o **gabarito** da
+prefeitura: todas as linhas na ordem publicada, inclusive as de quantidade zero, e auditada
+pelo auditor do gabarito. O mesmo portão fail-closed vale nos dois caminhos, e é isso que
+impede que escolher o gabarito escolha também uma auditoria mais frouxa.
+
+O gabarito precisa estar **em circulação** e visível ao tenant; fora disso é `404`. A revisão
+usada fica carimbada em `estimate_round_revisions.estimate_template_json` — identidade,
+revisão e digest do documento —, e é `NULL` quando a planilha saiu sem gabarito, o que é
+afirmação e não ausência de informação.
 ### `GET /v1/estimate-rounds/{round_id}/estimate`
 
 Retorna o orçamento com BDI, totais e linhas **recomputados** na leitura, mais
@@ -2732,6 +2743,21 @@ mostra ("citado por 6 parcelas"). `unit` é a unidade do **primeiro** operando q
 parâmetro, e `null` quando os operandos discordam entre si: escolher uma faria o campo ser
 rotulado com uma unidade que metade das parcelas desmente. Discordância **não** recusa o
 acervo. Ordem determinística por `(name, kit_version, id)`.
+
+### `GET /v1/estimate-rounds/{round_id}/estimate-templates`
+
+Requer o papel de leitura da jornada do orçamento. Devolve os gabaritos que **esta rodada**
+pode usar ao publicar a planilha: os de plataforma em circulação mais os do próprio tenant,
+nunca os de outro. Existe separada de `GET /v1/platform/estimate-templates` porque quem
+escolhe é a orçamentista, que não é `platform_operator` — a rota de plataforma administra o
+acervo, esta o oferece.
+
+Cada gabarito sai com `estimate_template_id`, `name`, `template_version`, `origin`,
+`source_label`, `sheet_name`, `memory_sheet_name`, `row_count`, `priced_row_count` e
+`document_sha256`. Não saem `created_by` — que é a identidade de um operador de outro tenant —
+nem `withdrawn_at`, já que a lista só traz o que está em circulação. Ordenação determinística
+por `(name, template_version, id)`. Rodada alheia é `404`, e o papel é exigido antes de
+qualquer lookup.
 
 ### `POST /v1/estimate-rounds/{round_id}/site-setup/preview`
 

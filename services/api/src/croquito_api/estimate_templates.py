@@ -139,3 +139,30 @@ def template_record_payload(
         "created_at": record.created_at,
         "withdrawn_at": record.withdrawn_at,
     }
+
+
+def template_option_payload(
+    record: EstimateTemplateRecord, template: EstimateTemplateLayout
+) -> dict[str, Any]:
+    """O gabarito como a RODADA o oferece: o que decide a escolha, e nada além.
+
+    Difere de `template_record_payload` no que a orçamentista precisa saber para escolher, e
+    que a administração não precisa: quantas linhas já vêm com preço no gabarito. É esse par
+    — total e com preço — que o carimbo "433 linhas · 43 com quantidade · 390 zeradas" da tela
+    aproxima antes de o orçamento existir.
+
+    Não sai daqui: `created_by`, `withdrawn_at` e as linhas. Quem lista pela rodada só vê
+    gabarito em circulação, então `available` seria sempre `true`.
+    """
+    return {
+        "estimate_template_id": record.id,
+        "name": record.name,
+        "template_version": record.template_version,
+        "origin": template_origin(record),
+        "source_label": record.source_label,
+        "sheet_name": template.sheet_name,
+        "memory_sheet_name": template.memory_sheet_name,
+        "row_count": len(template.rows),
+        "priced_row_count": sum(1 for row in template.rows if row.unit_price is not None),
+        "document_sha256": record.document_sha256,
+    }

@@ -554,7 +554,7 @@ def test_a_rodada_nasce_sem_cascata_e_com_versao_um(tmp_path: Path) -> None:
 
 
 def _read_paths(round_id: str) -> list[str]:
-    """As 14 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
+    """As 15 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
 
     Fonte única dos dois testes de papel: uma lista por teste deixaria o teste do papel novo
     cobrir menos rotas que o antigo sem ninguém perceber, que é exatamente como uma rota
@@ -575,6 +575,7 @@ def _read_paths(round_id: str) -> list[str]:
         f"/v1/estimate-rounds/{round_id}/code-assignments",
         f"/v1/estimate-rounds/{round_id}/estimate",
         f"/v1/estimate-rounds/{round_id}/site-setup-kits",
+        f"/v1/estimate-rounds/{round_id}/estimate-templates",
         f"/v1/estimate-rounds/{round_id}/calc-matrix",
     ]
 
@@ -3519,3 +3520,216 @@ def test_desfazer_antes_da_aprovacao_passa(tmp_path: Path) -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["assignments"]["revocations"][0]["code"] == _SCO_CODE
+
+
+# --- F-043 T3: o gabarito da prefeitura escolhido no despacho ------------------------------
+
+
+def _grid_column(letter: str, label: str) -> dict[str, Any]:
+    return {"letter": letter, "label": label, "width": 14}
+
+
+def _publish_grid(
+    client: TestClient,
+    *,
+    codes: tuple[str, ...] = (_SCO_CODE, _EMOP_CODE),
+    revision: str = "REV. 03 — 2026-08",
+    name: str = "PLANILHA ORÇAMENTÁRIA SINTÉTICA",
+    key: str = "publica-gabarito",
+) -> str:
+    """Publica um gabarito que CONTÉM os códigos da fixture, mais uma linha zerada.
+
+    A linha zerada é o ponto do gabarito: ela sai no arquivo mesmo sem quantidade, e é o que
+    distingue "percorrer o gabarito" de "imprimir o orçamento".
+    """
+    linhas = [
+        {
+            "group": "01",
+            "item": f"01.{indice}",
+            "code": code,
+            "description": f"SERVICO SINTETICO {indice}",
+            "unit": "m2",
+            "unit_price": "10.00",
+        }
+        for indice, code in enumerate(codes, start=1)
+    ]
+    linhas.append(
+        {
+            "group": "02",
+            "item": "02.1",
+            "code": "CE09999999(/)",
+            "description": "SERVICO QUE O ORCAMENTO NAO TEM",
+            "unit": "un",
+            "unit_price": "5.00",
+        }
+    )
+    response = client.post(
+        "/v1/platform/estimate-templates",
+        headers={
+            "Authorization": "Bearer test:tenant-plataforma:operador:platform_operator",
+            "Idempotency-Key": key,
+        },
+        json={
+            "name": name,
+            "source_label": "Gabarito sintético de teste",
+            "document": {
+                "sheet_name": "PLANILHA ORÇAMENTÁRIA",
+                "title": "PLANILHA ORÇAMENTÁRIA SINTÉTICA",
+                "revision_label": revision,
+                "memory_sheet_name": "MEMÓRIA DE CÁLCULO",
+                "header_row": 8,
+                "columns": {
+                    "group": _grid_column("A", "GRUPO"),
+                    "item": _grid_column("B", "ITEM"),
+                    "code": _grid_column("C", "CÓDIGO"),
+                    "description": _grid_column("D", "DISCRIMINAÇÃO"),
+                    "unit": _grid_column("E", "UN"),
+                    "quantity": _grid_column("F", "QUANT"),
+                    "unit_price": _grid_column("G", "PREÇO UNIT"),
+                    "total": _grid_column("H", "TOTAL"),
+                },
+                "rows": linhas,
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["estimate_template_id"])
+
+
+def _round_ready_for_export(client: TestClient) -> dict[str, Any]:
+    """Rodada montada e aprovada, pronta para o despacho."""
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+    montado = _build_estimate(client, round_id, base_version=state["version"], key="monta-p-gab")
+    assert montado.status_code == 200, montado.text
+    aprovado = _approve_estimate(
+        client, round_id, base_version=montado.json()["version"], key="aprova-p-gab"
+    )
+    assert aprovado.status_code == 200, aprovado.text
+    return {"round_id": round_id, "version": aprovado.json()["version"]}
+
+
+def test_a_rodada_oferece_os_gabaritos_que_ela_pode_usar(tmp_path: Path) -> None:
+    """A orçamentista não é `platform_operator`: sem esta rota, o gabarito seria inalcançável."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    template_id = _publish_grid(client)
+
+    response = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate-templates",
+        headers=_headers(key="lista-gabaritos"),
+    )
+
+    assert response.status_code == 200, response.text
+    corpo = response.json()
+    assert [item["estimate_template_id"] for item in corpo["templates"]] == [template_id]
+    oferecido = corpo["templates"][0]
+    assert oferecido["template_version"] == "REV. 03 — 2026-08"
+    assert oferecido["row_count"] == 3
+    assert oferecido["priced_row_count"] == 3
+    assert oferecido["origin"] == "platform"
+    # Quem publicou não sai: é operador de outro tenant.
+    assert "created_by" not in oferecido
+
+
+def test_gabarito_retirado_de_circulacao_nao_e_oferecido_nem_aceito(tmp_path: Path) -> None:
+    """Retirar tira da lista E do alcance: a escolha não pode alcançar o que a lista não oferece."""
+    client = _client(tmp_path)
+    state = _round_ready_for_export(client)
+    template_id = _publish_grid(client)
+    retirada = client.post(
+        f"/v1/platform/estimate-templates/{template_id}/withdraw",
+        headers={
+            "Authorization": "Bearer test:tenant-plataforma:operador:platform_operator",
+            "Idempotency-Key": "retira-gab",
+        },
+    )
+    assert retirada.status_code == 200, retirada.text
+
+    listagem = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate-templates",
+        headers=_headers(key="lista-pos-retirada"),
+    )
+    despacho = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate/export",
+        headers=_headers(key="exporta-retirado"),
+        json={"base_version": state["version"], "estimate_template_id": template_id},
+    )
+
+    assert listagem.json()["templates"] == []
+    assert despacho.status_code == 404, despacho.text
+
+
+def test_o_despacho_com_gabarito_carimba_a_revisao_na_rodada(tmp_path: Path) -> None:
+    """O carimbo é o que permite dizer, depois, com qual revisão a rodada publicou."""
+    client = _client(tmp_path)
+    state = _round_ready_for_export(client)
+    template_id = _publish_grid(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate/export",
+        headers=_headers(key="exporta-com-gabarito"),
+        json={"base_version": state["version"], "estimate_template_id": template_id},
+    )
+
+    assert response.status_code == 200, response.text
+    with _database(client).sessions() as session:
+        revisions = session.scalars(
+            select(EstimateRoundRevisionRecord)
+            .where(EstimateRoundRevisionRecord.round_id == state["round_id"])
+            .order_by(EstimateRoundRevisionRecord.version.desc())
+        ).all()
+        carimbo = revisions[0].estimate_template_json
+    assert carimbo is not None
+    assert carimbo["estimate_template_id"] == template_id
+    assert carimbo["template_version"] == "REV. 03 — 2026-08"
+    assert len(carimbo["document_sha256"]) == 64
+    # As linhas NÃO são copiadas para o carimbo: elas vivem no acervo, imutáveis.
+    assert "rows" not in carimbo
+
+
+def test_o_despacho_sem_gabarito_continua_publicando_como_hoje(tmp_path: Path) -> None:
+    """O caminho de quem não entrega àquela prefeitura não pode ter parado de funcionar.
+
+    `NULL` no carimbo é a afirmação de que não houve gabarito — não é ausência de informação.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_export(client)
+    _publish_grid(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate/export",
+        headers=_headers(key="exporta-sem-gabarito"),
+        json={"base_version": state["version"]},
+    )
+
+    assert response.status_code == 200, response.text
+    with _database(client).sessions() as session:
+        revisions = session.scalars(
+            select(EstimateRoundRevisionRecord)
+            .where(EstimateRoundRevisionRecord.round_id == state["round_id"])
+            .order_by(EstimateRoundRevisionRecord.version.desc())
+        ).all()
+        assert revisions[0].estimate_template_json is None
+
+
+def test_codigo_do_orcamento_ausente_do_gabarito_recusa_o_despacho(tmp_path: Path) -> None:
+    """O portão da T1 chega ao despacho: gabarito que não cobre o orçamento não publica.
+
+    É a recusa desenhada no estado 05 do pacote aprovado. Ela vem do domínio, e o que este
+    teste fixa é que a rota não a contorna — nem publica um arquivo incompleto.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_export(client)
+    # Gabarito que só traz UM dos dois códigos do orçamento.
+    template_id = _publish_grid(client, codes=(_SCO_CODE,), key="gabarito-incompleto")
+    objetos_antes = set(_store(client).objects)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate/export",
+        headers=_headers(key="exporta-incompleto"),
+        json={"base_version": state["version"], "estimate_template_id": template_id},
+    )
+
+    assert response.status_code >= 400, response.text
+    assert set(_store(client).objects) == objetos_antes, "nada é publicado numa recusa"

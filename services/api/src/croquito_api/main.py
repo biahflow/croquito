@@ -2657,6 +2657,38 @@ class EstimateSiteSetupKitListResponse(ApiModel):
     kits: list[EstimateSiteSetupKitOption]
 
 
+class EstimateTemplateOption(ApiModel):
+    """Um gabarito como a ESCOLHA da rodada o oferece (F-043 T3).
+
+    Mais pobre que `EstimateTemplateResponse` pelo mesmo motivo de
+    `EstimateSiteSetupKitOption`: `created_by` de um gabarito de plataforma é a identidade de
+    um operador de outro tenant, e quem escolhe um gabarito não tem por que saber quem o
+    publicou. `withdrawn_at` também não sai — esta lista só traz o que está em circulação.
+
+    `priced_row_count` existe para a tela poder dizer o tamanho do gabarito ANTES de o
+    orçamento ser confrontado com ele.
+    """
+
+    estimate_template_id: UUID
+    name: str
+    template_version: str
+    origin: Literal["platform", "tenant"]
+    source_label: str
+    sheet_name: str
+    memory_sheet_name: str
+    row_count: int
+    priced_row_count: int
+    document_sha256: str
+
+
+class EstimateTemplateOptionListResponse(ApiModel):
+    """Os gabaritos que ESTA rodada pode usar: os de plataforma em circulação e os do tenant."""
+
+    round_id: UUID
+    version: int
+    templates: list[EstimateTemplateOption]
+
+
 class SiteSetupPreviewRequest(ApiModel):
     """Pré-visualização da aplicação do acervo: leitura, e por isso sem guarda de escrita.
 
@@ -2806,12 +2838,22 @@ class ApproveEstimateRequest(ApiModel):
 class ExportEstimateRequest(ApiModel):
     """Despacho da planilha do orçamento: espelho de `ApproveEstimateRequest`.
 
-    Não há nada a escolher no despacho — nem formato, nem layout, nem "exportar assim
-    mesmo". O orçamento publicado é o da cabeça da rodada, o layout é o da prefeitura
-    (`default_template()`) e a aprovação válida é precondição, não opção.
+    Continua sem nada a escolher sobre o CONTEÚDO — nem formato, nem "exportar assim mesmo":
+    o orçamento publicado é o da cabeça da rodada, e a aprovação válida é precondição, não
+    opção.
+
+    O que a F-043 T3 acrescenta é a escolha do **gabarito**, e ela é de outra natureza: o
+    gabarito não muda o que o orçamento diz, muda a ORDEM e o conjunto de linhas em que ele é
+    impresso para a prefeitura. Sem `estimate_template_id` o despacho é o de sempre
+    (`default_template()`, a ordem do próprio orçamento); com ele, a planilha percorre o
+    gabarito declarado — todas as linhas, inclusive as de quantidade zero.
+
+    É opcional de propósito: a rodada que não entrega àquela prefeitura não tem gabarito a
+    citar, e exigir um faria a jornada de hoje parar de funcionar.
     """
 
     base_version: int = Field(ge=1)
+    estimate_template_id: UUID | None = None
 
 
 class SetEstimateTargetRequest(ApiModel):
@@ -18002,8 +18044,33 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         # para um orçamento que não pode ser despachado.
         estimate.ensure_exportable()
 
+        # O GABARITO escolhido, quando há um (F-043 T3). Ele entra como seção do template e
+        # nada mais: quem decide o escritor é `render_estimate_workbook`, olhando para
+        # `estimate_grid`. Gabarito retirado de circulação ou de outro tenant é `404` aqui
+        # pela mesma cláusula da listagem — a escolha não pode alcançar o que a lista não
+        # oferece.
+        template = default_template()
+        chosen_template: EstimateTemplateRecord | None = None
+        if payload.estimate_template_id is not None:
+            chosen_template = session.scalar(
+                select(EstimateTemplateRecord).where(
+                    EstimateTemplateRecord.id == str(payload.estimate_template_id),
+                    estimate_templates.visible_templates(principal.tenant_id),
+                    EstimateTemplateRecord.withdrawn_at.is_(None),
+                )
+            )
+            if chosen_template is None:
+                raise _problem(
+                    "NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Gabarito de orçamento não encontrado ou fora de circulação.",
+                )
+            template = template.model_copy(
+                update={"estimate_grid": estimate_templates.load_template(chosen_template)}
+            )
+
         # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
-        rendered = estimate_rounds.render_estimate_workbook(estimate, default_template())
+        rendered = estimate_rounds.render_estimate_workbook(estimate, template)
         object_key = estimate_rounds.estimate_workbook_key(
             tenant_id=principal.tenant_id,
             round_id=record.id,
@@ -18033,6 +18100,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     **head_digests,
                     estimate_rounds.ESTIMATE_WORKBOOK_DIGEST: rendered.audit.workbook_sha256,
                 },
+                # Qual gabarito produziu ESTE arquivo. Sem o carimbo, a rodada não saberia
+                # dizer depois com qual revisão publicou — e a revisão é justamente o que o
+                # arquivo imprime para se identificar fora do sistema.
+                **(
+                    {}
+                    if chosen_template is None
+                    else {
+                        "estimate_template_json": {
+                            "estimate_template_id": chosen_template.id,
+                            "name": chosen_template.name,
+                            "template_version": chosen_template.template_version,
+                            "document_sha256": chosen_template.document_sha256,
+                        }
+                    }
+                ),
             },
         )
         record.updated_at = datetime.now(UTC)
@@ -18190,6 +18272,54 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     site_setup_kits.kit_option_payload(kit, site_setup_kits.load_kit(kit))
                 )
                 for kit in ordered
+            ],
+        )
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/estimate-templates",
+        response_model=EstimateTemplateOptionListResponse,
+        tags=["estimate"],
+    )
+    async def list_estimate_round_templates(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> EstimateTemplateOptionListResponse:
+        """Os gabaritos que ESTA rodada pode usar ao publicar a planilha (F-043 T3).
+
+        Existe separada de `GET /v1/platform/estimate-templates` porque quem escolhe é a
+        orçamentista, e ela não é `platform_operator` — a rota de plataforma administra o
+        acervo, esta o oferece. Sem ela, o gabarito seria publicável e inalcançável.
+
+        Dois filtros, e só dois, no molde de `list_estimate_site_setup_kits`: **origem
+        visível**, que é `visible_templates` — plataforma mais o gabarito deste tenant, nunca
+        o de outro —, e **em circulação**, porque o que foi retirado deixa de ser oferecido sem
+        sumir do registro nem quebrar a planilha que já o citou.
+
+        A rodada continua sendo do tenant — rodada alheia é `404`, e o papel é exigido antes de
+        qualquer lookup.
+        """
+        _require_estimate_reader(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        records = session.scalars(
+            select(EstimateTemplateRecord).where(
+                estimate_templates.visible_templates(principal.tenant_id),
+                EstimateTemplateRecord.withdrawn_at.is_(None),
+            )
+        ).all()
+        # Ordenação em Python, como nas demais listagens: SQLite e PostgreSQL não ordenam
+        # texto do mesmo jeito, e a tela lê a ordem.
+        ordered = sorted(records, key=lambda item: (item.name, item.template_version, item.id))
+        return EstimateTemplateOptionListResponse(
+            round_id=round_id,
+            version=record.version,
+            templates=[
+                EstimateTemplateOption.model_validate(
+                    estimate_templates.template_option_payload(
+                        item, estimate_templates.load_template(item)
+                    )
+                )
+                for item in ordered
             ],
         )
 

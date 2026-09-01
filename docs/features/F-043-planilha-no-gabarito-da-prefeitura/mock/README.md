@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: **3**  
-Status: **Awaiting approval** (as revisões 1 e 2 foram aprovadas em 2026-08-28)  
+Status: **Approved (2026-09-01)** — revisão 3; as revisões 1 e 2 foram aprovadas em 2026-08-28  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -67,10 +67,10 @@ dois achados sobre os arquivos do cliente que **não** são escopo desta feature
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a forma do arquivo publicado na revisão 3 — o rodapé do ADR-0038 — e tudo que as revisões 1 e 2 estabeleceram e ela preserva |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-09-01 |
 | Revisão | 3 |
-| Explicitamente **não** coberto | a copy final; os códigos, descrições e preços das capturas, que continuam **sintéticos** (a *estrutura* deixou de ser); **qual das duas formas de rodapé vale** — a do cliente, desenhada aqui, ou a do ADR-0038 —, que é decisão de quem entrega; e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior |
+| Explicitamente **não** coberto | a copy final; os códigos, descrições e preços das capturas, que continuam **sintéticos** (a *estrutura* deixou de ser); e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior. **Qual das duas formas de rodapé vale deixou de ser questão aberta**: o dono decidiu em 2026-08-28 pela forma do ADR-0038, e é ela que esta revisão desenha |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
 precisa de registro próprio.

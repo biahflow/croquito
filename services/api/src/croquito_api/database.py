@@ -1402,6 +1402,15 @@ class EstimateRoundRevisionRecord(Base):
     """A `CalcMatrix` posta no build (ADR-0053, F-038 T8): a matriz elemento x serviço que
     gerou a memória desta revisão, guardada auditável e re-legível. `NULL` é o regime legado
     — código único por item, sem matriz —, que continua byte-idêntico."""
+    estimate_template_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """Qual gabarito produziu o `.xlsx` desta revisão (F-043 T3). `NULL` é a planilha
+    publicada SEM gabarito, que continua sendo o caminho de quem não entrega àquela
+    prefeitura — e é o que toda revisão anterior a esta feature diz, com precisão.
+
+    Guarda identidade, revisão e digest do documento; **não** guarda as linhas. Elas vivem
+    em `estimate_templates` e são imutáveis por publicação, então copiá-las aqui criaria uma
+    segunda verdade que poderia divergir. O digest é o que permite conferir depois que o
+    gabarito citado é byte a byte o que está no acervo."""
     estimate_built_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     """Subject de quem MONTOU o orçamento da cabeça, carregado adiante pelos atos seguintes.
 

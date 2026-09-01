@@ -2,8 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
 import type { Estimate } from "@croquito/contracts";
+import type { GabaritoOption } from "./gabarito";
 
 import {
+  EscolhaDoGabarito,
   AtoDeAprovacao,
   AutoriaDeContribuicao,
   BannerOrcamentoMudou,
@@ -2251,5 +2253,99 @@ describe("PainelParcelasDeCanteiro", () => {
     expect(html).toContain("A lista não pôde ser lida.");
     // Sem acervo a aplicar, nenhum botão inerte é desenhado.
     expect(html).not.toContain("Aplicar um acervo");
+  });
+});
+
+/**
+ * A escolha do gabarito no despacho (F-043 T3, estado 02 do pacote aprovado).
+ *
+ * Render estático: o que se prova é o que a orçamentista lê antes de gerar o arquivo.
+ */
+function gabaritoDeTeste(
+  overrides: Partial<GabaritoOption> = {},
+): GabaritoOption {
+  return {
+    estimate_template_id: "01930000-0000-7000-8000-0000000000a1",
+    name: "PLANILHA ORÇAMENTÁRIA — SMH/Rio",
+    template_version: "2023-10",
+    origin: "platform",
+    source_label: "Prefeitura sintética",
+    sheet_name: "PLANILHA ORÇAMENTÁRIA",
+    memory_sheet_name: "MEMÓRIA DE CÁLCULO",
+    row_count: 433,
+    priced_row_count: 43,
+    document_sha256: "a".repeat(64),
+    ...overrides,
+  };
+}
+
+describe("a escolha do gabarito no despacho", () => {
+  it("sem gabarito no acervo, a superfície inteira não aparece", () => {
+    const html = renderToStaticMarkup(
+      <EscolhaDoGabarito gabaritos={[]} escolhido="" onEscolher={() => {}} />,
+    );
+
+    expect(html).toBe("");
+  });
+
+  it("oferece “sem gabarito” como opção, e não como ausência", () => {
+    const html = renderToStaticMarkup(
+      <EscolhaDoGabarito
+        gabaritos={[gabaritoDeTeste()]}
+        escolhido=""
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Sem gabarito");
+    expect(html).toContain("na ordem do próprio orçamento");
+    // Nada escolhido: nem aviso de revisão, nem resumo do arquivo.
+    expect(html).not.toContain("O que vai no arquivo");
+    expect(html).not.toContain("revisão aceita");
+  });
+
+  it("a revisão aparece no seletor, junto do nome", () => {
+    const html = renderToStaticMarkup(
+      <EscolhaDoGabarito
+        gabaritos={[gabaritoDeTeste()]}
+        escolhido=""
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("rev. 2023-10");
+    expect(html).toContain("433 linhas");
+  });
+
+  it("escolhido, mostra o aviso de revisão e o que vai no arquivo", () => {
+    const html = renderToStaticMarkup(
+      <EscolhaDoGabarito
+        gabaritos={[gabaritoDeTeste()]}
+        escolhido="01930000-0000-7000-8000-0000000000a1"
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("2023-10");
+    expect(html).toContain("quem entrega à prefeitura");
+    expect(html).toContain("O que vai no arquivo");
+    expect(html).toContain("433 no gabarito");
+    expect(html).toContain("43 com preço declarado");
+    expect(html).toContain("MEMÓRIA DE CÁLCULO");
+    // O aviso é lido por leitor de tela, não só visto.
+    expect(html).toContain('role="status"');
+  });
+
+  it("diz que a revisão é impressa dentro do arquivo", () => {
+    const html = renderToStaticMarkup(
+      <EscolhaDoGabarito
+        gabaritos={[gabaritoDeTeste()]}
+        escolhido="01930000-0000-7000-8000-0000000000a1"
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("dentro");
+    expect(html).toContain("fora do sistema");
   });
 });

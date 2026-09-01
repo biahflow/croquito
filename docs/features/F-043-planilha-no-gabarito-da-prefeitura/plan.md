@@ -24,7 +24,7 @@ A publicação do gabarito como artefato de plataforma vem em seguida, e a escol
 |---|---|---|
 | T1 | [Gabarito de ordem fixa e memória de cálculo](tasks/T1-gabarito-e-memoria.md) | **Entregue** |
 | T2 | [Publicar o gabarito como artefato de plataforma](tasks/T2-gabarito-como-artefato-de-plataforma.md) | **Entregue** |
-| T3 | Escolher o gabarito na jornada web | Não iniciada |
+| T3 | [Escolher o gabarito na jornada web](tasks/T3-escolher-o-gabarito.md) | **Entregue** |
 
 ## O que a T1 provou contra o documento real
 
@@ -50,7 +50,8 @@ a F-042 e a F-044, sem conflito.
 1. ~~**Qual forma de rodapé vale**~~ — **decidido em 2026-08-28** (Daniel Campos): vale a
    forma do [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md), que já havia
    rejeitado por escrito a forma do documento do cliente. O escritor já a implementava; o que
-   mudou foi a rendição do pacote, agora na **revisão 3**, que aguarda aprovação.
+   mudou foi a rendição do pacote, cuja **revisão 3 foi aprovada por ato humano em
+   2026-09-01** (Daniel Campos) — ver [`mock/README.md`](mock/README.md).
 2. **Aceite do arquivo gerado** contra o real, por quem entrega à prefeitura.
 3. **O preço do contrato embute BDI?** — pergunta para a orçamentista, registrada em
    [`evidence.md`](evidence.md); ela muda o significado de duas células do documento.

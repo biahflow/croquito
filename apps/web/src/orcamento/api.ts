@@ -40,6 +40,8 @@ import type {
   SiteSetupKitListResponse,
   SiteSetupPreviewResponse,
 } from "./acervo";
+import { corpoDoDespacho } from "./gabarito";
+import type { GabaritoListResponse, GabaritoOption } from "./gabarito";
 import type { CalcMatrix } from "./matrix";
 import type { ItemPrecedent } from "./precedente";
 import {
@@ -1338,11 +1340,29 @@ export function postExportEstimate(
   accessToken: string,
   roundId: string,
   baseVersion: number,
+  gabarito: GabaritoOption | null = null,
 ): Promise<EstimateResponse> {
   return post<EstimateResponse>(
     roundPath(roundId, "/estimate/export"),
     accessToken,
-    versionBody(baseVersion),
+    corpoDoDespacho(baseVersion, gabarito),
+  );
+}
+
+/**
+ * Os gabaritos que ESTA rodada pode usar ao publicar (F-043 T3).
+ *
+ * Rota própria, e não a de plataforma: quem escolhe é a orçamentista, que não é
+ * `platform_operator`. Só vêm os que estão em circulação — o retirado deixa de ser oferecido
+ * sem sumir do registro nem quebrar a planilha que já o citou.
+ */
+export function getEstimateTemplates(
+  accessToken: string,
+  roundId: string,
+): Promise<GabaritoListResponse> {
+  return apiJson<GabaritoListResponse>(
+    roundPath(roundId, "/estimate-templates"),
+    accessToken,
   );
 }
 

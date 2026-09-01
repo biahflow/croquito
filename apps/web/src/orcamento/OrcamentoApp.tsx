@@ -24,6 +24,7 @@ import {
   postCodeClosure,
   postCodeRevocation,
   postCodeDecision,
+  getEstimateTemplates,
   postExportEstimate,
   postSiteSetupApply,
   postSiteSetupPreview,
@@ -261,6 +262,15 @@ import {
   type SiteSetupParameter,
   type SiteSetupPreviewResponse,
 } from "./acervo";
+import {
+  avisoDeRevisao,
+  corpoDoDespacho,
+  gabaritoEscolhido,
+  procedenciaDaPlanilha,
+  resumoDoArquivo,
+  rotuloDoGabarito,
+} from "./gabarito";
+import type { CarimboDoGabarito, GabaritoOption } from "./gabarito";
 import {
   assembleCalcMatrix,
   buildContributionDraft,
@@ -774,6 +784,89 @@ export function PainelEscolhaDeFonte({
  * Item confirmado que nenhuma fonte da cascata precifica. Ele é DECLARADO, nunca
  * precificado por fora: aparece aqui e ganha bloco próprio na planilha.
  */
+/**
+ * A escolha do gabarito no despacho (F-043 T3, estado 02 do pacote aprovado).
+ *
+ * Exportado para ser provado fora do App: o que se mede é o que a orçamentista lê antes de
+ * gerar. A tela **não decide** que uma revisão está velha — ela não sabe qual é a aceita
+ * hoje —, então o aviso pede confirmação sempre, nomeando a revisão escolhida.
+ *
+ * "Sem gabarito" é opção de primeira classe, e não ausência: a rodada que não entrega àquela
+ * prefeitura publica na ordem do próprio orçamento, como sempre publicou.
+ */
+export function EscolhaDoGabarito({
+  gabaritos,
+  escolhido,
+  onEscolher,
+  desabilitado = false,
+}: {
+  gabaritos: readonly GabaritoOption[];
+  escolhido: string;
+  onEscolher: (id: string) => void;
+  desabilitado?: boolean;
+}) {
+  if (gabaritos.length === 0) {
+    return null;
+  }
+  const gabarito = gabaritoEscolhido(gabaritos, escolhido);
+  const aviso = avisoDeRevisao(gabarito);
+  const resumo = gabarito === null ? null : resumoDoArquivo(gabarito);
+  return (
+    <div className="gabarito-escolha">
+      <label className="campo">
+        <span className="campo-rotulo">Gabarito</span>
+        <select
+          value={escolhido}
+          onChange={(event) => onEscolher(event.target.value)}
+          disabled={desabilitado}
+        >
+          <option value="">Sem gabarito — na ordem do próprio orçamento</option>
+          {gabaritos.map((item) => (
+            <option key={item.estimate_template_id} value={item.estimate_template_id}>
+              {rotuloDoGabarito(item)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {aviso === null ? null : (
+        <p className="campo-aviso" role="status">
+          {aviso}
+        </p>
+      )}
+      {resumo === null ? null : (
+        <div className="gabarito-resumo">
+          <h4>O que vai no arquivo</h4>
+          <dl>
+            <div>
+              <dt>Gabarito</dt>
+              <dd>{resumo.gabarito}</dd>
+            </div>
+            <div>
+              <dt>Revisão</dt>
+              <dd>{resumo.revisao}</dd>
+            </div>
+            <div>
+              <dt>Linhas</dt>
+              <dd>
+                {resumo.totalDeLinhas} no gabarito · {resumo.comPreco} com preço declarado
+              </dd>
+            </div>
+            <div>
+              <dt>Abas</dt>
+              <dd>{resumo.abas.join(" · ")}</dd>
+            </div>
+          </dl>
+          <p className="campo-dica">
+            A revisão é impressa <em>dentro</em> do arquivo, para que ele diga sozinho qual
+            gabarito usou quando estiver fora do sistema.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export function SemPrecoNaCascata({ rotulos }: { rotulos: readonly string[] }) {
   if (rotulos.length === 0) {
     return null;
@@ -3786,6 +3879,10 @@ export function OrcamentoApp({
   // consequência, o segundo assina.
   const [confirmandoAprovacao, setConfirmandoAprovacao] = useState(false);
   const [despachando, setDespachando] = useState(false);
+  // Os gabaritos que a rodada oferece, e o escolhido. `""` é "sem gabarito", que é opção de
+  // primeira classe: a rodada que não entrega àquela prefeitura publica como sempre publicou.
+  const [gabaritos, setGabaritos] = useState<readonly GabaritoOption[]>([]);
+  const [gabaritoId, setGabaritoId] = useState("");
   // Violações abertas do portão de domínio do despacho. O servidor recusa por TODAS de uma
   // vez, e mostrar só a primeira faria a orçamentista assinar de novo para tropeçar na
   // seguinte.
@@ -3890,6 +3987,13 @@ export function OrcamentoApp({
       setRevisionConflict(false);
       setAlertMessage(null);
       setSemAcesso(null);
+      // Os gabaritos que esta rodada pode usar. Leitura observacional: acervo vazio, ou
+      // indisponível, não pode impedir a jornada — sem gabarito a planilha sai como sempre
+      // saiu, e é isso que a lista vazia significa.
+      const oferecidos = await leituraObservacional(() =>
+        getEstimateTemplates(token, orcamento),
+      );
+      setGabaritos(oferecidos?.templates ?? []);
       // O teto gravado preenche os campos para conferência e edição, e SÓ enquanto
       // ninguém escreveu neles — mesma forma funcional do BDI mais abaixo, que é o que
       // mantém `carregarEstado` fora da dependência do texto digitado. É também o que
@@ -5153,12 +5257,14 @@ export function OrcamentoApp({
     if (token === null || orcamento === null || version === null) {
       return;
     }
+    // O gabarito escolhido, ou `null` para publicar na ordem do próprio orçamento.
+    const gabarito = gabaritoEscolhido(gabaritos, gabaritoId);
     setSubmitting(true);
     setDespachando(true);
     setAlertMessage(null);
     limparDesfechosDaAprovacao();
     try {
-      const response = await postExportEstimate(token, orcamento, version);
+      const response = await postExportEstimate(token, orcamento, version, gabarito);
       aplicarVersao(response.version);
       setEstimate(
         (await leituraObservacional(() => getEstimate(token, orcamento))) ??
@@ -7097,6 +7203,12 @@ export function OrcamentoApp({
                       ) : (
                         <>
                           <p>Nenhuma planilha publicada nesta rodada.</p>
+                          <EscolhaDoGabarito
+                            gabaritos={gabaritos}
+                            escolhido={gabaritoId}
+                            onEscolher={setGabaritoId}
+                            desabilitado={submitting}
+                          />
                           <div className="acoes-linha">
                             <button
                               type="button"

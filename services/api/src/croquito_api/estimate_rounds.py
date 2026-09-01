@@ -78,7 +78,9 @@ from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.estimate import Estimate, EstimateApproval, EstimateApproverDecision
 from croquito_valuation.estimate_workbook import (
     EstimateAuditReport,
+    audit_estimate_grid_workbook,
     audit_estimate_workbook,
+    write_estimate_grid_workbook,
     write_estimate_workbook,
 )
 from croquito_valuation.models import PriceCatalog, PriceOrigin
@@ -161,8 +163,16 @@ REVISION_DOCUMENT_COLUMNS: Final[tuple[str, ...]] = (
     "estimate_json",
     "calc_matrix_json",
     "extraction_lineage_json",
+    "estimate_template_json",
 )
-"""Colunas JSON de artefato; ausentes são `NULL`, e `NULL` é "a etapa não aconteceu"."""
+"""Colunas JSON de artefato; ausentes são `NULL`, e `NULL` é "a etapa não aconteceu".
+
+`estimate_template_json` (F-043 T3) entra aqui, e não entre as escalares, porque satisfaz as
+três propriedades da categoria: é JSON, `NULL` diz "publicou sem gabarito" — que é afirmação,
+não ausência de informação — e é carregado adiante, de modo que a rodada continua sabendo com
+qual revisão publicou depois de um ato que não tocou a planilha. A consequência de estar aqui
+é ganhar digest em `_artifact_digests`, e ela é desejada: a tela vê o carimbo mudar quando o
+gabarito escolhido muda."""
 
 REVISION_MAP_COLUMNS: Final[tuple[str, ...]] = ("artifact_refs_json", "artifact_digests_json")
 """Colunas de mapa; ausentes são `{}`, nunca `NULL` (é o default da coluna)."""
@@ -1469,11 +1479,22 @@ def render_estimate_workbook(
     A API não importa o CLI: o gate é replicado com as funções do pacote `valuation`,
     porque o comando de fila e a rota são processos diferentes e um importar o outro faria
     a fronteira de `services/` depender do CLI.
+
+    **Quem escolhe o escritor é o template, não um parâmetro** (F-043 T3): declarado o
+    `estimate_grid`, a planilha percorre o GABARITO da prefeitura — todas as linhas, inclusive
+    as de quantidade zero — e é auditada pelo auditor do gabarito; sem ele, sai o documento de
+    hoje, na ordem do próprio orçamento. Os dois caminhos passam pelo MESMO portão fail-closed,
+    e é isso que impede que escolher o gabarito escolha também uma auditoria mais frouxa.
     """
+    grid = template.estimate_grid is not None
     with tempfile.TemporaryDirectory(prefix="croquito-estimate-") as directory:
         path = Path(directory) / "orcamento.xlsx"
-        write_estimate_workbook(estimate, template, path)
-        audit = audit_estimate_workbook(path, estimate, template)
+        if grid:
+            write_estimate_grid_workbook(estimate, template, path)
+            audit = audit_estimate_grid_workbook(path, estimate, template)
+        else:
+            write_estimate_workbook(estimate, template, path)
+            audit = audit_estimate_workbook(path, estimate, template)
         if audit.status != "ok":
             raise workbook_audit_failed(audit)
         return RenderedEstimateWorkbook(body=path.read_bytes(), audit=audit)
