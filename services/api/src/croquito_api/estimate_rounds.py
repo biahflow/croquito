@@ -1688,6 +1688,11 @@ def round_state_payload(
             "estimate_sha256": digests.get("estimate_json"),
             "workbook_present": estimate_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(ESTIMATE_WORKBOOK_DIGEST),
+            # Com qual GABARITO a planilha da cabeça foi publicada (F-043 T3). `None` é
+            # afirmação — publicou na ordem do próprio orçamento —, e é o que a tela precisa
+            # para dizer a procedência em vez de deixar a leitura supor um gabarito que não
+            # houve.
+            "workbook_template": (None if revision is None else revision.estimate_template_json),
         },
         **approval_state(readable_estimate(revision)),
         **target_state(round_record, revision),

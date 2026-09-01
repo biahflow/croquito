@@ -1935,6 +1935,13 @@ p {
   margin: 0.75rem 0;
 }
 
+/* O seletor ocupa a largura do painel: o nome do gabarito e a revisão precisam caber juntos,
+   e é a revisão que a captura de evidência mostrou sendo cortada. Um seletor que trunca
+   "rev. REV. 03 — 2026-08" esconde exatamente o que a decisão 5 do pacote existe para dizer. */
+.gabarito-escolha select {
+  width: 100%;
+}
+
 .gabarito-resumo {
   border: 1px solid var(--line);
   border-radius: 8px;
