@@ -2,17 +2,23 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
+> **CONFIRMADA por ato humano em 2026-09-02**: o aceite de 2026-08-28 permanece agora que o
+> pacote de design está inteiro no código, e a [issue #100](https://github.com/biahflow/croquito/issues/100)
+> se fecha. O aceite é sobre o **mecanismo**, provado pela evidência de navegador com dado
+> sintético.
+>
+> **Dívida que fica escrita**: nenhuma medição real com contrato re-ratificado atravessou.
+> Exercê-la exige uma obra com as três coisas juntas — contrato assinado, ao menos uma
+> re-ratificação publicada e ao menos uma medição fechada —, porque sem RE-RA o saldo vigente
+> sai idêntico, bit a bit, a contratado menos acumulado, e o código não chega a ser exercido.
+>
 > **Estado em 2026-09-01.** A condição que o `DONE` de 2026-08-28 deixou pendente — a recaptura
 > dos estados que a T6 acrescentou — foi **cumprida**: os seis estados foram capturados contra
 > o stack local, já com a T6 e a T7 no código e sobre a `main` de `482fa8e` (F-046 e F-047
 > integradas). A T6 e a T7 entraram na `main` pelo PR
 > [#129](https://github.com/biahflow/croquito/pull/129).
->
-> O que resta é ato humano: a **confirmação** de que o aceite de 2026-08-28 permanece agora que
-> o pacote de design está inteiro no código, e o aceite numa medição real com contrato
-> re-ratificado — nenhuma foi feita, e o dado de toda a evidência é sintético.
 >
 > Histórico. Encerrada como `DONE` em 2026-08-28: a evidência de navegador (`BROWSER_REQUIRED`, AC 11) foi capturada
 > nessa data contra o stack local — quatro estados da tela real, registrados em
@@ -28,9 +34,7 @@
 > [T7](tasks/T7-previa-no-servidor.md) leva a conta da prévia para o servidor. A recaptura que
 > faltava foi feita em 2026-09-01 e está em [evidence.md](evidence.md).
 >
-> **Dívida que fica escrita**: nenhuma medição real com contrato re-ratificado foi feita — o
-> aceite de 2026-08-28 é sobre o mecanismo, e a primeira rodada de obra com RE-RA declarada
-> segue sendo o teste de verdade. Ficam também os desvios listados em
+> **Desvios que ficam escritos**, do registro de 2026-09-01 e ainda válidos — são os listados em
 > [evidence.md](evidence.md): a memória sem RE-RA não imprime contratado e vigente repetidos
 > (a repetição de propósito existe na herança da medição seguinte, que é onde a decisão 4 a
 > pede), e a autoria da declaração aparece como o `sub` do principal, não como nome legível. A
