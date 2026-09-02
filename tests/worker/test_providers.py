@@ -2646,6 +2646,7 @@ def test_bedrock_adapter_requires_a_structured_tool_response() -> None:
 
 TASKS_WITH_OWN_PROMPT_BRANCH = frozenset(
     {
+        PromptTask.MEASUREMENT_EXTRACTION,
         PromptTask.GEOMETRY_EXTRACTION,
         PromptTask.LEGEND_EXTRACTION,
         PromptTask.SCO_REFINEMENT,
@@ -2675,9 +2676,6 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         if task not in TASKS_WITH_OWN_PROMPT_BRANCH
     } == {
         "page-survey": "e39631860c12205227335a2503874cec5ee38cba2c40775e78313f5a753c2beb",
-        "measurement-extraction": (
-            "c26789378ebe11bc3334ff871125dc44fa3a1de5f46ac49e87c990dfd2bd29f5"
-        ),
         "semantic-elements": "9c971c37d8f85546645a81ac9799e9e383d130f861cc6f1495a96ab8d84f930b",
         "disagreement-review": "686c1c6e2db6e3f42f9ddaa281a26907bbe3cd0b578fe75a16451f4c063c4800",
         "ocr": "c8efeb70a853d4385f3e79b74b20f42f2af38fc8df1e37195eadd10d69e022cf",
@@ -2691,6 +2689,10 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         # 2.0.1: só o cabeçalho do rebranding; o schema `2.0.0` continua o mesmo.
         # 2.0.2: contorno/muro com recuo vira vértices (degrau do Guaxindiba V3), ato
         # deliberado — schema `2.0.0` continua o mesmo.
+        # 1.2.0: instrução própria pedindo `normalized_value` e `target_hint`. Até a 1.1.1 a
+        # tarefa compartilhava o template genérico, que não pedia nenhum dos dois, e o merge
+        # descartava tudo que o provider devolvia (issue #135).
+        "measurement-extraction": "measurement-extraction@1.2.0",
         "geometry-extraction": "geometry-extraction@2.0.2",
         "legend-extraction": "legend-extraction@1.0.1",
         # 1.0.1: limite por flag no schema do refino; o texto do template não mudou.
@@ -2708,6 +2710,29 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         # ausência de viés, temperatura), que é o que muda o resultado numa API de fala.
         "audio-transcription": "audio-transcription@1.0.0",
     }
+
+
+def test_measurement_prompt_asks_for_the_two_fields_the_merge_requires() -> None:
+    """O que o merge exige, o template tem que pedir.
+
+    `merge_readings_into_packet` descarta leitura sem `normalized_value` (`missing_value`) e
+    sem `target_hint` (`missing_target_hint`). Até a versão `1.1.1` esta tarefa compartilhava
+    o template genérico, que não pedia nenhum dos dois: a primeira extração paga sobre croqui
+    real, em 2026-09-02, perdeu **48 de 48** leituras por isso (issue #135). Nada quebrava na
+    suíte porque as fixtures escrevem o valor à mão.
+    """
+    template = _prompt_template(PromptTask.MEASUREMENT_EXTRACTION)
+
+    assert "normalized_value" in template
+    assert "target_hint" in template
+    # Pedir o número normalizado não pode virar licença para calcular: a transcrição em forma
+    # canônica é o oposto de aritmética, e a cadeia de cotas continua sendo ato humano.
+    assert "never convert between units, never sum, never round, never complete a chain" in (
+        template
+    )
+    # E continua valendo o que o template genérico já proibia.
+    assert "Never invent a measurement" in template
+    assert "null" in template
 
 
 def test_geometry_prompt_forbids_measurement_and_regularisation() -> None:
