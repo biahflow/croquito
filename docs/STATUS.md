@@ -2,7 +2,10 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-28 (**F-007, F-022, F-029, F-031 e F-032 `DONE`** — o dono do
+Última revisão: 2026-09-02 (**F-040, F-046 e F-047 `DONE`** — o dono do produto exerceu o
+ato humano de aceite das três, que estavam `READY_FOR_HUMAN_REVIEW`, fechando as issues
+#100, #101 e #102. Ver "Aceite de 2026-09-02" abaixo para o que ficou como dívida
+declarada. Antes, 2026-08-28: **F-007, F-022, F-029, F-031 e F-032 `DONE`** — o dono do
 produto exerceu o ato humano de aceite das cinco, que estavam `READY_FOR_HUMAN_REVIEW`, na
 mesma data; o ADR-0037 passou a `Accepted` no mesmo ato. Ver "Aceite de 2026-08-28" abaixo
 para o que ficou como dívida declarada. Antes, 2026-08-27: **F-018 e F-019 `DONE`** — correção humana de forma e preview da
@@ -22,6 +25,34 @@ ADR-0033 aceitos)
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
 > lifecycle e evidências está no [Project Context](engineering/PROJECT_CONTEXT.md).
+
+## Aceite de 2026-09-02: três features `DONE`
+
+O dono do produto exerceu o ato humano de aceite de três features que estavam
+`READY_FOR_HUMAN_REVIEW`, todas construídas e integradas à `main` desde 2026-08-29, todas com
+evidência de navegador publicada. As três passam a `DONE` no [Roadmap](product/ROADMAP.md) e no
+próprio `feature.md`, e o aceite fecha as issues #100, #101 e #102.
+
+**O aceite é sobre o mecanismo.** Toda a evidência das três foi capturada contra o stack local
+com **dado sintético**: nenhuma praça, croqui, prancha ou medição de cliente atravessou, e
+nenhuma rodada paga de extração foi autorizada. Isso não é lacuna de engenharia — é a base
+declarada do aceite, e o que fica escrito abaixo é o teste real que cada uma ainda espera.
+
+- **[F-040](features/F-040-re-ra-e-medicao-seguinte/feature.md)** — RE-RA declarada e a medição
+  seguinte. Dívida: uma medição real com contrato re-ratificado. Exercê-la exige uma obra com
+  contrato assinado, ao menos uma re-ratificação publicada e ao menos uma medição fechada —
+  sem RE-RA o saldo vigente sai idêntico, bit a bit, a contratado menos acumulado.
+- **[F-046](features/F-046-praca-de-varias-pranchas/feature.md)** — a praça de várias pranchas.
+  Dívida: uma praça real de mais de uma folha. O corpus de campo de 2026-08-29 tem o caso
+  pronto (Praça das Casinhas, "Parte 01" e "Parte 02" escritas pelo próprio técnico); exercê-lo
+  depende de autorização de gasto com a extração de legenda.
+- **[F-047](features/F-047-quantitativo-da-cena-aprovada/feature.md)** — o quantitativo nasce da
+  cena aprovada. Dívida: uma obra real em que o croqui aprovado alimente a medição sem
+  redigitação. O mesmo corpus tem o caso pronto (Campo da Toca, com os balões A, B, C e D que
+  já são `element_ref` com outro alfabeto); exercê-lo depende da mesma autorização.
+
+Nenhuma das três dívidas foi exercida nesta rodada: as duas primeiras dependem de dado de
+cliente que ainda não atravessou, e as duas últimas de autorização de gasto com provider.
 
 ## Aceite de 2026-08-28: cinco features `DONE`
 

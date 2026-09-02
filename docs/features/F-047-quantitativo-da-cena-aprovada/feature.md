@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > **Construída e integrada em 2026-08-29.** As tarefas do plano, mais as que nasceram na
 > execução, estão na `main` pelo PR [#126](https://github.com/biahflow/croquito/pull/126):
@@ -17,10 +17,16 @@
 > [#124](https://github.com/biahflow/croquito/pull/124) o resolveu, com um portão que varre por
 > AST todas as operações, e a captura foi refeita — ver [evidence.md](evidence.md).
 >
-> O que resta é ato humano: o **aceite** que fecha a
-> [issue #102](https://github.com/biahflow/croquito/issues/102), numa obra real em que o croqui
-> aprovado alimente a medição. Nenhuma passou por esse caminho ainda: o dado das capturas é
-> sintético.
+> **ACEITA por ato humano em 2026-09-02**, fechando a
+> [issue #102](https://github.com/biahflow/croquito/issues/102). O aceite é sobre o
+> **mecanismo**, provado pela evidência de navegador com dado sintético — a mesma base do
+> aceite de cinco features em 2026-08-28.
+>
+> **Dívida que fica escrita**: nenhuma obra real passou pelo caminho em que o croqui aprovado
+> alimenta a medição sem redigitação, e a rodada paga de extração não foi autorizada. O corpus
+> real de 2026-08-29 tem o caso pronto — no Campo da Toca o técnico já usa balões A, B, C e D
+> apontando para detalhes desenhados à parte, que é `element_ref` com outro alfabeto —, e
+> exercê-lo depende de autorização de gasto.
 >
 > Registrada em 2026-08-28, por seleção humana, a partir da
 > [issue #102](https://github.com/biahflow/croquito/issues/102). O

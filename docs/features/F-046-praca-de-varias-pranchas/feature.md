@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > **Construída e integrada em 2026-08-29.** As seis tarefas do plano, mais as que nasceram na
 > execução, estão na `main`: o consolidado da praça e o vínculo de identidade no domínio, o
@@ -18,9 +18,15 @@
 > oferecia remontá-lo, o que tornava a ordem do pacote de design impercorrível numa rodada só.
 > O #127 o resolveu e o #128 refez a captura — ver [evidence.md](evidence.md).
 >
-> O que resta é ato humano: o **aceite** que fecha a
-> [issue #101](https://github.com/biahflow/croquito/issues/101), numa praça real de mais de uma
-> folha. Nenhuma foi medida ainda: o dado das capturas é sintético.
+> **ACEITA por ato humano em 2026-09-02**, fechando a
+> [issue #101](https://github.com/biahflow/croquito/issues/101). O aceite é sobre o
+> **mecanismo**, provado pela evidência de navegador com dado sintético — a mesma base do
+> aceite de cinco features em 2026-08-28.
+>
+> **Dívida que fica escrita**: nenhuma praça real de mais de uma folha atravessou, e a rodada
+> paga de extração de legenda não foi autorizada, então nenhuma folha foi lida por provider. O
+> corpus real de 2026-08-29 tem o caso pronto — a Praça das Casinhas vem escrita pelo próprio
+> técnico como "Parte 01" e "Parte 02" —, e exercê-lo depende de autorização de gasto.
 >
 > Registrada em 2026-08-28, por seleção humana, a partir da
 > [issue #101](https://github.com/biahflow/croquito/issues/101). O
