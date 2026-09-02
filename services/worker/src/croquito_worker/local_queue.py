@@ -284,6 +284,13 @@ class RoundChain:
     fonte tanto do `SELECT` da cabeça quanto do `INSERT` da revisão nova. Coluna esquecida
     aqui é coluna que deixa de viajar para a revisão seguinte, e append-only não perdoa: o
     que não viaja, some.
+
+    `scalar_columns` governa a mesma coisa para as colunas que NÃO são JSON. Ela existe
+    porque a categoria é de verdade e não cabe na primeira: `_json_parameter` serializaria
+    um `str` como JSON e gravaria `"fulano"` com aspas dentro da coluna. É a mesma divisão
+    que a cabeça de `/v1` já declara em `estimate_rounds.REVISION_SCALAR_COLUMNS`, e é por
+    ela não existir aqui que `estimate_built_by` ficou de fora quando a irmã JSON
+    (`calc_matrix_json`) foi corrigida.
     """
 
     label: str
@@ -303,6 +310,11 @@ class RoundChain:
     escritas como espelho da primeira folha (expand/contract, `services/api/AGENTS.md`), e é
     esta leitura que acabou de deixar de precisar delas."""
     document_columns: tuple[str, ...]
+    scalar_columns: tuple[str, ...]
+    """Colunas ESCALARES que viajam para a revisão seguinte; ausentes viram `NULL`.
+
+    Vazia é resposta legítima — a cadeia da medição não tem nenhuma —, e por isso o campo
+    não tem default: uma cadeia nova declara o que carrega, em vez de herdar silêncio."""
     extraction_author: str
     overlay_author: str
     plate_image_key: Callable[..., str]
@@ -311,7 +323,7 @@ class RoundChain:
     @property
     def head_columns(self) -> str:
         """Colunas da cabeça da rodada que uma revisão nova precisa carregar adiante."""
-        return ", ".join(("id", "version", *self.document_columns))
+        return ", ".join(("id", "version", *self.document_columns, *self.scalar_columns))
 
 
 VALUATION_ROUND_CHAIN: Final = RoundChain(
@@ -339,10 +351,21 @@ VALUATION_ROUND_CHAIN: Final = RoundChain(
         # orçamentista já ter declarado vínculo de identidade nesta praça.
         "worksite_plate_packets_json",
         "worksite_plate_registrations_json",
+        # Sugestões e códigos POR FOLHA (F-046 T4d) e o vínculo com a cena aprovada
+        # (F-047, `scene_link_json`) tinham o mesmo buraco de `calc_matrix_json`: a cabeça
+        # de `/v1` (`valuation_rounds.REVISION_DOCUMENT_COLUMNS`) sempre os carregou, o
+        # comando de fila não, e a extração da folha seguinte apagava a decisão da folha
+        # anterior. É o cenário NORMAL da praça de várias folhas, não um caso de borda.
+        "worksite_plate_suggestions_json",
+        "worksite_plate_assignments_json",
         "worksite_identity_links_json",
+        "scene_link_json",
         "artifact_refs_json",
         "artifact_digests_json",
     ),
+    # Nenhum escalar viaja nesta cadeia: a autoria do boletim da medição mora na aprovação
+    # nominal, dentro de `valuation_json`, e não numa coluna própria da revisão.
+    scalar_columns=(),
     extraction_author=VALUATION_EXTRACTION_VERSION,
     overlay_author=VALUATION_OVERLAY_VERSION,
     plate_image_key=plate_image_object_key,
@@ -369,10 +392,20 @@ ESTIMATE_ROUND_CHAIN: Final = RoundChain(
         # (`estimate_rounds.REVISION_DOCUMENT_COLUMNS`) carrega a matriz, o comando de fila
         # não carregava, e uma extração posterior ao build a apagava.
         "calc_matrix_json",
+        # Mesmo buraco, coluna nascida depois (F-043 T3): o gabarito com que a rodada
+        # publicou a planilha é carregado adiante pela cabeça de `/v1` e sumia aqui.
+        "estimate_template_json",
         "extraction_lineage_json",
         "artifact_refs_json",
         "artifact_digests_json",
     ),
+    # `estimate_built_by` é `str | None`, não artefato JSON, e por isso não cabia na lista
+    # acima: `_json_parameter` gravaria a identidade com aspas de JSON. Sem ela viajando, uma
+    # extração posterior ao build apagava quem montou o orçamento — e a rota de aprovação,
+    # que compara identidade contra esse valor (F-035, ADR-0046 decisão 6), recusa fechado
+    # com `ESTIMATE_APPROVAL_AUTHOR_UNKNOWN`. O custo é a orçamentista ter de remontar um
+    # orçamento que ninguém desfez.
+    scalar_columns=("estimate_built_by",),
     extraction_author=ESTIMATE_EXTRACTION_VERSION,
     overlay_author=ESTIMATE_OVERLAY_VERSION,
     plate_image_key=_estimate_plate_image_object_key,
@@ -613,6 +646,10 @@ def _insert_round_revision(
     Montar a lista de colunas a partir de `chain.document_columns` — em vez de escrevê-la
     duas vezes por cadeia — é o que garante que o `INSERT` e o `SELECT` da cabeça nunca
     discordem sobre o que uma revisão carrega.
+
+    As escalares (`chain.scalar_columns`) entram pelo mesmo caminho e com o valor CRU: elas
+    não passam por `_json_parameter` porque não são documento, e serializá-las gravaria a
+    identidade de quem montou o orçamento entre aspas de JSON.
     """
     parameters: dict[str, Any] = {
         "id": str(new_uuid7()),
@@ -626,6 +663,8 @@ def _insert_round_revision(
         _json_parameter(parameters, dialect, name, documents.get(name))
         for name in chain.document_columns
     ]
+    for name in chain.scalar_columns:
+        parameters[name] = documents.get(name)
     columns = ", ".join(
         (
             "id",
@@ -634,6 +673,7 @@ def _insert_round_revision(
             "version",
             "parent_revision_id",
             *chain.document_columns,
+            *chain.scalar_columns,
             "created_by",
             "created_at",
         )
@@ -646,6 +686,7 @@ def _insert_round_revision(
             ":version",
             ":parent_revision_id",
             *expressions,
+            *(f":{name}" for name in chain.scalar_columns),
             ":created_by",
             "CURRENT_TIMESTAMP",
         )
@@ -2655,7 +2696,12 @@ class LocalQueueWorker:
         with self.engine.begin() as connection:
             head = _head_revision_row(connection, chain, round_id=round_id, tenant_id=tenant_id)
             carried: dict[str, Any] = (
-                {name: _json_column(head[name]) for name in chain.document_columns}
+                {
+                    **{name: _json_column(head[name]) for name in chain.document_columns},
+                    # Escalar viaja como está: `_json_column` só desfaz o JSON-como-texto
+                    # que o SQLite devolve, e um `str` não passou por serialização nenhuma.
+                    **{name: head[name] for name in chain.scalar_columns},
+                }
                 if head is not None
                 else {}
             )
@@ -3119,7 +3165,10 @@ class LocalQueueWorker:
             head = _head_revision_row(connection, chain, round_id=round_id, tenant_id=tenant_id)
             if head is None:
                 return
-            carried = {name: _json_column(head[name]) for name in chain.document_columns}
+            carried: dict[str, Any] = {
+                **{name: _json_column(head[name]) for name in chain.document_columns},
+                **{name: head[name] for name in chain.scalar_columns},
+            }
             packet_document = carried["takeoff_packet_json"]
             if (
                 not isinstance(packet_document, dict)

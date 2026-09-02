@@ -893,3 +893,50 @@ def test_a_matriz_de_calculo_sobrevive_a_extracao_posterior_ao_build(tmp_path: P
     revisions = _revisions(database)
     assert len(revisions) == 2
     assert revisions[1].calc_matrix_json == matrix
+
+
+def test_a_decisao_por_folha_e_o_elo_com_a_cena_sobrevivem_a_extracao_posterior(
+    tmp_path: Path,
+) -> None:
+    """Três colunas da praça e do croqui viajam; sem elas, extrair apagava ato humano.
+
+    Mesmo mecanismo de `calc_matrix_json` acima e mesmo silêncio: a cabeça de `/v1`
+    (`valuation_rounds.REVISION_DOCUMENT_COLUMNS`) sempre as carregou, e só o comando de fila
+    as esquecia. O que sumia aqui é pior do que uma matriz recalculável — sugestão e código
+    POR FOLHA (F-046 T4d) são decisão da orçamentista, e `scene_link_json` (F-047) é a
+    declaração de qual croqui aprovado alimenta a medição. Extrair a folha seguinte é o ato
+    NORMAL da praça de várias folhas, e era ele que apagava a folha anterior.
+    """
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    suggestions = {plate_id_for(1): {"items": [{"item_id": "ti_1", "codes": ["01.001.001"]}]}}
+    assignments = {plate_id_for(1): {"assignments": [{"item_id": "ti_1", "code": "01.001.001"}]}}
+    scene_link = {
+        "job_id": "00000000-0000-7000-8000-0000000009c1",
+        "scene_revision_id": "00000000-0000-7000-8000-0000000009c2",
+        "declared_by": "orcamentista-sintetica",
+    }
+    with database.sessions.begin() as session:
+        session.add(
+            ValuationRoundRevisionRecord(
+                id="00000000-0000-7000-8000-0000000009f3",
+                tenant_id=TENANT_ID,
+                round_id=ROUND_ID,
+                version=1,
+                created_by="orcamentista-sintetica",
+                worksite_plate_suggestions_json=suggestions,
+                worksite_plate_assignments_json=assignments,
+                scene_link_json=scene_link,
+                artifact_refs_json={},
+                artifact_digests_json={},
+            )
+        )
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    revisions = _revisions(database)
+    assert len(revisions) == 2
+    assert revisions[1].worksite_plate_suggestions_json == suggestions
+    assert revisions[1].worksite_plate_assignments_json == assignments
+    assert revisions[1].scene_link_json == scene_link
