@@ -114,6 +114,9 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-047 | HIGH | DONE | [O quantitativo nasce da cena aprovada](../features/F-047-quantitativo-da-cena-aprovada/feature.md) — **aceita por ato humano em 2026-09-02**, fechando a [issue #102](https://github.com/biahflow/croquito/issues/102). Construída e integrada em 2026-08-29 (PR #126); evidência de navegador cumprida, com o 500 da idempotência em PostgreSQL resolvido pelo #124. Dívida declarada: nenhum croqui real chegou à medição sem redigitação, e a rodada paga de extração não foi autorizada |
 | F-032 | HIGH | DONE | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) — aceita por ato humano em 2026-08-28; pendem chave/conta Groq + clipes + eval paga de transcrição, o papel `field_technician` no realm e a decisão de consentimento por levantamento |
 | F-031 | MEDIUM | DONE | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — já integrada à main; aceita por ato humano em 2026-08-28; pendem o provisionamento do tópico Pub/Sub e as migrações no ambiente hospedado |
+| F-048 | A DEFINIR | READY_FOR_SPEC | Auditoria de medição de terceiros: elevar `parity`/`compare-bulletin` a jornada de usuário — importar MAPÃO/BM externo e devolver relatório de furos (a definir em contrato) |
+| F-049 | A DEFINIR | READY_FOR_SPEC | Dashboard executivo do contrato: planejado × realizado, acumulado × saldo, avanço físico-financeiro entre medições, sobre F-031/F-036/F-039 (a definir em contrato) |
+| F-050 | A DEFINIR | READY_FOR_SPEC | Relatório de risco e pendências do período de medição, pronto para o cliente, ao lado do BM (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -609,6 +612,30 @@ paralelas ainda não integradas à main (F-029/F-030 no checkout de trabalho;
 F-031 — eventos de valor — na branch `feat/f-031-value-events`, desde então integradas);
 relação direta com a F-030: o app de campo produz as fotos já ancoradas à geometria que
 aquela jornada consome, e é dessa entrega que o contrato da F-030 parte.
+
+**F-048, F-049 e F-050** nascem em 2026-09-03, por seleção humana, na mesma conversa: uma
+análise do posicionamento da Orvia (orvia.com.br, controladoria independente de obra de alto
+padrão privado) mostrou que as entregas que aquele mercado paga como serviço manual — medição
+auditada, visão executiva do contrato, matriz de risco mensal — são dados que o croquito já
+computa mas ainda não apresenta como produto. Nenhuma das três cria domínio novo. **F-048**
+auditoria de medição de terceiros: o `croquito-valuation parity` (fórmula da gramática fechada ×
+valor em cache) e o `compare-bulletin` (BM gerado × BM real, linha a linha) já existem como CLI
+local e já acharam 8 erros reais de dinheiro num MAPÃO de cliente, mas não há rota `/v1` nem
+tela para importar um arquivo externo e devolver o relatório de furos — é o pitch "a
+controladora que acha o furo", alinhado à estratégia de vender para empresas de engenharia.
+**F-049** dashboard executivo do contrato: o agregado contratual já guarda acumulado e saldo com
+validação fechada (`croquito_valuation.contract`, via F-036) e a F-031 publica métricas por job
+e por tenant, mas não existe visão de planejado × realizado, acumulado × saldo e avanço
+físico-financeiro entre medições; cronograma/SPI ficam explicitamente de fora — a medição do
+croquito é físico-financeira, sem noção de tempo planejado. **F-050** relatório de risco e
+pendências do período: as pendências hoje são locais — `QuantityDivergence` por item,
+`pending_items` por prancha, a flag `boletim vencido` por rodada — e nenhum módulo enumera o
+agregado de um período de medição inteiro; a candidata é o documento mensal pronto para o
+cliente ao lado do BM. Da mesma análise ficou registrado o que **não** vira feature: BIM/clash
+detection (o insumo do croquito é croqui e prancha 2D; o análogo — fechamento de cadeias,
+croqui × CAD — já existe), cronograma com caminho crítico, e pós-obra (manutenção/garantias).
+O degrau "antes da obra" daquele arco o croquito já cobre: orçamento-base (F-020) e modo teto
+(F-027) são a porta de entrada de baixo risco — "comece sabendo o número real".
 
 ## Agora — MVP privado
 
