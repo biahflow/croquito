@@ -2,8 +2,15 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`READY_FOR_HUMAN_REVIEW`
 
+> **As sete tarefas estão na `main`** (2026-09-04, PRs #161, #162, #164, #165, #167 e #169;
+> a T7 é a entrega corrente). A evidência consolidada, com atribuição por tarefa, está em
+> [evidence.md](evidence.md), e a validação de navegador em
+> [evidencia/](evidencia/README.md). **Falta o gate 3** — o aceite contra o croqui real do
+> Campo da Toca, ato do dono, com o passo a passo em
+> [evidencia/ROTEIRO-GATE-3.md](evidencia/ROTEIRO-GATE-3.md). A feature não é `DONE` sem ele.
+>
 > **ADR-0063 aceito em 2026-09-04** (Daniel Campos, pelo chat) — gate 1 cumprido.
 >
 > **DAP revisão 1 aprovado por ato humano em 2026-09-04** (Daniel Campos, pelo chat, após o
@@ -148,7 +155,9 @@ fechando o elo croqui→cena→quantitativo.
 2. ~~**Design Approval Package** da tela~~ — **cumprido em 2026-09-04** (Daniel Campos,
    pelo chat): revisão 1 aprovada com as duas leituras confirmadas — rótulo único por job e
    revogação que não desfaz associação confirmada ([mock/README.md](mock/README.md)).
-3. Aceite final contra o caso real do Toca (critério 1).
+3. Aceite final contra o caso real do Toca (critério 1) — **pendente**; o passo a passo
+   preparado e validado contra a fixture sintética está em
+   [evidencia/ROTEIRO-GATE-3.md](evidencia/ROTEIRO-GATE-3.md).
 
 ## References
 

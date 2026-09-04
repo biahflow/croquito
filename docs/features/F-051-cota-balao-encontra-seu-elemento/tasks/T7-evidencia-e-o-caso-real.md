@@ -1,6 +1,6 @@
 # F-051 · T7 — Evidência de navegador e o caso real
 
-Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Pendente**  
+Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**  
 `feature_id: F-051` · `task_id: T7` · `depends_on: T5, T6`
 
 ## Objetivo
@@ -49,3 +49,35 @@ required: make check && make test
 
 - **Gate 3 da F-051**: aceite final contra o caso real do Toca (critério 1 do contrato) —
   ato do dono, com o roteiro desta tarefa em mãos. A feature não é `DONE` sem ele.
+
+## Resultado
+
+Entregue em 2026-09-04.
+
+**Dez capturas** em [`evidencia/`](../evidencia/README.md), do stack local com login real de
+Keycloak, exercendo a sequência inteira do DAP sobre fixture sintética: o hint na leitura, o
+seletor que só tem "anotação" antes da identidade, o ato de declarar, o `EL-001` cunhado com
+carimbo por papel, o `<optgroup>` "Pela identidade" com as duas propostas, a confirmação pelo
+portão de sempre, o hint "E" que não casa (com a frase que diz o que falta), a cota-balão
+amarrada a uma forma no traçado, a órfã sem vão, o resíduo com **três** cotas conferidas, e a
+cena nascendo com `◇ EL-001 · B · → alimenta a medição`. Zero erros de console.
+
+**Um e2e novo**, `test_a_cota_balao_com_hint_vira_restricao_e_a_orfa_segue_como_hoje`, no
+molde de `tests/e2e/test_full_flow.py`: ele **estende** o da T5 em vez de repeti-lo — prova a
+relação causal que faltava (o portão **recusa** a confirmação da cota-balão antes da
+declaração e a aceita depois), leva a cota até `applied_spans` com eixo e valor, e carrega o
+controle do critério 2 na mesma corrida (a leitura com hint "E" não ganha candidata, e o
+conjunto das de proximidade sai idêntico). `tests/bundles.py` ganhou o parâmetro `balloons`,
+desligado por padrão.
+
+**O roteiro do gate 3** ([`ROTEIRO-GATE-3.md`](../evidencia/ROTEIRO-GATE-3.md)) foi validado
+passo a passo contra a fixture — cada etapa aponta a captura que a mostra. Ele registra, como
+risco declarado, que o `C=56,00` real é o **fecho** do elemento e o traçado amarra vão: se o
+solver recusar a cota, é achado novo, não falha do caminho da identidade.
+
+**Desvios conscientes**, os dois de registro e declarados aqui: (1) os contratos da T2 e da
+T5 diziam "Pendente" com o código já mergeado na `main` — corrigidos para "Entregue" junto
+deste consolidado, porque um `evidence.md` com atribuição por tarefa não pode citar como
+pendente o que a `main` carrega; (2) o `make check` estava **vermelho no baseline** por
+`tests/core/test_scene.py:501` (mypy), regressão do PR #168 — **não foi consertado** (área
+alheia) e virou a [issue #171](https://github.com/biahflow/croquito/issues/171).
