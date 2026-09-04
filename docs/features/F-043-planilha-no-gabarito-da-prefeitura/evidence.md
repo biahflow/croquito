@@ -273,7 +273,7 @@ não estará.
 | Arquivo | Estado | O que a imagem prova |
 | --- | --- | --- |
 | [`evidencia/01-sem-gabarito.png`](evidencia/01-sem-gabarito.png) | O despacho antes de escolher | O orçamento aprovado, ainda não despachado, com o seletor em **“Sem gabarito — na ordem do próprio orçamento”**. Sem escolha não há aviso de revisão nem resumo do arquivo: a tela não fala de gabarito antes de haver um. |
-| [`evidencia/02-escolher-gabarito.png`](evidencia/02-escolher-gabarito.png) | A escolha, com a revisão à vista | O seletor traz **nome, revisão e tamanho juntos** (`PLANILHA ORÇAMENTÁRIA SINTÉTICA · rev. REV. 03 — 2026-08 · 3 linhas`); o aviso nomeia a revisão e pede confirmação a quem entrega à prefeitura; e “O que vai no arquivo” lista gabarito, revisão, linhas e as duas abas, dizendo por escrito que a revisão é impressa **dentro** do arquivo. |
+| [`evidencia/02-escolher-gabarito.png`](evidencia/02-escolher-gabarito.png) | A escolha, com a revisão à vista | ~~O seletor traz **nome, revisão e tamanho juntos**~~ (`PLANILHA ORÇAMENTÁRIA SINTÉTICA · rev. REV. 03 — 2026-08 · 3 linhas`) — **a afirmação era falsa**: a própria imagem mostra o controle fechado cortado em "· rev. RI" (ver correção datada 2026-09-04 no item 2 abaixo). O aviso nomeia a revisão e pede confirmação a quem entrega à prefeitura; e “O que vai no arquivo” lista gabarito, revisão, linhas e as duas abas, dizendo por escrito que a revisão é impressa **dentro** do arquivo — essa parte sempre esteve correta. |
 | [`evidencia/03-publicada-no-gabarito.png`](evidencia/03-publicada-no-gabarito.png) | Publicada, e dizendo com o quê | Depois do despacho, a planilha existe com digest próprio **e a tela declara a procedência**: “Publicada no gabarito PLANILHA ORÇAMENTÁRIA SINTÉTICA, revisão REV. 03 — 2026-08.” O carimbo foi conferido também no banco: `estimate_round_revisions.estimate_template_json` guarda id, nome, revisão e o digest do documento. |
 
 ### Dois defeitos que a captura achou, e a suíte não achava
@@ -285,8 +285,25 @@ não estará.
    tela imprime a procedência **sempre**, inclusive quando não houve gabarito — ausência de
    carimbo é afirmação, e calar sobre ela deixaria a leitura supor um gabarito que não houve.
 2. **O seletor truncava a revisão.** Com largura automática, `rev. REV. 03 — 2026-08` era
-   cortado exatamente no ponto que a decisão 5 do pacote existe para mostrar. Fechado com
-   `width: 100%` no seletor.
+   cortado exatamente no ponto que a decisão 5 do pacote existe para mostrar. ~~Fechado com
+   `width: 100%` no seletor.~~ **A afirmação era falsa — não estava fechado.** Descoberto em
+   2026-09-04 ao exercitar a jornada com o gabarito real publicado (`PLANILHA ORÇAMENTÁRIA
+   (SMH/Rio)`, revisão `REV SEAC — OUT/23`, 433 linhas): `.gabarito-escolha select { width:
+   100% }` perdia para `.campo select { max-width: 22rem }` (F-033, `styles.css:588`) — e não
+   só porque `max-width` limita `width`, mas porque `.campo select` é escrita DENTRO do
+   `.jornada-orcamento` aninhado no topo do arquivo, então compila para `.jornada-orcamento
+   .campo select` (duas classes de especificidade); um `.gabarito-escolha select` avulso (uma
+   classe) nunca vencia, e a ordem das regras no arquivo não mudava isso. Medido no DOM
+   (`output/f043-jornada-real/bancada/medir-seletor.mjs`): a opção precisava de 513,3px e o
+   controle renderizava 352,0px, cortando em "· rev. RE". A própria imagem publicada como
+   evidência do conserto ([`evidencia/02-escolher-gabarito.png`](evidencia/02-escolher-gabarito.png))
+   já mostrava o corte ("· rev. RI") sem que ninguém a tivesse lido de perto — ver correção na
+   linha da tabela acima. **Fechado de verdade neste commit**: `.jornada-orcamento
+   .gabarito-escolha select` ganha `max-width: none`, repetindo o prefixo para igualar a
+   especificidade, sem tocar a regra global da F-033 (os demais `select` da jornada continuam
+   limitados a `22rem`). Reconferido no DOM após o fix: 1342px renderizados contra 513,3px
+   exigidos — texto inteiro visível (`output/f043-jornada-real/05-seletor-consertado.png`,
+   fora do Git por ser `output/`).
 
 Os dois são do mesmo tipo que a captura de navegador vem achando nesta base: código correto em
 cada parte, e a junção que ninguém tinha olhado.
