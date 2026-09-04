@@ -5,11 +5,11 @@
 `READY_FOR_PLANNING`
 
 > **ADR-0063 aceito em 2026-09-04** (Daniel Campos, pelo chat) — gate 1 cumprido.
-> Condicionado agora só ao Design Approval Package (gate 2), que precede o planejamento
-> por esta feature ser `INTERFACE_CHANGE`.
 >
-> **DAP revisão 1 produzido em 2026-09-04** ([mock/README.md](mock/README.md)) —
-> **aguardando aprovação humana**. Nenhum agente aprova design.
+> **DAP revisão 1 aprovado por ato humano em 2026-09-04** (Daniel Campos, pelo chat, após o
+> merge do PR #157 — [mock/README.md](mock/README.md)), com as duas leituras do pacote
+> confirmadas: rótulo de elemento único por job na revisão, e revogação que não desfaz
+> associação já confirmada. **Os dois gates que precedem o planejamento estão cumpridos.**
 >
 > Nasce em 2026-09-04 da issue
 > [#139](https://github.com/biahflow/croquito/issues/139), aberta pela primeira revisão
@@ -141,10 +141,9 @@ fechando o elo croqui→cena→quantitativo.
 ## Human Gates
 
 1. ~~**Aceite do ADR-0063**~~ — **cumprido em 2026-09-04** (Daniel Campos, pelo chat).
-2. **Design Approval Package** da tela (declarar identidade sobre propostas + candidatas
-   por identidade no seletor) — **revisão 1 produzida em 2026-09-04, aguardando
-   aprovação** ([mock/README.md](mock/README.md)); precede o planejamento
-   (`INTERFACE_CHANGE`).
+2. ~~**Design Approval Package** da tela~~ — **cumprido em 2026-09-04** (Daniel Campos,
+   pelo chat): revisão 1 aprovada com as duas leituras confirmadas — rótulo único por job e
+   revogação que não desfaz associação confirmada ([mock/README.md](mock/README.md)).
 3. Aceite final contra o caso real do Toca (critério 1).
 
 ## References

@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Awaiting approval**  
+Status: **Approved (2026-09-04)**  
 Date: 2026-09-04  
 Produced by: agente (Claude Code)
 
@@ -12,18 +12,21 @@ Produced by: agente (Claude Code)
 >
 > O outro gate desta feature — o aceite do
 > [ADR-0063](../../../adr/0063-identidade-de-elemento-nasce-na-revisao.md) — **já foi
-> satisfeito por ato humano em 2026-09-04** (Daniel Campos, pelo chat). Este pacote é o gate
-> que resta antes de a F-051 entrar em planejamento.
+> satisfeito por ato humano em 2026-09-04** (Daniel Campos, pelo chat). Este pacote **foi
+> aprovado por ato humano em 2026-09-04** (Daniel Campos, pelo chat, após o merge do PR
+> #157), com as **duas leituras confirmadas no mesmo ato**: rótulo de elemento único por job
+> na revisão (decisão 9) e revogação que não desfaz associação já confirmada (decisão 8).
+> Com os dois gates passados, a F-051 entra em planejamento.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
-| O que se aprova | — pendente — |
-| Aprovado por | — pendente — |
-| Data | — pendente — |
+| O que se aprova | a composição visual da revisão 1 e as doze decisões listadas em "Decisões que este pacote carrega", incluindo a confirmação explícita das duas leituras (decisões 8 e 9) |
+| Aprovado por | Daniel Campos |
+| Data | 2026-09-04 |
 | Revisão | 1 |
-| Explicitamente **não** coberto | ver "O que a aprovação não cobre" |
+| Explicitamente **não** coberto | a copy final; os códigos `problem+json` das recusas; a normalização do casamento de rótulo (fatia 1, com o dado do job de referência); onde a declaração persiste no pacote versionado; os números/nomes sintéticos — a lista completa em "O que a aprovação não cobre" |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
 precisa de registro próprio.
