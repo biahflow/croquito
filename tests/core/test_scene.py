@@ -2,6 +2,7 @@ import hashlib
 import json
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 from zipfile import ZipFile
 
 import pytest
@@ -495,7 +496,7 @@ def test_scene_without_element_ref_produces_the_same_export_package_as_before(
         # regressão real de layout, ignora rasterização.
         extents = auditoria.pop("extents")
         esperado = dict(_AUDIT_BEFORE_F047_T1)
-        extents_esperados = esperado.pop("extents")
+        extents_esperados = cast("dict[str, list[float]]", esperado.pop("extents"))
         assert auditoria == esperado
         for eixo in ("min", "max"):
             for valor, referencia in zip(extents[eixo], extents_esperados[eixo], strict=True):
