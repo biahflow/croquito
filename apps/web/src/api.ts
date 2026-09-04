@@ -1219,6 +1219,32 @@ export type ReviewElementIdentityAct = {
 };
 
 /**
+ * Uma sugestão assistida de identidade na REVISÃO, a partir do rótulo do modelo (F-051 T3).
+ *
+ * O gêmeo, uma etapa antes, de `ElementProposal`: nasce `unresolved` e nunca escreve nada —
+ * confirmar é o MESMO ato da T2, reenviando `proposal_ids` para
+ * `POST /v1/jobs/{job_id}/review/elements`, nunca um segundo caminho de identidade.
+ */
+export type ReviewElementSuggestion = {
+  suggestion_id: string;
+  status: "unresolved";
+  label: string;
+  proposal_ids: string[];
+};
+
+export type ReviewElementSuggestionList = {
+  review_version: number;
+  suggestions: ReviewElementSuggestion[];
+};
+
+export type ReviewElementSuggestionRejection = {
+  suggestion_id: string;
+  proposal_ids: string[];
+  rejected_by_role: string;
+  rejected_at: string;
+};
+
+/**
  * Declara que um conjunto de propostas é um elemento (F-051 T2, ADR-0063 decisão 1).
  *
  * Como no ato da cena, o corpo NÃO carrega `element_ref` — quem cunha é o servidor, e
@@ -1353,6 +1379,47 @@ export async function rejectElementProposal(
 ): Promise<ElementProposalRejection> {
   return apiJson<ElementProposalRejection>(
     `/v1/jobs/${jobId}/elements/proposals/${proposalId}/rejections`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(rejection),
+    },
+  );
+}
+
+/**
+ * Sugestões assistidas de identidade da revisão corrente (F-051 T3, ADR-0063 decisão 1).
+ *
+ * O gêmeo, uma etapa antes, de `listElementProposals`: o produtor roda de novo a cada
+ * leitura, sobre o snapshot de propostas corrente — nada fica em cache.
+ */
+export async function listReviewElementSuggestions(
+  accessToken: string,
+  jobId: string,
+): Promise<ReviewElementSuggestionList> {
+  return apiJson<ReviewElementSuggestionList>(
+    `/v1/jobs/${jobId}/review/elements/suggestions`,
+    accessToken,
+  );
+}
+
+/**
+ * Recusa uma sugestão assistida da revisão (F-051 T3). Não toca a revisão — por isso não
+ * há `base_version` a citar —, mas registra quem recusou e quando, e a sugestão recusada
+ * não volta a ser oferecida.
+ */
+export async function rejectReviewElementSuggestion(
+  accessToken: string,
+  jobId: string,
+  suggestionId: string,
+  rejection: { reason: string },
+): Promise<ReviewElementSuggestionRejection> {
+  return apiJson<ReviewElementSuggestionRejection>(
+    `/v1/jobs/${jobId}/review/elements/suggestions/${suggestionId}/rejections`,
     accessToken,
     {
       method: "POST",

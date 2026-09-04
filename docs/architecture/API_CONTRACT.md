@@ -1085,6 +1085,68 @@ colide na unicidade `(job_id, version)` da revisão de leitura e recebe
 `409 REVISION_CONFLICT`. Revisão inexistente responde `409 JOB_NOT_READY`; revisão sem
 snapshot de propostas, `409 PROPOSALS_NOT_READY`.
 
+### `GET /v1/jobs/{job_id}/review/elements/suggestions`
+
+Sugestões ASSISTIDAS de identidade (F-051 T3, [ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md),
+decisão 1): o gêmeo, uma etapa antes, de
+[`GET /v1/jobs/{job_id}/elements/proposals`](#get-v1jobsjob_idelementsproposals) (F-047
+T6). O sistema SUGERE, nunca decide. O produtor
+(`croquito_worker.review_element_suggestions.suggest_review_elements`) é determinístico,
+sem provider pago, e roda de novo a cada leitura sobre o snapshot de propostas
+(`proposals_json`) corrente — nada fica em cache. Ele agrupa propostas de geometria pelo
+`label` que o modelo deu (`VisionProposal.label`), casamento EXATO: o rótulo é só SINAL,
+não identidade — uma proposta pode estar rotulada errada, e é para isso que existe a
+recusa. Proposta sem rótulo, ou já coberta por uma declaração ATIVA desta revisão
+(`element_declarations_json`), não é sugerida.
+
+Saída:
+
+```json
+{
+  "review_version": 3,
+  "suggestions": [
+    {
+      "suggestion_id": "els_...",
+      "status": "unresolved",
+      "label": "B",
+      "proposal_ids": ["vp_1111111111111111", "vp_2222222222222222"]
+    }
+  ]
+}
+```
+
+- `status` é sempre `"unresolved"`: nunca identidade.
+- **Confirmar é o MESMO ato da T2**: reenviar `proposal_ids` para
+  `POST /v1/jobs/{job_id}/review/elements`. Esta rota não abre um segundo caminho de
+  escrita.
+- Leitura: qualquer principal autenticado do tenant, como
+  `GET /v1/jobs/{job_id}/elements/proposals`. Revisão inexistente responde
+  `409 JOB_NOT_READY`; revisão sem snapshot de propostas, `409 PROPOSALS_NOT_READY`.
+
+### `POST /v1/jobs/{job_id}/review/elements/suggestions/{suggestion_id}/rejections`
+
+Recusa uma sugestão: NUNCA declara identidade, só registra quem recusou, quando e por quê.
+
+```json
+{"reason": "É o balão C espelhado, o rótulo do modelo está errado."}
+```
+
+Responde com o registro do ato:
+
+```json
+{
+  "suggestion_id": "els_...",
+  "proposal_ids": ["vp_1111111111111111", "vp_2222222222222222"],
+  "rejected_by_role": "engineer",
+  "rejected_at": "2026-09-04T21:00:00Z"
+}
+```
+
+Exige `Idempotency-Key` e papel profissional elegível. Uma sugestão recusada não volta a
+aparecer em `GET .../suggestions` para o mesmo conjunto de propostas nesta revisão;
+recusar de novo (com outra `Idempotency-Key`) ou recusar um id que nunca foi ofertado
+responde `404 REVIEW_ELEMENT_SUGGESTION_NOT_FOUND`.
+
 ### `POST /v1/jobs/{job_id}/review/witnesses`
 
 Associa ou retrata uma testemunha observacional. Entrada comum: `base_version` e `action`.

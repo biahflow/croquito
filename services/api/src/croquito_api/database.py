@@ -797,6 +797,50 @@ class ElementProposalRejectionRecord(Base):
     )
 
 
+class ReviewElementSuggestionRejectionRecord(Base):
+    """Recusa humana de uma sugestão assistida de identidade na REVISÃO (F-051 T3, ADR-0063).
+
+    O gêmeo de `ElementProposalRejectionRecord`, uma etapa antes: a sugestão em si nunca é
+    persistida — ela é recomputada a cada leitura por
+    `croquito_worker.review_element_suggestions.suggest_review_elements`, puro e
+    determinístico sobre o `VisionProposalSet` corrente da revisão. Só a RECUSA precisa de
+    memória: sem ela, a mesma sugestão de rótulo errado voltaria a ser oferecida a cada
+    `GET /v1/jobs/{job_id}/review/elements/suggestions`.
+
+    `suggestion_id` é o hash determinístico de `(job_id, proposal_ids)`
+    (`review_element_suggestions._suggestion_id`) — nunca um contador; duas revisões
+    diferentes do mesmo job com o mesmo grupo cunham o mesmo id, e é por isso que a recusa
+    sobrevive a uma revisão nova que não tocou aquelas propostas. `proposal_ids_json` é só
+    auditoria: quem lê a linha de recusa não precisa recomputar a sugestão para saber o que
+    foi recusado.
+
+    A unicidade `(tenant_id, job_id, suggestion_id)` é o que torna recusar a mesma sugestão
+    duas vezes o MESMO ato, não dois — o mesmo desenho de `ElementProposalRejectionRecord`.
+    """
+
+    __tablename__ = "review_element_suggestion_rejections"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "job_id",
+            "suggestion_id",
+            name="uq_review_element_suggestion_rejection",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    suggestion_id: Mapped[str] = mapped_column(String(32))
+    proposal_ids_json: Mapped[list[str]] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(Text)
+    rejected_by: Mapped[str] = mapped_column(String(128))
+    rejected_by_role: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class ApprovalRecord(Base):
     __tablename__ = "approvals"
 

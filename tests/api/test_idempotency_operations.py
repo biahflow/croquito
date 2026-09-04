@@ -34,6 +34,7 @@ from croquito_api.database import (
     IDEMPOTENCY_OPERATION_MAX_LENGTH,
     ElementProposalRejectionRecord,
     IdempotencyRecord,
+    ReviewElementSuggestionRejectionRecord,
 )
 from croquito_api.journeys import JOURNEYS
 
@@ -95,6 +96,9 @@ _FIELD_MAX_LENGTHS: Final[dict[str, int]] = {
     # `proposal_id` (F-047 T6) é o hash determinístico do conjunto de entidades da proposta,
     # e quem o limita é a coluna que o guarda — a mesma régua do `tenant_id` acima.
     "proposal_id": column_max_length("proposal_id", ElementProposalRejectionRecord),
+    # `suggestion_id` (F-051 T3) é o gêmeo, uma etapa antes: o hash determinístico do
+    # conjunto de propostas da sugestão, limitado pela coluna que guarda a recusa dela.
+    "suggestion_id": column_max_length("suggestion_id", ReviewElementSuggestionRejectionRecord),
 }
 
 

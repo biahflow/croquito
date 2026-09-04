@@ -7873,6 +7873,22 @@
         "title": "RejectElementProposalRequest",
         "type": "object"
       },
+      "RejectReviewElementSuggestionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RejectReviewElementSuggestionRequest",
+        "type": "object"
+      },
       "RelabelElementRequest": {
         "additionalProperties": false,
         "description": "Renomear é ato declarado, com autor, instante e motivo — nunca edição silenciosa.\n\nComo na revogação, o `element_ref` VEM do cliente porque nomeia o que já existe na cena.\nRenomear não toca geometria nem identidade: só o nome que a pessoa lê muda, e ainda assim\no ato cria revisão nova, porque quem revisa precisa ver que o nome mudou e por quem.",
@@ -8451,6 +8467,95 @@
           "declarations"
         ],
         "title": "ReviewElementIdentityResponse",
+        "type": "object"
+      },
+      "ReviewElementSuggestionListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "review_version": {
+            "title": "Review Version",
+            "type": "integer"
+          },
+          "suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewElementSuggestionResponse"
+            },
+            "title": "Suggestions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "review_version",
+          "suggestions"
+        ],
+        "title": "ReviewElementSuggestionListResponse",
+        "type": "object"
+      },
+      "ReviewElementSuggestionRejectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "proposal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposal Ids",
+            "type": "array"
+          },
+          "rejected_at": {
+            "format": "date-time",
+            "title": "Rejected At",
+            "type": "string"
+          },
+          "rejected_by_role": {
+            "title": "Rejected By Role",
+            "type": "string"
+          },
+          "suggestion_id": {
+            "title": "Suggestion Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suggestion_id",
+          "proposal_ids",
+          "rejected_by_role",
+          "rejected_at"
+        ],
+        "title": "ReviewElementSuggestionRejectionResponse",
+        "type": "object"
+      },
+      "ReviewElementSuggestionResponse": {
+        "additionalProperties": false,
+        "description": "Uma sugestão assistida de identidade na REVISÃO, a partir do rótulo do modelo (F-051 T3).\n\nO gêmeo, uma etapa antes, de `ElementProposalResponse`: `status` é sempre `unresolved` —\nnada aqui foi declarado. Confirmar é o MESMO ato da T2 — reenviar `proposal_ids` para\n`POST /v1/jobs/{job_id}/review/elements` — nunca um segundo caminho de identidade.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "proposal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposal Ids",
+            "type": "array"
+          },
+          "status": {
+            "const": "unresolved",
+            "default": "unresolved",
+            "title": "Status",
+            "type": "string"
+          },
+          "suggestion_id": {
+            "title": "Suggestion Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suggestion_id",
+          "label",
+          "proposal_ids"
+        ],
+        "title": "ReviewElementSuggestionResponse",
         "type": "object"
       },
       "ReviewPacket": {
@@ -16104,6 +16209,139 @@
           }
         ],
         "summary": "Revoke Review Element",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/elements/suggestions": {
+      "get": {
+        "description": "Sugestões assistidas de identidade a partir do rótulo do modelo (F-051 T3, ADR-0063).\n\nO gêmeo, uma etapa antes, de `GET /v1/jobs/{job_id}/elements/proposals` (F-047 T6):\no produtor (`croquito_worker.review_element_suggestions.suggest_review_elements`) é\npuro, determinístico e sem provider pago — roda de novo a cada leitura, sobre o\nsnapshot de propostas corrente. Nada é lido de cache nem de estado próprio; só a\nRECUSA fica em memória, e é por isso que uma sugestão recusada não volta a aparecer\naqui para o mesmo conjunto de propostas nesta revisão.\n\nLeitura: qualquer principal autenticado do tenant lê; o papel profissional só é\nexigido para CONFIRMAR (a rota de sempre, `POST /v1/jobs/{job_id}/review/elements`)\nou RECUSAR (abaixo).",
+        "operationId": "list_review_element_suggestions_v1_jobs__job_id__review_elements_suggestions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewElementSuggestionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Review Element Suggestions",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/elements/suggestions/{suggestion_id}/rejections": {
+      "post": {
+        "description": "Recusa uma sugestão: NUNCA declara identidade, só registra quem recusou e quando.\n\nRecomputa as sugestões correntes e exige que `suggestion_id` seja uma delas AGORA —\nrecusar um id já declarado, já recusado antes, ou nunca ofertado responde\n`404 REVIEW_ELEMENT_SUGGESTION_NOT_FOUND`, nunca o 404 genérico de rota. Sem\n`base_version`: como o ato não toca a revisão, não há concorrência otimista para\nconferir.",
+        "operationId": "reject_review_element_suggestion_v1_jobs__job_id__review_elements_suggestions__suggestion_id__rejections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "suggestion_id",
+            "required": true,
+            "schema": {
+              "title": "Suggestion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectReviewElementSuggestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewElementSuggestionRejectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject Review Element Suggestion",
         "tags": [
           "review"
         ]
