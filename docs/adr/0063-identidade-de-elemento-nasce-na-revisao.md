@@ -1,8 +1,8 @@
 # ADR-0063: A identidade de elemento nasce na revisão, sobre propostas — e o traçado a transporta
 
-Status: Proposed  
-Data: 2026-09-04 (caminho escolhido por ato humano em 2026-09-04, Daniel Campos; aceite do
-ADR pendente)  
+Status: Accepted  
+Data: 2026-09-04 (caminho escolhido e ADR aceito por ato humano na mesma data, Daniel
+Campos, pelo chat)  
 Responsável: Product / Engineering
 
 ## Contexto
