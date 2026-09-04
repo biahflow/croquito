@@ -119,7 +119,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-048 | A DEFINIR | READY_FOR_SPEC | Auditoria de medição de terceiros: elevar `parity`/`compare-bulletin` a jornada de usuário — importar MAPÃO/BM externo e devolver relatório de furos (a definir em contrato) |
 | F-049 | A DEFINIR | READY_FOR_SPEC | Dashboard executivo do contrato: planejado × realizado, acumulado × saldo, avanço físico-financeiro entre medições, sobre F-031/F-036/F-039 (a definir em contrato) |
 | F-050 | A DEFINIR | READY_FOR_SPEC | Relatório de risco e pendências do período de medição, pronto para o cliente, ao lado do BM (a definir em contrato) |
-| F-051 | HIGH | READY_FOR_PLANNING | [A cota-balão encontra seu elemento: identidade declarada na revisão](../features/F-051-cota-balao-encontra-seu-elemento/feature.md) — nasce da [issue #139](https://github.com/biahflow/croquito/issues/139) (revisão real do Toca); caminho de arquitetura escolhido pelo dono em 2026-09-04 ([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md), **Accepted em 2026-09-04**). Gate pendente que precede o planejamento: Design Approval Package (`INTERFACE_CHANGE`) |
+| F-051 | HIGH | READY_FOR_BUILD | [A cota-balão encontra seu elemento: identidade declarada na revisão](../features/F-051-cota-balao-encontra-seu-elemento/feature.md) — nasce da [issue #139](https://github.com/biahflow/croquito/issues/139) (revisão real do Toca); caminho de arquitetura escolhido pelo dono em 2026-09-04 ([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md), **Accepted em 2026-09-04**); Design Approval Package revisão 1 **aprovado em 2026-09-04** ([pacote](../features/F-051-cota-balao-encontra-seu-elemento/mock/README.md)) — os dois gates cumpridos; plano congelado na mesma data ([plan.md](../features/F-051-cota-balao-encontra-seu-elemento/plan.md), 7 tarefas) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -645,8 +645,9 @@ real: a cota-balão (medida escrita longe do elemento, ligada por letra) é inal
 funil de proximidade por construção, e o escape `annotation=true` deixa medida confirmada por
 humano fora do solver. Dos três caminhos apresentados, o dono escolheu o desenho completo — a
 identidade de elemento (`element_ref`, ADR-0058) passa a poder nascer NA REVISÃO, sobre
-propostas, pelo mesmo ato humano, e o traçado a transporta para a cena (ADR-0063, `Proposed`).
-É a ponte que faltava na cadeia croqui→cena→quantitativo da F-047.
+propostas, pelo mesmo ato humano, e o traçado a transporta para a cena (ADR-0063, `Accepted`
+em 2026-09-04). É a ponte que faltava na cadeia croqui→cena→quantitativo da F-047; o Design
+Approval Package (revisão 1) foi aprovado na mesma data, com as duas leituras confirmadas.
 
 ## Agora — MVP privado
 
