@@ -8,9 +8,12 @@ Quatro invariantes atravessam a suíte, e são elas que a T2 existe para garanti
 - **pré-visualização não escreve**: nenhuma revisão nova, nenhuma versão avançada. É o
   controle que a feature exige contra "aplicar sem olhar", e um controle que gravasse deixaria
   de ser conferência;
-- **merge por `kit_origin.kit_version`**: reaplicar substitui só as parcelas daquele acervo;
-  contribuição autorada à mão e de OUTRO acervo sobrevivem intactas. É o coração da task, e os
-  três casos são testados;
+- **merge por `kit_origin` = `(kit_id, kit_version)`**: reaplicar substitui só as parcelas
+  daquele acervo; contribuição autorada à mão e de OUTRO acervo sobrevivem intactas. É o
+  coração da task, e os três casos são testados. A chave era só a versão até 2026-09-04, e a
+  Emenda 1 do ADR-0060 a trocou pelo PAR: dois acervos DIFERENTES que declarem a mesma versão
+  deixaram de colidir, e proveniência anterior à emenda (`kit_id` nulo) nunca casa com a de um
+  acervo;
 - **falha fechada por extenso NO APPLY**: parâmetro citado e não declarado nomeia **todos**
   os que faltam, e código fora do catálogo da cascata nomeia o código — as duas em
   `problem+json`, com o código estável do domínio em `details.code`, e nenhuma linha
@@ -33,6 +36,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -71,6 +75,9 @@ _ABSENT_CODE = "CE09999999(/)"
 _KIT_VERSION = "1.0.0"
 _OTHER_KIT_VERSION = "9.9.9"
 """Versão de OUTRO acervo, cujas parcelas o merge tem de preservar intactas."""
+_OTHER_KIT_ID = UUID("01930000-0000-7000-8000-0000000000ff")
+"""Identidade desse OUTRO acervo. Nunca é publicada por rota nenhuma: ela existe para a
+matriz de partida dos testes de merge, que é escrita direto no banco."""
 
 
 # --- montagem ---------------------------------------------------------------------------
@@ -231,6 +238,7 @@ def _operand(
 _WC_PARCEL_ID = "ss_00000000000000a1"
 _PLACA_PARCEL_ID = "ss_00000000000000a2"
 _AREA_PARCEL_ID = "ss_00000000000000a3"
+_OUTRA_LINHAGEM_PARCEL_ID = "ss_00000000000000b1"
 
 
 def _kit_document(
@@ -272,6 +280,27 @@ def _kit_document(
             },
         ],
     }
+
+
+def _kit_document_de_outra_linhagem() -> dict[str, Any]:
+    """Acervo DIFERENTE que declara a MESMA versão — o caso da Emenda 1 do ADR-0060.
+
+    Com as duas origens do ADR (plataforma e tenant), duas linhagens independentes chamarem
+    sua primeira versão de `1.0.0` não é acidente: é o esperado. Só constantes, para que a
+    aplicação dele não dependa de parâmetro nenhum da rodada.
+    """
+    return _kit_document(
+        source_label="CANTEIRO DE OUTRA LINHAGEM",
+        parcels=[
+            {
+                "id": _OUTRA_LINHAGEM_PARCEL_ID,
+                "code": _SCO_CODE,
+                "label": "VIGIA NOTURNO",
+                "recipe": CalcRecipe.DAYS_TIMES_HOURS.value,
+                "operands": [_operand("DIAS", value="8"), _operand("H", value="24")],
+            }
+        ],
+    )
 
 
 def _kit_with_two_parameters() -> dict[str, Any]:
@@ -394,13 +423,31 @@ def _manual_contribution(label: str = "PARCELA A MAO") -> CalcContribution:
 
 
 def _other_kit_contribution() -> CalcContribution:
-    """Parcela de OUTRO acervo: mesma base, `kit_version` diferente. Também sobrevive."""
+    """Parcela de OUTRO acervo: mesma base, identidade e versão diferentes. Também sobrevive."""
     return CalcContribution(
         label="PARCELA DE OUTRO ACERVO",
         basis=ContributionBasis.STANDALONE,
         recipe=CalcRecipe.DECLARED_PRODUCT,
         operands=[CalcOperand(name="QTD", value=Decimal("3.00"))],
-        kit_origin=SiteSetupOrigin(kit_version=_OTHER_KIT_VERSION, parcel_id=_WC_PARCEL_ID),
+        kit_origin=SiteSetupOrigin(
+            kit_id=_OTHER_KIT_ID, kit_version=_OTHER_KIT_VERSION, parcel_id=_WC_PARCEL_ID
+        ),
+    )
+
+
+def _pre_amendment_contribution(*, kit_version: str = _KIT_VERSION) -> CalcContribution:
+    """Parcela gravada ANTES da Emenda 1: proveniência sem identidade (`kit_id` nulo).
+
+    A versão é, de propósito, a MESMA do acervo que os testes aplicam: sob a chave antiga ela
+    seria substituída, e é exatamente isso que a emenda deixou de fazer — "não observado" não
+    é "o mesmo acervo".
+    """
+    return CalcContribution(
+        label="PARCELA ANTERIOR A EMENDA",
+        basis=ContributionBasis.STANDALONE,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[CalcOperand(name="QTD", value=Decimal("5.00"))],
+        kit_origin=SiteSetupOrigin(kit_version=kit_version, parcel_id=_WC_PARCEL_ID),
     )
 
 
@@ -917,10 +964,13 @@ def test_aplicar_grava_revisao_nova_avanca_a_versao_e_materializa_as_parcelas(
     assert [contribution.label for contribution in parcelas] == ["WC QUIMICO", "PLACA DE OBRA"]
     assert all(contribution.basis is ContributionBasis.STANDALONE for contribution in parcelas)
     assert all(contribution.source_item_id is None for contribution in parcelas)
+    # A proveniência cita a IDENTIDADE do acervo aplicado, e não só a versão dele: é o
+    # `kit_id` que a própria rota devolve, vindo da linha encontrada (ADR-0060, Emenda 1).
     assert [contribution.kit_origin for contribution in parcelas] == [
-        SiteSetupOrigin(kit_version=_KIT_VERSION, parcel_id=_WC_PARCEL_ID),
-        SiteSetupOrigin(kit_version=_KIT_VERSION, parcel_id=_PLACA_PARCEL_ID),
+        SiteSetupOrigin(kit_id=UUID(kit_id), kit_version=_KIT_VERSION, parcel_id=_WC_PARCEL_ID),
+        SiteSetupOrigin(kit_id=UUID(kit_id), kit_version=_KIT_VERSION, parcel_id=_PLACA_PARCEL_ID),
     ]
+    assert body["kit_id"] == kit_id
 
 
 def test_aplicar_com_base_version_defasada_e_conflito_e_nao_grava(tmp_path: Path) -> None:
@@ -1031,11 +1081,210 @@ def test_reaplicar_o_mesmo_acervo_nao_duplica_e_preserva_o_trabalho_alheio(
         "PLACA DE OBRA",
     ]
     # A parcela autorada à mão continua sem proveniência de acervo, e a do outro acervo
-    # continua apontando para a versão DELE: nenhuma das duas foi tocada.
+    # continua apontando para a identidade e a versão DELE: nenhuma das duas foi tocada.
     assert parcelas[0].kit_origin is None
     assert parcelas[1].kit_origin == SiteSetupOrigin(
-        kit_version=_OTHER_KIT_VERSION, parcel_id=_WC_PARCEL_ID
+        kit_id=_OTHER_KIT_ID, kit_version=_OTHER_KIT_VERSION, parcel_id=_WC_PARCEL_ID
     )
+
+
+def test_dois_acervos_diferentes_com_a_mesma_versao_coexistem_na_matriz(tmp_path: Path) -> None:
+    """O defeito que a Emenda 1 do ADR-0060 corrigiu, provado ponta a ponta.
+
+    Dois acervos DIFERENTES, publicados com a MESMA `kit_version`, aplicados à mesma rodada.
+    Sob a chave antiga (só a versão) o segundo apagaria as parcelas do primeiro; sob a chave
+    `(kit_id, kit_version)` os dois coexistem, cada parcela citando o acervo de onde nasceu.
+    """
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    primeiro = _publish_platform_kit(client, name="CANTEIRO PADRAO", key="publicacao-1").json()
+    segundo = _publish_platform_kit(
+        client,
+        name="CANTEIRO DE OUTRA LINHAGEM",
+        document=_kit_document_de_outra_linhagem(),
+        key="publicacao-2",
+    ).json()
+    # A premissa do teste: mesma versão, identidades distintas. Sem isto ele não prova nada.
+    assert primeiro["kit_version"] == segundo["kit_version"] == _KIT_VERSION
+    assert primeiro["kit_id"] != segundo["kit_id"]
+
+    aplicacao_1 = _apply(
+        client,
+        round_id,
+        kit_id=primeiro["kit_id"],
+        base_version=_round_version(client, round_id),
+        parameters={"prazo_meses": "2"},
+        key="apply-1",
+    )
+    assert aplicacao_1.status_code == 200, aplicacao_1.text
+    aplicacao_2 = _apply(
+        client,
+        round_id,
+        kit_id=segundo["kit_id"],
+        base_version=aplicacao_1.json()["version"],
+        key="apply-2",
+    )
+
+    assert aplicacao_2.status_code == 200, aplicacao_2.text
+    # Nada do primeiro acervo foi substituído: a versão coincide, a identidade não.
+    assert aplicacao_2.json()["replaced_parcel_count"] == 0
+    lida = CalcMatrix.model_validate(_head_matrix(client, round_id))
+    parcelas = lida.services[0].contributions
+    assert [contribution.label for contribution in parcelas] == [
+        "WC QUIMICO",
+        "PLACA DE OBRA",
+        "VIGIA NOTURNO",
+    ]
+    assert [contribution.kit_origin for contribution in parcelas] == [
+        SiteSetupOrigin(
+            kit_id=UUID(primeiro["kit_id"]),
+            kit_version=_KIT_VERSION,
+            parcel_id=_WC_PARCEL_ID,
+        ),
+        SiteSetupOrigin(
+            kit_id=UUID(primeiro["kit_id"]),
+            kit_version=_KIT_VERSION,
+            parcel_id=_PLACA_PARCEL_ID,
+        ),
+        SiteSetupOrigin(
+            kit_id=UUID(segundo["kit_id"]),
+            kit_version=_KIT_VERSION,
+            parcel_id=_OUTRA_LINHAGEM_PARCEL_ID,
+        ),
+    ]
+
+
+def test_reaplicar_um_dos_dois_acervos_de_mesma_versao_nao_toca_no_outro(
+    tmp_path: Path,
+) -> None:
+    """A outra metade do mesmo caso: com os dois na matriz, reaplicar um substitui só o dele."""
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    primeiro = _publish_platform_kit(client, name="CANTEIRO PADRAO", key="publicacao-1").json()
+    segundo = _publish_platform_kit(
+        client,
+        name="CANTEIRO DE OUTRA LINHAGEM",
+        document=_kit_document_de_outra_linhagem(),
+        key="publicacao-2",
+    ).json()
+    aplicacao_1 = _apply(
+        client,
+        round_id,
+        kit_id=primeiro["kit_id"],
+        base_version=_round_version(client, round_id),
+        parameters={"prazo_meses": "2"},
+        key="apply-1",
+    )
+    aplicacao_2 = _apply(
+        client,
+        round_id,
+        kit_id=segundo["kit_id"],
+        base_version=aplicacao_1.json()["version"],
+        key="apply-2",
+    )
+    assert aplicacao_2.status_code == 200, aplicacao_2.text
+
+    reaplicacao = _apply(
+        client,
+        round_id,
+        kit_id=primeiro["kit_id"],
+        base_version=aplicacao_2.json()["version"],
+        parameters={"prazo_meses": "2"},
+        key="apply-3",
+    )
+
+    assert reaplicacao.status_code == 200, reaplicacao.text
+    # As duas do primeiro acervo saíram e voltaram; a do segundo não foi contada nem tocada.
+    assert reaplicacao.json()["replaced_parcel_count"] == 2
+    lida = CalcMatrix.model_validate(_head_matrix(client, round_id))
+    parcelas = lida.services[0].contributions
+    assert [contribution.label for contribution in parcelas] == [
+        "VIGIA NOTURNO",
+        "WC QUIMICO",
+        "PLACA DE OBRA",
+    ]
+    assert parcelas[0].kit_origin == SiteSetupOrigin(
+        kit_id=UUID(segundo["kit_id"]),
+        kit_version=_KIT_VERSION,
+        parcel_id=_OUTRA_LINHAGEM_PARCEL_ID,
+    )
+
+
+def test_proveniencia_anterior_a_emenda_sobrevive_ao_apply_de_acervo_de_mesma_versao(
+    tmp_path: Path,
+) -> None:
+    """`kit_id` nulo é "não observado", e "não observado" nunca é "o mesmo acervo".
+
+    A matriz de partida tem uma parcela gravada antes da Emenda 1: sem identidade e com a
+    MESMA versão do acervo que a rodada vai aplicar. Sob a chave antiga ela seria substituída
+    por parcelas que nada provam ter nascido do mesmo lugar; sob a chave nova ela sobrevive
+    intacta, como qualquer parcela alheia.
+    """
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    kit_id = _publish_platform_kit(client).json()["kit_id"]
+    versao = _write_matrix(
+        client,
+        round_id,
+        CalcMatrix(
+            services=[
+                ServiceContributions(code=_SCO_CODE, contributions=[_pre_amendment_contribution()])
+            ]
+        ),
+        tenant=_TENANT,
+    )
+
+    resposta = _apply(
+        client, round_id, kit_id=kit_id, base_version=versao, parameters={"prazo_meses": "2"}
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["replaced_parcel_count"] == 0
+    lida = CalcMatrix.model_validate(_head_matrix(client, round_id))
+    parcelas = lida.services[0].contributions
+    assert [contribution.label for contribution in parcelas] == [
+        "PARCELA ANTERIOR A EMENDA",
+        "WC QUIMICO",
+        "PLACA DE OBRA",
+    ]
+    # Continua sem identidade: nenhuma rodada gravada é migrada nem reinterpretada.
+    assert parcelas[0].kit_origin == SiteSetupOrigin(
+        kit_version=_KIT_VERSION, parcel_id=_WC_PARCEL_ID
+    )
+
+
+def test_o_apply_grava_na_proveniencia_o_id_da_linha_do_acervo_aplicado(
+    tmp_path: Path,
+) -> None:
+    """A identidade gravada é conferida contra o BANCO, e não contra o corpo da requisição.
+
+    Exercita o acervo do TENANT, a outra origem do ADR-0060: a proveniência das parcelas cita
+    exatamente o `id` e a `kit_version` da linha aplicada.
+    """
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    kit_id = _insert_tenant_kit(client, tenant=_TENANT, name="ACERVO DA ORCAMENTISTA")
+
+    resposta = _apply(
+        client,
+        round_id,
+        kit_id=kit_id,
+        base_version=_round_version(client, round_id),
+        parameters={"prazo_meses": "2"},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    with _database(client).sessions() as session:
+        registro = session.get(SiteSetupKitRecord, kit_id)
+        assert registro is not None
+        esperada = (UUID(registro.id), registro.kit_version)
+    lida = CalcMatrix.model_validate(_head_matrix(client, round_id))
+    parcelas = lida.services[0].contributions
+    assert parcelas
+    assert [contribution.kit_origin for contribution in parcelas] == [
+        SiteSetupOrigin(kit_id=esperada[0], kit_version=esperada[1], parcel_id=_WC_PARCEL_ID),
+        SiteSetupOrigin(kit_id=esperada[0], kit_version=esperada[1], parcel_id=_PLACA_PARCEL_ID),
+    ]
 
 
 def test_reaplicar_com_parcela_removida_tira_so_aquela_parcela(tmp_path: Path) -> None:

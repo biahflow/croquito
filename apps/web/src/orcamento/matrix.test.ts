@@ -377,6 +377,8 @@ describe("disassembleCalcMatrix", () => {
             deductions: [],
             depends_on_code: null,
             note: null,
+            // Sem `kit_id` de propósito: é a proveniência ANTERIOR à Emenda 1 do ADR-0060,
+            // e esta fixture é o que mantém o regime legado coberto depois dela.
             kit_origin: { kit_version: "sco-site-setup-v1", parcel_id: "p1" },
           },
           {
@@ -433,6 +435,8 @@ describe("disassembleCalcMatrix", () => {
       { name: "LARGURA", value: "20", unit: "" },
     ]);
     // A parcela de acervo é reconhecida pela proveniência, com a versão que a matriz diz.
+    // `kitId` vazio porque ESTA matriz é anterior à Emenda 1 e não traz identidade: a tela
+    // declara a ausência em vez de deduzir um acervo a partir da versão.
     const doAcervo = drafts.find((entrada) => entrada.kitOrigin !== undefined);
     expect(doAcervo?.kitOrigin).toEqual({
       kitId: "",
@@ -507,6 +511,115 @@ describe("disassembleCalcMatrix", () => {
     expect(
       assembleCalcMatrix(drafts)?.services[0].contributions[0].kit_origin,
     ).toBeUndefined();
+  });
+});
+
+/**
+ * A IDENTIDADE do acervo no fio (`kit_origin.kit_id`), que a Emenda 1 do ADR-0060 acrescentou.
+ *
+ * O merge do apply desduplica por `(kit_id, kit_version)`, e o build SOBRESCREVE a matriz
+ * gravada com a que esta tela monta: a identidade que a tela deixasse cair sairia do banco, e
+ * a reaplicação seguinte duplicaria as parcelas em vez de substituí-las. Estes testes cobrem
+ * os três estados do campo — presente, `null` e ausente — e a regra que atravessa os três:
+ * **`""` nunca vai para o fio**, porque o domínio o valida como `UUID` e a string vazia
+ * derrubaria o build inteiro em `422`.
+ */
+describe("a identidade do acervo no fio", () => {
+  const KIT_ID = "01930000-0000-7000-8000-000000000001";
+
+  function comProveniencia(kitId: string): CalcContributionDraft {
+    return {
+      itemId: "p1",
+      code: "AC01100010",
+      itemQuantity: null,
+      label: "Aluguel de banheiro químico",
+      basis: "standalone",
+      recipe: "declared_product",
+      operands: [{ name: "UNIDADES", value: "1", unit: "un" }],
+      deductions: [],
+      dependsOnCode: "",
+      note: "",
+      kitOrigin: {
+        kitId,
+        kitName: "Canteiro — contrato SMH/Rio",
+        kitVersion: "sco-site-setup-v1",
+        parcelId: "p1",
+      },
+    };
+  }
+
+  function primeiraOrigem(matriz: CalcMatrix | null) {
+    return matriz?.services[0]?.contributions[0]?.kit_origin;
+  }
+
+  it("a identidade que a tela tem vai para o fio junto com a versão", () => {
+    expect(primeiraOrigem(assembleCalcMatrix([comProveniencia(KIT_ID)]))).toEqual({
+      kit_id: KIT_ID,
+      kit_version: "sco-site-setup-v1",
+      parcel_id: "p1",
+    });
+  });
+
+  it("identidade desconhecida OMITE a chave, e nunca manda string vazia", () => {
+    const origem = primeiraOrigem(assembleCalcMatrix([comProveniencia("")]));
+
+    expect(origem).not.toHaveProperty("kit_id");
+    expect(origem?.kit_id).toBeUndefined();
+    // A afirmação que importa: o que sai não é `""`. O domínio valida `kit_id` como `UUID`,
+    // e uma string vazia recusaria a matriz INTEIRA no build, não só esta parcela.
+    expect(JSON.stringify(origem)).not.toContain('""');
+  });
+
+  it("o round-trip preserva a identidade: hidratar e montar devolve a mesma matriz", () => {
+    const gravada = assembleCalcMatrix([comProveniencia(KIT_ID)]);
+
+    const remontada = assembleCalcMatrix(disassembleCalcMatrix(gravada));
+
+    expect(remontada).toEqual(gravada);
+    expect(primeiraOrigem(remontada)?.kit_id).toBe(KIT_ID);
+  });
+
+  it("a hidratação recupera a identidade que o fio traz", () => {
+    const drafts = disassembleCalcMatrix(assembleCalcMatrix([comProveniencia(KIT_ID)]));
+
+    expect(drafts[0].kitOrigin?.kitId).toBe(KIT_ID);
+    // O NOME do acervo continua fora do fio: ele é rótulo do registro, não proveniência.
+    expect(drafts[0].kitOrigin?.kitName).toBe("");
+  });
+
+  it("`kit_id` nulo no fio é ausência declarada, e vira vazio na tela — não um acervo", () => {
+    const anterior: CalcMatrix = {
+      schema_version: "1.0.0",
+      services: [
+        {
+          code: "AC01100010",
+          contributions: [
+            {
+              source_item_id: null,
+              label: "Aluguel de banheiro químico",
+              basis: "standalone",
+              recipe: "declared_product",
+              operands: [{ name: "UNIDADES", value: "1", unit: "un" }],
+              deductions: [],
+              depends_on_code: null,
+              note: null,
+              // Como o servidor serializa a proveniência gravada antes da emenda.
+              kit_origin: { kit_id: null, kit_version: "sco-site-setup-v1", parcel_id: "p1" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const drafts = disassembleCalcMatrix(anterior);
+
+    expect(drafts[0].kitOrigin?.kitId).toBe("");
+    expect(drafts[0].kitOrigin?.kitVersion).toBe("sco-site-setup-v1");
+    // E ao montar de volta a chave some: `null` e ausente dizem a mesma coisa, e `""` não vai.
+    expect(primeiraOrigem(assembleCalcMatrix(drafts))).toEqual({
+      kit_version: "sco-site-setup-v1",
+      parcel_id: "p1",
+    });
   });
 });
 

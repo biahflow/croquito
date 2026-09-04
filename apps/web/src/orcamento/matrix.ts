@@ -77,8 +77,27 @@ export type CalcOperand = { name: string; value: string; unit?: string | null };
  *
  * Espelha `CalcContribution.kit_origin` do domínio, que é OPCIONAL: parcela autorada à mão
  * não tem o campo, e a matriz dela continua saindo byte-idêntica à de antes da feature.
+ *
+ * `kit_id` é a IDENTIDADE do acervo, e entrou no fio com a Emenda 1 do ADR-0060 (2026-09-04):
+ * o merge do apply desduplica por `(kit_id, kit_version)`, e a versão sozinha não distingue
+ * dois acervos que a chamem igual — o que, com as duas origens do ADR (plataforma e tenant),
+ * é o caso esperado. **A tela precisa devolvê-lo**: o build sobrescreve a matriz gravada com
+ * a que ela monta, então descartá-lo aqui apagaria do banco a identidade que o apply escreveu,
+ * e a reaplicação seguinte duplicaria as parcelas em vez de substituí-las.
  */
-export type KitOrigin = { kit_version: string; parcel_id: string };
+export type KitOrigin = {
+  /**
+   * Ausente ou `null` significa **"não observado"**: proveniência gravada antes da emenda.
+   * `null` é a forma que o servidor devolve (`model_dump` serializa o opcional como `null`);
+   * ausente é a que a tela monta quando não sabe.
+   *
+   * **Nunca `""`.** O domínio o valida como `UUID`, e string vazia não é identidade nenhuma:
+   * ela derrubaria o build inteiro em `422`, e não só a parcela.
+   */
+  kit_id?: string | null;
+  kit_version: string;
+  parcel_id: string;
+};
 /* `kit_version` é TEXTO, e não número: o domínio o declara como `str` de 1 a 40
    caracteres (`SiteSetupOrigin`, `models.py`), e um acervo se chama
    "sco-site-setup-v1", não `1`. Mandá-lo como número faz `CalcMatrix.model_validate`
@@ -152,9 +171,10 @@ export type CalcContributionDraft = {
   note: string;
   /**
    * De qual acervo de canteiro a parcela nasceu (F-042). Ausente é "autorada à mão", e é o
-   * caso de toda contribuição autorada no editor. Carrega mais do que o fio (`kitId` e o
-   * nome do acervo) porque é a tela que precisa distinguir DOIS acervos aplicados na mesma
-   * rodada — reaplicar substitui as do mesmo acervo e não toca nas outras.
+   * caso de toda contribuição autorada no editor. Carrega uma coisa a mais que o fio — o
+   * NOME do acervo, que é rótulo de exibição e não identidade — porque é a tela que precisa
+   * distinguir DOIS acervos aplicados na mesma rodada; reaplicar substitui as do mesmo
+   * acervo e não toca nas outras.
    */
   kitOrigin?: KitProvenance;
   /**
@@ -165,15 +185,23 @@ export type CalcContributionDraft = {
   kitQuantity?: string;
 };
 
-/** Proveniência de acervo do lado da TELA; o fio leva só `{kit_version, parcel_id}`. */
+/**
+ * Proveniência de acervo do lado da TELA. O fio leva `{kit_id, kit_version, parcel_id}` desde
+ * a Emenda 1 do ADR-0060; `kitName` é o único campo que fica só aqui.
+ */
 export type KitProvenance = {
   /**
-   * `""` quando a parcela foi HIDRATADA da matriz gravada: o fio não diz de qual acervo ela
-   * nasceu, e afirmar um seria inventar identidade a partir de uma versão. Quem reaplica
-   * alcança essas parcelas pela lista de `parcel_id` da resposta, não por este campo.
+   * `""` é **"não observado"**: a matriz gravada não trouxe identidade nenhuma, porque foi
+   * escrita antes da emenda. Não é mais o caso normal da parcela hidratada — desde que o fio
+   * carrega `kit_id`, a hidratação recupera a identidade verdadeira e o filtro por acervo
+   * alcança a parcela relida. Afirmar um acervo a partir de uma versão continua proibido:
+   * quando o fio não diz, a tela não inventa.
    */
   kitId: string;
-  /** `""` na parcela hidratada, pela mesma razão. */
+  /**
+   * `""` na parcela hidratada — este sim, sempre: o nome é rótulo de exibição do registro do
+   * acervo, e não viaja na proveniência da matriz.
+   */
   kitName: string;
   kitVersion: string;
   parcelId: string;
@@ -386,10 +414,18 @@ function toContribution(draft: CalcContributionDraft): CalcContribution {
   // A proveniência só entra quando existe: parcela autorada à mão continua saindo sem a
   // chave, e a matriz de quem não usa acervo é a mesma de antes da F-042.
   if (draft.kitOrigin !== undefined) {
-    contribution.kit_origin = {
+    const kitOrigin: KitOrigin = {
       kit_version: draft.kitOrigin.kitVersion,
       parcel_id: draft.kitOrigin.parcelId,
     };
+    // A identidade viaja de volta quando a tela a tem — é ela que o merge do apply usa para
+    // reconhecer as parcelas do próprio acervo (Emenda 1 do ADR-0060). Quando não tem, a
+    // chave SOME: `""` não é identidade, o domínio a valida como `UUID` e ela derrubaria o
+    // build inteiro em `422` em vez de significar "não observado".
+    if (draft.kitOrigin.kitId !== "") {
+      kitOrigin.kit_id = draft.kitOrigin.kitId;
+    }
+    contribution.kit_origin = kitOrigin;
   }
   return contribution;
 }
@@ -456,10 +492,13 @@ function toOperandDraft(operand: CalcOperand): OperandDraft {
  *
  * - `itemQuantity` (o teto da parcela `PARTIAL`) não existe na matriz; ele volta `null`, e
  *   quem reabre o editor recebe o teto do elemento de novo (`abrirAutoria`), que é a fonte;
- * - a IDENTIDADE do acervo (`kitId`/`kitName`) não está no fio — ele leva só
- *   `{kit_version, parcel_id}` —, então a proveniência reconstruída tem `kitId` vazio. O
- *   selo continua dizendo "do acervo v1", que é o que a matriz afirma;
+ * - o NOME do acervo (`kitName`), que é rótulo do registro e não viaja na proveniência;
  * - o elemento de origem de `STANDALONE`/`DEPENDENT`, que o domínio proíbe no fio.
+ *
+ * A IDENTIDADE do acervo (`kitId`) deixou de estar nessa lista com a Emenda 1 do ADR-0060: o
+ * fio leva `kit_id`, e a proveniência reconstruída o recupera. Ela volta `""` só quando a
+ * matriz foi gravada antes da emenda e não o traz — aí o selo continua dizendo "do acervo
+ * v1", que é tudo o que a matriz afirma.
  *
  * `null` (rodada sem matriz gravada) devolve rascunho vazio: é o regime legado, e ele não
  * pode virar contribuição nenhuma.
@@ -497,7 +536,10 @@ export function disassembleCalcMatrix(
       const kitOrigin = contribution.kit_origin;
       if (kitOrigin !== undefined && kitOrigin !== null) {
         draft.kitOrigin = {
-          kitId: "",
+          // A identidade vem do fio quando ela está lá. Ausente e `null` são a mesma coisa —
+          // "não observado", proveniência anterior à Emenda 1 — e viram `""`, que é como a
+          // tela representa a ausência; o que ela NÃO faz é deduzir um acervo da versão.
+          kitId: kitOrigin.kit_id ?? "",
           kitName: "",
           kitVersion: kitOrigin.kit_version,
           parcelId: kitOrigin.parcel_id,

@@ -401,12 +401,15 @@ class SiteSetupKitRecord(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    """UUIDv7 em texto, e a IDENTIDADE que a proveniência de cada parcela materializada cita
+    (`SiteSetupOrigin.kit_id`, desde a Emenda 1 do ADR-0060). É por isso que ele, e não a
+    versão sozinha, é metade da chave do merge do apply."""
     tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     """`NULL` é acervo de plataforma; preenchido é acervo do tenant (ADR-0060)."""
     name: Mapped[str] = mapped_column(String(200))
     kit_version: Mapped[str] = mapped_column(String(40))
-    """Espelho de `SiteSetupKit.version`, lido de dentro do documento — é ele que a
-    proveniência de cada parcela materializada cita (`SiteSetupOrigin.kit_version`)."""
+    """Espelho de `SiteSetupKit.version`, lido de dentro do documento — é a outra metade do que
+    a proveniência cita (`SiteSetupOrigin.kit_version`) e da chave do merge."""
     source_label: Mapped[str] = mapped_column(String(200))
     document_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     """O `SiteSetupKit` serializado, já validado pelo domínio antes de virar linha."""
