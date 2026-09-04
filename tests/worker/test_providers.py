@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import re
 import socket
 from base64 import b64encode
@@ -2937,7 +2938,10 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         # 1.2.0: instrução própria pedindo `normalized_value` e `target_hint`. Até a 1.1.1 a
         # tarefa compartilhava o template genérico, que não pedia nenhum dos dois, e o merge
         # descartava tudo que o provider devolvia (issue #135).
-        "measurement-extraction": "measurement-extraction@1.2.0",
+        # 1.3.0: o texto passa a exigir bbox de largura e altura positivas. Duas amostras
+        # pagas da 1.2.0 sobre o mesmo croqui real colapsaram uma caixa na borda de baixo da
+        # folha em pé, e a área nula derrubava a resposta inteira (issue #141).
+        "measurement-extraction": "measurement-extraction@1.3.0",
         "geometry-extraction": "geometry-extraction@2.0.2",
         "legend-extraction": "legend-extraction@1.0.1",
         # 1.0.1: limite por flag no schema do refino; o texto do template não mudou.
@@ -2978,6 +2982,20 @@ def test_measurement_prompt_asks_for_the_two_fields_the_merge_requires() -> None
     # E continua valendo o que o template genérico já proibia.
     assert "Never invent a measurement" in template
     assert "null" in template
+
+
+def test_measurement_prompt_asks_for_a_bbox_with_positive_area() -> None:
+    """A caixa de área nula é recusada pelo contrato; o texto passa a dizer isso ao modelo.
+
+    Duas amostras pagas da `1.2.0` sobre o mesmo croqui real, em 2026-09-03, colapsaram uma
+    caixa na borda de baixo da folha em pé (`top == bottom`) e derrubavam a resposta inteira
+    (issue #141). O parser passou a descartar só a leitura degenerada; o prompt é a outra
+    metade — pedir a caixa certa é melhor que descartar a errada.
+    """
+    template = _prompt_template(PromptTask.MEASUREMENT_EXTRACTION)
+
+    assert "strictly positive width and height" in template
+    assert "never collapse a box onto a page edge" in template
 
 
 def test_geometry_prompt_forbids_measurement_and_regularisation() -> None:
@@ -4976,6 +4994,203 @@ def test_envelope_repair_still_applies_to_the_new_tasks(
     task: PromptTask, payload: dict[str, object], model: type[Any]
 ) -> None:
     assert isinstance(_parse_output(task, {"input": payload}), model)
+
+
+_COLLAPSED_BBOX: Final[dict[str, object]] = {
+    # A caixa que a folha real produziu duas vezes: colada na borda de baixo da página em pé,
+    # com `top == bottom` e, portanto, área nula (issue #141).
+    "left": 0.10,
+    "top": 1.0,
+    "right": 0.20,
+    "bottom": 1.0,
+}
+
+
+def _reading(raw_text: str, bbox: dict[str, object]) -> dict[str, object]:
+    return {
+        "raw_text": raw_text,
+        "kind": "length",
+        "normalized_value": 3.5,
+        "unit": "m",
+        "written_precision": 2,
+        "bbox": bbox,
+        "legibility": "clear",
+    }
+
+
+def _readings_payload(*bboxes: dict[str, object]) -> dict[str, object]:
+    return {"readings": [_reading(f"3,5{index} m", bbox) for index, bbox in enumerate(bboxes)]}
+
+
+def _drop_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("provider_readings_dropped_degenerate_bbox")
+    ]
+
+
+def test_degenerate_bbox_drops_only_its_own_reading(caplog: pytest.LogCaptureFixture) -> None:
+    """Uma caixa de área nula não pode levar a folha inteira junto.
+
+    Duas amostras pagas de `measurement-extraction` sobre o mesmo croqui real, em 2026-09-03,
+    devolveram ~70 leituras e em ambas UMA veio colapsada na borda de baixo; como
+    `_parse_output` validava o output inteiro, as outras 69 morriam com ela
+    (`INVALID_SCHEMA`, issue #141).
+    """
+    payload = _readings_payload(_bbox(), _COLLAPSED_BBOX, _bbox())
+
+    with caplog.at_level("WARNING", logger="croquito_worker.providers"):
+        output = _parse_output(PromptTask.MEASUREMENT_EXTRACTION, payload)
+
+    assert isinstance(output, MeasurementExtractionOutput)
+    # Só a degenerada sai, e a ordem das demais é preservada: nada é reordenado nem corrigido.
+    assert [reading.raw_text for reading in output.readings] == ["3,50 m", "3,52 m"]
+    records = _drop_records(caplog)
+    assert len(records) == 1
+    assert "task=measurement-extraction dropped=1 kept=2" in records[0].getMessage()
+    # Nem coordenada nem texto da folha vazam para o log.
+    assert "3,5" not in records[0].getMessage()
+
+
+def test_degenerate_bbox_is_dropped_inside_the_single_key_envelope(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """O repair de envelope e o salvamento têm que valer sobre o MESMO payload efetivo.
+
+    Sem a segunda passagem, a resposta embrulhada em `{"input": {...}}` — forma que os modelos
+    produzem de vez em quando — continuaria morrendo inteira por causa de uma caixa.
+    """
+    payload = {"input": _readings_payload(_bbox(), _COLLAPSED_BBOX)}
+
+    with caplog.at_level("WARNING", logger="croquito_worker.providers"):
+        output = _parse_output(PromptTask.MEASUREMENT_EXTRACTION, payload)
+
+    assert isinstance(output, MeasurementExtractionOutput)
+    assert [reading.raw_text for reading in output.readings] == ["3,50 m"]
+    records = _drop_records(caplog)
+    assert len(records) == 1
+    assert "task=measurement-extraction dropped=1 kept=1" in records[0].getMessage()
+
+
+def test_every_reading_degenerate_leaves_the_schema_decide(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Lista vazia depois do descarte não vira recusa própria — quem decide é o contrato.
+
+    `MeasurementExtractionOutput.readings` não tem `min_length`, então a resposta parseia com
+    zero leituras, exatamente como parsearia se o modelo não tivesse enxergado cota nenhuma.
+    O log é o que separa os dois casos para o operador.
+    """
+    payload = _readings_payload(_COLLAPSED_BBOX, _COLLAPSED_BBOX)
+
+    with caplog.at_level("WARNING", logger="croquito_worker.providers"):
+        output = _parse_output(PromptTask.MEASUREMENT_EXTRACTION, payload)
+
+    assert isinstance(output, MeasurementExtractionOutput)
+    assert output.readings == []
+    records = _drop_records(caplog)
+    assert len(records) == 1
+    assert "task=measurement-extraction dropped=2 kept=0" in records[0].getMessage()
+
+
+@pytest.mark.parametrize(
+    "bbox",
+    [
+        pytest.param({"left": 0.10, "top": 0.10, "right": 0.20}, id="campo-faltando"),
+        pytest.param({"left": 0.10, "top": 0.10, "right": 1.20, "bottom": 0.20}, id="fora-de-0-1"),
+        pytest.param(
+            {"left": True, "top": 0.10, "right": 0.20, "bottom": 0.20}, id="bool-no-lugar-do-numero"
+        ),
+        pytest.param([0.10, 0.10, 0.20, 0.20], id="bbox-de-outro-tipo"),
+    ],
+)
+def test_bbox_malformada_de_outro_jeito_continua_recusando_a_resposta_inteira(
+    bbox: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    """O salvamento cobre a degeneração de ÁREA, e só ela.
+
+    Qualquer outra malformação segue para a validação normal e recusa a resposta inteira, como
+    sempre: descartar o que não se sabe interpretar seria esconder do operador uma saída que
+    não obedece ao contrato. `bool` é subclasse de `int` e conta como malformação, senão
+    `True` viraria a coordenada 1,0.
+    """
+    payload = {"readings": [_reading("3,50 m", cast(dict[str, object], bbox))]}
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _parse_output(PromptTask.MEASUREMENT_EXTRACTION, payload)
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+    assert _drop_records(caplog) == []
+
+
+def test_ocr_line_with_a_collapsed_box_does_not_take_the_page_down(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """As linhas do Cloud Vision entram pelo mesmo funil e degeneram do mesmo jeito.
+
+    A caixa da linha é derivada dos vértices que o fornecedor devolve; uma palavra na borda
+    produz a mesma área nula, e recusar o OCR inteiro por causa dela apagaria a página.
+    """
+    payload = {
+        "lines": [
+            {"raw_text": "3,50 m", "bbox": _bbox()},
+            {"raw_text": "borda", "bbox": _COLLAPSED_BBOX},
+            {"raw_text": "12,40 m", "bbox": _bbox()},
+        ]
+    }
+
+    with caplog.at_level("WARNING", logger="croquito_worker.providers"):
+        output = _parse_output(PromptTask.OCR, payload)
+
+    assert isinstance(output, OcrOutput)
+    assert [line.raw_text for line in output.lines] == ["3,50 m", "12,40 m"]
+    records = _drop_records(caplog)
+    assert len(records) == 1
+    assert "task=ocr dropped=1 kept=2" in records[0].getMessage()
+
+
+def test_textract_line_of_zero_width_no_longer_takes_the_page_down() -> None:
+    """O braço que de fato produz a caixa degenerada no OCR é o Textract.
+
+    Cloud Vision (`_cloud_vision_bbox`) e Document AI já pulam a linha que não conseguem
+    posicionar; o Textract monta `right = Left + Width` sem conferir nada, então um bloco de
+    `Width: 0` chegava ao `_parse_output` e derrubava a página inteira. É por aqui que o
+    salvamento da issue #141 vale para o OCR.
+    """
+
+    class TextractClient:
+        def detect_document_text(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "Blocks": [
+                    {
+                        "BlockType": "LINE",
+                        "Text": "31,95 m",
+                        "TextType": "PRINTED",
+                        "Geometry": {
+                            "BoundingBox": {"Left": 0.1, "Top": 0.2, "Width": 0.3, "Height": 0.1}
+                        },
+                    },
+                    {
+                        "BlockType": "LINE",
+                        "Text": "borda",
+                        "TextType": "PRINTED",
+                        "Geometry": {
+                            "BoundingBox": {"Left": 0.4, "Top": 0.9, "Width": 0.0, "Height": 0.1}
+                        },
+                    },
+                ]
+            }
+
+    execution = TextractProviderAdapter(
+        model_id="textract-detect-document-text", client=TextractClient()
+    ).execute(_request(PromptTask.OCR))
+
+    assert isinstance(execution.output, OcrOutput)
+    assert [line.raw_text for line in execution.output.lines] == ["31,95 m"]
 
 
 def test_fixture_adapter_serves_the_new_tasks() -> None:
