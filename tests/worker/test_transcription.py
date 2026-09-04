@@ -279,6 +279,7 @@ def test_merge_converts_one_full_reading_field_by_field(tmp_path: Path) -> None:
     assert new_reading.kind == "radius"
     assert new_reading.written_decimals == 2
     assert new_reading.target_hint == "poste: raio"
+    assert new_reading.target_entity_label == "poste"
     assert new_reading.extractor == "bedrock_anthropic"
     assert new_reading.extractor_version == "anthropic.claude-sonnet-5+measurement-extraction@1.1.0"
     assert len(new_reading.provider_lineage) == 1
@@ -286,6 +287,45 @@ def test_merge_converts_one_full_reading_field_by_field(tmp_path: Path) -> None:
     # Artefato sem tokens/custo (o caso comum): o lineage não inventa valor (F-031 T1).
     assert new_reading.provider_lineage[0].input_tokens is None
     assert new_reading.provider_lineage[0].estimated_cost_usd is None
+
+
+def test_merge_carries_the_structured_target_entity_label_into_the_reading(
+    tmp_path: Path,
+) -> None:
+    """F-051 T1, critério 1: `TargetHint("B", "fecho")` sobrevive como campo próprio da
+    leitura, sem substituir a string legível — `target_hint` continua para exibição."""
+    image_path, manifest_path, digest = _seed_bundle(tmp_path)
+    base_packet = build_packet(dataset_id="golden-local-v1", digest=digest)
+    artifact = _artifact(
+        _reading(
+            raw_text="56,00 m",
+            kind="length",
+            value="56.00",
+            unit="m",
+            bbox=NormalizedBox(left=0.5, top=0.5, right=0.75, bottom=0.875),
+            legibility="clear",
+            entity_label="B",
+            feature="fecho",
+        )
+    )
+
+    merged, report = merge_readings_into_packet(
+        artifact, base_packet, manifest_path=manifest_path, image_path=image_path
+    )
+
+    assert report.accepted_count == 1
+    new_reading = next(
+        reading
+        for reading in merged.readings
+        if reading.id
+        not in {
+            WIDTH_READING_ID,
+            HEIGHT_READING_ID,
+            CIRCLE_READING_ID,
+        }
+    )
+    assert new_reading.target_entity_label == "B"
+    assert new_reading.target_hint == "B: fecho"
 
 
 def test_merge_carries_tokens_and_cost_into_the_lineage_when_the_artifact_has_them(

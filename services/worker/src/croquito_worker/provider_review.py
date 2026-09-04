@@ -779,6 +779,9 @@ def build_provider_review_snapshot(
                     if target_hint is not None
                     else None
                 ),
+                # Campo estruturado (F-051 T1): sobrevive até a leitura em vez de morrer
+                # achatado só na string legível acima.
+                target_entity_label=(target_hint.entity_label if target_hint is not None else None),
                 extractor=extractor,
                 extractor_version=extractor_version,
                 provider_lineage=lineage,

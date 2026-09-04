@@ -1,6 +1,6 @@
 # F-051 · T1 — O hint estruturado sobrevive até a leitura
 
-Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Pendente**  
+Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**  
 `feature_id: F-051` · `task_id: T1` · `depends_on: —`
 
 ## Objetivo
@@ -63,3 +63,16 @@ required: make check && make test
   desejado (fail-closed), mas o teste do critério 2 protege a direção inversa.
 - `transcription.py` trunca o hint em 120 (`[:474]`); o campo estruturado respeita os limites
   do `TargetHint` (1-120), não inventa outros.
+
+## Resultado
+
+Entregue em 2026-09-04. `DimensionReading.target_entity_label` (aditivo, mesmos limites do
+`TargetHint.entity_label`) sobrevive nos dois achatadores; `ReviewPacket.schema_version` subiu
+para `"1.2.0"` como novo default, com `"1.0.0"`/`"1.1.0"` continuando a validar. Os dois
+comandos de decisão (`ReviewDecisionCommand`, `RectifyReadingCommand`) e `ReadingDecisionInput`
+ganharam o campo com a mesma semântica de `target_hint` (ausente não altera, presente corrige);
+`_rectification_changes_nothing` passou a checar os dois campos separadamente. `apps/web/src/api.ts`
+e `docs/architecture/API_CONTRACT.md` documentam o campo; `tests/api/openapi.snapshot.json`
+foi regenerado com `make openapi-snapshot` (diff só aditivo: três `target_entity_label` novos
+e o bump de `schema_version`). Quatro testes novos, um em cada mold pedido pelo contrato mais
+o de API cobrindo o ato de correção. Nenhum desvio do contrato.

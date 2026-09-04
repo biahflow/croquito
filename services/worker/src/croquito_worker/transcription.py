@@ -487,6 +487,9 @@ def merge_readings_into_packet(
                 kind=kind,
                 written_decimals=reading.written_precision,
                 target_hint=target_hint,
+                # Campo estruturado (F-051 T1): já respeita os limites do `TargetHint`
+                # (1-120), sem truncar de novo como a string legível acima.
+                target_entity_label=reading.target_hint.entity_label,
                 extractor=extractor,
                 extractor_version=extractor_version,
                 provider_lineage=[lineage],

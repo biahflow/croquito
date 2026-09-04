@@ -186,6 +186,11 @@ class DimensionReading(ReviewModel):
     kind: MeasurementKind
     written_decimals: int = Field(ge=0, le=8)
     target_hint: str | None = Field(default=None, min_length=1, max_length=120)
+    # Campo estruturado (F-051 T1): sobrevive do `TargetHint.entity_label` do provider até
+    # a leitura, aditivo — `target_hint` continua sendo a string legível para exibição.
+    # Sem consumidor ainda (a T4 casa por identidade); mesmos limites do `TargetHint`
+    # (1-120), nada inventado aqui.
+    target_entity_label: str | None = Field(default=None, min_length=1, max_length=120)
     extractor: str = Field(min_length=1, max_length=80)
     extractor_version: str = Field(min_length=1, max_length=80)
     provider_lineage: list[ProviderLineage] = Field(default_factory=list, max_length=4)
@@ -219,7 +224,7 @@ class DimensionReading(ReviewModel):
 
 
 class ReviewPacket(ReviewModel):
-    schema_version: Literal["1.0.0", "1.1.0"] = "1.1.0"
+    schema_version: Literal["1.0.0", "1.1.0", "1.2.0"] = "1.2.0"
     dataset_id: str = Field(min_length=1, max_length=64)
     page_number: int = Field(ge=1)
     image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -287,6 +292,9 @@ class ReadingDecisionInput(ReviewModel):
     kind: MeasurementKind | None = None
     written_decimals: int | None = Field(default=None, ge=0, le=8)
     target_hint: str | None = Field(default=None, min_length=1, max_length=120)
+    # Correção do rótulo estruturado (F-051 T1): mesma semântica de `target_hint` —
+    # ausente não altera, presente corrige (ato registrado, nunca edição silenciosa).
+    target_entity_label: str | None = Field(default=None, min_length=1, max_length=120)
 
     @field_validator("decided_at")
     @classmethod
@@ -479,6 +487,7 @@ def _decided_fields(reading: DimensionReading, decision: ReadingDecisionInput) -
             else reading.written_decimals
         ),
         "target_hint": decision.target_hint or reading.target_hint,
+        "target_entity_label": decision.target_entity_label or reading.target_entity_label,
         "status": (
             ReadingStatus.CONFIRMED if decision.action == "confirm" else ReadingStatus.REJECTED
         ),

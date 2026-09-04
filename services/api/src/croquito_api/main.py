@@ -1160,6 +1160,9 @@ class ReviewDecisionCommand(ApiModel):
     kind: MeasurementKind | None = None
     written_decimals: int | None = Field(default=None, ge=0, le=8)
     target_hint: str | None = Field(default=None, min_length=1, max_length=120)
+    # Campo estruturado (F-051 T1): mesma semântica aditiva de `target_hint` — ausente
+    # não altera, presente corrige (ato registrado).
+    target_entity_label: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class SubmitReviewDecisionsRequest(ApiModel):
@@ -1193,6 +1196,9 @@ class RectifyReadingCommand(ApiModel):
     kind: MeasurementKind | None = None
     written_decimals: int | None = Field(default=None, ge=0, le=8)
     target_hint: str | None = Field(default=None, min_length=1, max_length=120)
+    # Campo estruturado (F-051 T1): mesma semântica aditiva de `target_hint` — ausente
+    # não altera, presente corrige (ato registrado).
+    target_entity_label: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class RectifyReviewDecisionsRequest(ApiModel):
@@ -6863,7 +6869,12 @@ def _rectification_changes_nothing(
     written_decimals = command.written_decimals
     if written_decimals is not None and written_decimals != reading.written_decimals:
         return False
-    return command.target_hint is None or command.target_hint == reading.target_hint
+    if command.target_hint is not None and command.target_hint != reading.target_hint:
+        return False
+    return (
+        command.target_entity_label is None
+        or command.target_entity_label == reading.target_entity_label
+    )
 
 
 def _resolve_scene_after_review_change(
@@ -9127,6 +9138,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     kind=command.kind,
                     written_decimals=command.written_decimals,
                     target_hint=command.target_hint,
+                    target_entity_label=command.target_entity_label,
                 )
             )
         try:
@@ -9378,6 +9390,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     kind=command.kind,
                     written_decimals=command.written_decimals,
                     target_hint=command.target_hint,
+                    target_entity_label=command.target_entity_label,
                 )
             )
         try:
