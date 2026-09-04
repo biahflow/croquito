@@ -29,10 +29,12 @@ G466 = TRUNC(G465/1.18,2)                            TOTAL S/BDI
 
 Três consequências para esta feature:
 
-1. **O `VALOR UNIT (OUT/23)` é COM BDI.** O rodapé deriva o total *sem* BDI dividindo o total
-   por 1,18 — logo o BDI de 18% já está no preço unitário impresso. Isso **resolve o unknown
-   2** da feature, e confirma a suposição com que a T1 foi construída (`unit_price_with_bdi`
-   na coluna de preço).
+1. ~~**O `VALOR UNIT (OUT/23)` é COM BDI.** O rodapé deriva o total *sem* BDI dividindo o
+   total por 1,18 — logo o BDI de 18% já está no preço unitário impresso.~~ **REFUTADO em
+   2026-09-04 por oráculo humano** (ver "O aceite" abaixo): o preço do contrato NÃO embute
+   BDI. Esta conclusão confiou no rodapé do cliente, e o rodapé é que está errado — a
+   leitura da seção "O preço do contrato tem BDI?" (mais abaixo), que apontava desconto de
+   licitação sobre o custo de tabela, estava certa.
 
 2. **O rodapé real tem duas linhas, não três**: `TOTAL` (com BDI) e `TOTAL S/BDI`, nessa
    ordem. Não existe uma linha "BDI" impressa. O ADR-0038 manda imprimir o BDI como
@@ -193,16 +195,59 @@ zeradas impressas, numeração como texto, lacuna de grupo, carimbo de revisão,
 código ausente, memória só para código com quantidade. A revisão 2 é de fidelidade ao
 documento, não de mudança de desenho.
 
+## O aceite (2026-09-04) — gate humano 4 cumprido, contra o documento real
+
+A bancada da T1 tinha expirado com a retenção do `output/`; foi reconstruída
+(`output/f043-aceite/`, com cópia dos scripts em `bancada/` para não se perder de novo) e
+fechou **no oráculo exato da T1**: auditoria 0 findings, 433 quantidades iguais, 390
+zeradas impressas, total **648.956,63**, 2 células fixadas — e explicou os números da T1 ao
+ponto (a T1 gravara memória de um bloco por item: 4009 células/519 fórmulas; a entrega do
+aceite usa a memória real, 166 blocos e 392 operandos parseados das parcelas do cliente).
+
+**A revisão da bancada achou um defeito antes do aceite**: o escritor da T1 não imprimia a
+linha de grupo (aprovada no pacote de design rev. 2/3 — "apenas o número") e emitia o grupo
+como oitava coluna. Consertado pelo **PR #143** (`_plan_grid_sheet` intercala a linha de
+grupo; `EstimateTemplateColumns.printed`), com oráculo novo: o arquivo gerado espelha o
+documento real **linha por linha** — 454/454 nas linhas 10..463 (433 códigos + 21 grupos),
+rodapé em 465..467, `=SUM(G10:G463)` no mesmo intervalo do cliente.
+
+**As duas decisões pendentes foram exercidas pelo dono (Daniel Campos, pelo chat):**
+
+1. **Rodapé: segue o ADR-0038 por agora** (`TOTAL SEM BDI` / `BDI` / `TOTAL GERAL`, o BDI
+   como diferença entre totais truncados) — divergência proposital das duas linhas do
+   cliente, única diferença visual restante.
+2. **O preço do contrato NÃO embute BDI.** "Esse foi um erro que achamos na planilha deles.
+   Nossos cálculos, raciocínio estão certos, a planilha deles errou no cálculo." O
+   `TOTAL S/BDI = 547.424,65` do documento real divide por 1,18 um valor que nunca teve
+   BDI. Com isso, `bdi_percent = 0` e o preço do contrato como preço final deixam de ser
+   aproximação de layout (ressalva da T1) e viram a semântica correta do documento.
+
+**O ato**: o dono abriu o gerado ao lado do real e aceitou ("sim ficou muito bom") — o
+critério 6 (documento entregável sem redigitação) está exercido contra dado real, não
+sintético.
+
+**Achados novos sobre o documento do cliente** (terceiro membro da família "passo manual
+que falha em silêncio", além dos dois já registrados acima):
+
+- **`14.35` — portão medido e não cobrado**: 3,32 m² na planilha com preço **0,00 digitado
+  à mão** (das 433 células de preço, 8 não são VLOOKUP; esta é a única com quantidade). A
+  memória do mesmo arquivo guarda preço 808,30 e total 2.683,55.
+- `23.6` é a única conta da memória que não é produto: soma 186,71 m³ e arredonda ao
+  múltiplo de caçamba de 5 m³ (`CEILING`) → 190,00.
+- O digest do `.xlsx` gerado identifica a GRAVAÇÃO, não o documento: `dcterms:modified` é
+  carimbado pelo openpyxl no save (o escritor fixa `created` de propósito; a idempotência
+  perseguida é a lógica). Quem comparar digests para decidir "mesmo documento" vai errar.
+
 ## O que continua aberto
 
-- **Aceite do arquivo gerado** contra o real, por quem entrega à prefeitura (Human Gate 4).
-- **A divergência do rodapé**: imprimir o BDI como diferença (ADR-0038) ou reproduzir o
-  `TOTAL` / `TOTAL S/BDI` do cliente. É decisão de quem entrega.
 - **Se o gabarito é por lote do contrato** (unknown 1) — os três arquivos usam o mesmo
   gabarito de 433 linhas, o que é evidência a favor de um só, mas as três praças são do mesmo
   contrato.
-- A publicação do gabarito como artefato de plataforma (decidido em 2026-08-28) ainda não foi
-  construída.
+- A publicação do **gabarito real** como artefato de plataforma (o mecanismo da T2 existe e
+  foi exercido com dado sintético na T3; o JSON real de 433 linhas está em
+  `output/f043-aceite/gabarito-rev-seac.json`, local) — ato operacional pendente.
+- Candidatas a feature anotadas na conferência: "linha com quantidade e preço zero" e
+  "bloco calculado e não transportado" (a segunda já registrada acima).
 
 
 ## Evidência de navegador (T3)
