@@ -1054,10 +1054,10 @@ TIMEOUT_BACKOFF_BASE_SECONDS: Final = 0.25
 TIMEOUT_BACKOFF_CAP_SECONDS: Final = 2.0
 """Escada de espera para `TIMEOUT`: 250 ms, 500 ms, 1 s, 2 s, 2 s…
 
-Quando a falha é pendurada, quem domina o relógio é o timeout por tentativa — 60 s no
-braço Anthropic. Esperar segundos ANTES de gastar mais um minuto pendurado não muda nada
-além de encurtar o número de tentativas que cabem no prazo, por isso a escada continua em
-milissegundos e satura cedo.
+Quando a falha é pendurada, quem domina o relógio é o timeout por tentativa — 120 s no
+braço Anthropic (issue #137). Esperar segundos ANTES de gastar mais um minuto pendurado
+não muda nada além de encurtar o número de tentativas que cabem no prazo, por isso a
+escada continua em milissegundos e satura cedo.
 """
 
 THROTTLE_BACKOFF_BASE_SECONDS: Final = 5.0
@@ -1108,11 +1108,11 @@ class RetryingProviderAdapter:
     """Retries only transport failures; it never retries to seek a different reading.
 
     A insistência é limitada por PRAZO DE PAREDE, não por contagem de tentativas. Contar
-    tentativas dá tempos incomparáveis conforme a falha: cinco tentativas são ~5 min numa
-    pendurada, porque cada uma custa o timeout inteiro do braço, e ~40 s num 429, porque a
-    recusa volta em ~1 s. Um prazo só descreve os dois casos com o comportamento certo, e
-    é o número que o operador realmente tem em mente ("quanto tempo este braço pode
-    insistir antes de eu chamar de indisponível").
+    tentativas dá tempos incomparáveis conforme a falha: três tentativas são ~6 min numa
+    pendurada, porque cada uma custa o timeout inteiro do braço (120 s, issue #137), e
+    ~40 s num 429, porque a recusa volta em ~1 s. Um prazo só descreve os dois casos com
+    o comportamento certo, e é o número que o operador realmente tem em mente ("quanto
+    tempo este braço pode insistir antes de eu chamar de indisponível").
 
     A espera também depende do tipo de falha, porque as duas famílias têm relógios
     diferentes — ver `TIMEOUT_BACKOFF_BASE_SECONDS` e `THROTTLE_BACKOFF_BASE_SECONDS`.
@@ -1177,6 +1177,26 @@ class CostBudget:
 
     def reserve(self, estimated_cost_usd: Decimal) -> None:
         if estimated_cost_usd < 0 or self.spent_usd + estimated_cost_usd > self.limit_usd:
+            # Mesmo código de falha de sempre — `BUDGET_EXCEEDED` continua único, issue
+            # #137 não cria um segundo. O que falta ao operador não é um código novo, é
+            # o número: sem `limit_usd`/`spent_usd`, "estourou" não diz se o teto é
+            # pequeno demais para caber um retry (poucas reservas, teto pequeno) ou se
+            # foi mesmo gasto por uso real (`spent_usd` já perto de `limit_usd` por
+            # muitas chamadas). O objeto não distingue reserva-de-tentativa-sem-resultado
+            # de gasto confirmado — `spent_usd` é o total reservado até agora, sem essa
+            # quebra — então o log carrega só o que existe, não inventa uma categoria.
+            logger.warning(
+                "provider_budget_reserve_refused limit_usd=%s spent_usd=%s requested_usd=%s",
+                self.limit_usd,
+                self.spent_usd,
+                estimated_cost_usd,
+                extra={
+                    "limit_usd": str(self.limit_usd),
+                    "spent_usd": str(self.spent_usd),
+                    "requested_usd": str(estimated_cost_usd),
+                    "failure_code": ProviderFailureCode.BUDGET_EXCEEDED.value,
+                },
+            )
             raise ProviderExecutionError(ProviderFailureCode.BUDGET_EXCEEDED)
         self.spent_usd += estimated_cost_usd
 
@@ -1885,13 +1905,34 @@ def _trace_openai_schema_rejection(
     )
 
 
+DEFAULT_LLM_TIMEOUT_SECONDS: Final = 120.0
+"""Teto de segurança do round-trip HTTP de cada braço LLM (extração, transcrição e
+embeddings) — teto de segurança, não alvo de latência esperada (issue #137).
+
+Duas medições reais de extração de medida sobre croqui manuscrito: 42 s (2026-09-02,
+prompt `measurement-extraction@1.2.0`) e 45,1 s (2026-09-04, prompt 1.3.0, saída de
+6.933 tokens). O default anterior — 60 s na maioria dos braços, 30 s só no OpenAI, uma
+divergência sem motivo — deixava ~25% de margem sobre a pior medição, e a tendência com
+prompts mais ricos é crescer, não encolher. O braço `ocr`
+(`GcpVisionOcrAdapter`/`GcpDocumentAiOcrAdapter`) fica de fora: a resposta do OCR não
+cresce com o prompt de extração, e a reserva de ~US$ 0,0015 por chamada não pressiona o
+teto de custo.
+
+Compatibilidade com a fila verificada, não presumida: o `visibility_timeout_seconds` da
+fila SQS `processing` (`infra/main.tf`) é 900 s. Mesmo no pior caso — três tentativas de
+120 s cada, o máximo que cabe sob o prazo de parede default de `RetryingProviderAdapter`
+(`DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS`, ~360 s no total) — sobra folga larga antes de
+a mensagem voltar a ficar visível para outro consumidor.
+"""
+
+
 @dataclass(frozen=True)
 class OpenAIProviderAdapter:
     """Small OpenAI Responses boundary; it has no geometry or persistence authority."""
 
     api_key: str
     model_id: str
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     raw_store: ProtectedRawResponseStore | None = None
     http_post: HttpPost = _http_post
     endpoint: str = "https://api.openai.com/v1/responses"
@@ -2139,7 +2180,7 @@ class AudioTranscriptionProviderAdapter:
     model_id: str
     endpoint: str
     language: str = TRANSCRIPTION_LANGUAGE
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     raw_store: ProtectedRawResponseStore | None = None
     http_post: HttpPost = _http_post
 
@@ -2255,7 +2296,7 @@ class AnthropicProviderAdapter:
 
     api_key: str
     model_id: str
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     #: 8192 é deliberado e MEDIDO, não é só teto: no claude-opus-5 o thinking adaptativo é
     #: ligado por padrão e consome deste mesmo limite. Com 8192 o modelo pensa curto e
     #: entregou 13 rodadas de HML sem rejeição de schema; dobrado para 16384 (V14,
@@ -2589,7 +2630,7 @@ class GeminiProviderAdapter:
 
     api_key: str
     model_id: str
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     raw_store: ProtectedRawResponseStore | None = None
     http_post: HttpPost = _http_post
     endpoint_template: str = GEMINI_ENDPOINT_TEMPLATE
@@ -2704,7 +2745,7 @@ class MistralProviderAdapter:
 
     api_key: str
     model_id: str
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     raw_store: ProtectedRawResponseStore | None = None
     http_post: HttpPost = _http_post
     endpoint: str = MISTRAL_ENDPOINT
@@ -3773,7 +3814,7 @@ class OpenAIEmbeddingsAdapter:
 
     api_key: str
     model_id: str = EMBEDDINGS_MODEL
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     http_post: HttpPost = _http_post
     endpoint: str = EMBEDDINGS_ENDPOINT
 
@@ -4034,7 +4075,7 @@ def build_transcription_arm(
     estimated_cost_usd: Decimal,
     raw_store: ProtectedRawResponseStore | None = None,
     model_id: str | None = None,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS,
 ) -> ProviderAdapter | None:
     """Monta um braço de transcrição, ou `None` quando a chave do fornecedor não existe.
 
@@ -4118,7 +4159,7 @@ def build_extraction_arm(
         adapter = AnthropicProviderAdapter(
             api_key=api_key,
             model_id=model_id,
-            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "60")),
+            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "120")),
             raw_store=raw_store,
         )
     elif provider == "bedrock":
@@ -4134,7 +4175,8 @@ def build_extraction_arm(
         adapter = OpenAIProviderAdapter(
             api_key=api_key,
             model_id=model_id,
-            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "30")),
+            # Era "30" — divergência sem motivo dos demais braços, issue #137.
+            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "120")),
             raw_store=raw_store,
         )
     elif provider == "gemini":
@@ -4144,7 +4186,7 @@ def build_extraction_arm(
         adapter = GeminiProviderAdapter(
             api_key=api_key,
             model_id=model_id,
-            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "60")),
+            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "120")),
             raw_store=raw_store,
         )
     elif provider == "mistral":
@@ -4154,7 +4196,7 @@ def build_extraction_arm(
         adapter = MistralProviderAdapter(
             api_key=api_key,
             model_id=model_id,
-            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "60")),
+            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "120")),
             raw_store=raw_store,
         )
     else:
@@ -4190,7 +4232,7 @@ def build_embeddings_adapter(*, model_id: str | None = None) -> EmbeddingsAdapte
             OpenAIEmbeddingsAdapter(
                 api_key=api_key,
                 model_id=resolved_model,
-                timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "60")),
+                timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "120")),
             ),
             budget=budget,
             estimated_cost_usd=call_cost,
@@ -4265,8 +4307,10 @@ def build_real_provider_suite(
         raise ValueError("Budget de IA explícito e válido é obrigatório") from error
     if budget.limit_usd <= 0 or llm_cost < 0 or ocr_cost < 0 or transcription_cost < 0:
         raise ValueError("Budget e estimativas de IA devem ser positivos")
-    # Mesma variável nos braços de extração; os defaults diferem porque cada adapter tem
-    # o seu, exatamente como em `build_extraction_arm`.
+    # Mesma variável em todo braço; o default sem ela diverge só entre OCR (30 s, o texto
+    # de uma página não cresce com o prompt de extração) e os braços LLM/transcrição
+    # (`DEFAULT_LLM_TIMEOUT_SECONDS`, 120 s — issue #137), exatamente como em
+    # `build_extraction_arm`.
     timeout_env = os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS")
     # Um escopo só para os dois fornecedores: `cloud-platform` cobre Cloud Vision e
     # Document AI, e pedir escopo diferente por braço só criaria uma segunda credencial
@@ -4294,7 +4338,8 @@ def build_real_provider_suite(
                 OpenAIProviderAdapter(
                     api_key=openai_api_key,
                     model_id=os.getenv("CROQUITO_OPENAI_MODEL", "gpt-5.6-terra"),
-                    timeout_seconds=float(timeout_env or "30"),
+                    # Era "30" — divergência sem motivo dos demais braços, issue #137.
+                    timeout_seconds=float(timeout_env or "120"),
                     raw_store=raw_store,
                 ),
                 budget=budget,
@@ -4322,7 +4367,7 @@ def build_real_provider_suite(
             budget=budget,
             estimated_cost_usd=transcription_cost,
             raw_store=raw_store,
-            timeout_seconds=float(timeout_env or "60"),
+            timeout_seconds=float(timeout_env or "120"),
         )
     )
     transcription_reserve = (
@@ -4333,7 +4378,7 @@ def build_real_provider_suite(
             budget=budget,
             estimated_cost_usd=transcription_cost,
             raw_store=raw_store,
-            timeout_seconds=float(timeout_env or "60"),
+            timeout_seconds=float(timeout_env or "120"),
         )
     )
     return ProviderSuite(
@@ -4345,7 +4390,7 @@ def build_real_provider_suite(
                 AnthropicProviderAdapter(
                     api_key=anthropic_api_key,
                     model_id=os.getenv("CROQUITO_ANTHROPIC_MODEL", "claude-opus-5"),
-                    timeout_seconds=float(timeout_env or "60"),
+                    timeout_seconds=float(timeout_env or "120"),
                     raw_store=raw_store,
                 ),
                 budget=budget,

@@ -2,10 +2,12 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-09-03 (o OCR passou a ser a primeira chamada do snapshot e a decidir a
-orientação da folha — ver "Orientação da folha"; issue #138. Antes, 2026-08-23:
-`field-photo-classification@1.0.0`, F-030 T6, adicionada como rota Anthropic sem fallback;
-rodada real pendente do corpus humano)
+Última revisão: 2026-09-04 (timeout default dos braços LLM subiu de 60/30s para 120s e o
+teto de custo passou a exigir `(tentativas + 1) × reserva` — issue #137. Antes, 2026-09-03:
+o OCR passou a ser a primeira chamada do snapshot e a decidir a orientação da folha — ver
+"Orientação da folha"; issue #138. Antes, 2026-08-23: `field-photo-classification@1.0.0`,
+F-030 T6, adicionada como rota Anthropic sem fallback; rodada real pendente do corpus
+humano)
 
 ## Rotas padrão
 
@@ -202,6 +204,24 @@ Antes de cada chamada (inclusive OCR), o worker reserva o custo estimado configu
 (`CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD`, `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD`,
 default `0.0015`) no mesmo `CostBudget` da rodada; ultrapassar
 `CROQUITO_AI_MAX_ESTIMATED_COST_USD` bloqueia a chamada, para qualquer braço.
+
+**O teto precisa comportar mais que uma chamada (issue #137).** `TIMEOUT` nunca devolve a
+reserva — `ProviderExecutionError.reached_provider` é `True` por padrão, e só quem PROVA
+que a chamada não saiu da máquina aciona `CostBudget.release` — porque o dinheiro pode ter
+sido gasto mesmo sem resposta. Cada tentativa que o `RetryingProviderAdapter` refaz depois
+de um `TIMEOUT` reserva de novo contra o MESMO teto, e a reserva anterior fica retida. Com
+os defaults de hoje — reserva de `CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD` (US$ 0,75) e
+timeout de `DEFAULT_LLM_TIMEOUT_SECONDS` (120 s) — uma cadeia de `TIMEOUT` consecutivos
+esgota o prazo de parede default do retry (`DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS`, 300 s)
+em **3 tentativas** antes de o `RetryingProviderAdapter` desistir por conta própria. Um teto
+dimensionado para "reserva × 1 chamada" torna esse retry impossível por construção: a 2ª
+tentativa já estoura `BUDGET_EXCEEDED`, e a rodada morre sem uma única chamada bem-sucedida
+— comportamento real, não hipotético (achado durante a validação do #135, reproduzido de
+novo em 2026-09-04 com dois estouros consecutivos de 45,1 s). A regra: **o teto precisa
+comportar `(tentativas + 1) × reserva` por chamada** — as tentativas que o braço que falha
+pode consumir, mais uma reserva de folga para o braço seguinte (fallback ou a próxima
+leitura da rodada) ainda ter uma chance. Com os defaults de hoje isso é `(3 + 1) × 0,75` =
+**US$ 3,00 no mínimo**; abaixo disso, um único `TIMEOUT` já compromete o resto da rodada.
 
 ## Etapas
 
