@@ -2,7 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering  
-Última revisão: 2026-08-14
+Última revisão: 2026-09-04 (`measurement-extraction@1.3.0`: bbox de área positiva — issue
+#141)
 
 ## Convenção de versão
 
@@ -74,7 +75,26 @@ Saída:
 
 Proibições: descartar página, inferir escala, produzir dimensão não visível.
 
-### `measurement-extraction@1.1.1`
+### `measurement-extraction@1.3.0`
+
+Changelog: `1.3.0` — o texto passa a exigir `bbox` de largura e altura estritamente
+positivas e proíbe colapsar a caixa sobre a borda da página (issue #141). Falha observada:
+duas amostras pagas da `1.2.0` sobre o mesmo croqui real, em 2026-09-03, devolveram ~70
+leituras cada e em ambas UMA veio com a caixa colapsada na borda de baixo da folha em pé
+(`top == bottom`); a área nula já era recusada por `NormalizedBox` e derrubava a resposta
+inteira. `1.2.0` — a tarefa ganha ramo próprio de template e passa a pedir
+`normalized_value` e `target_hint` (issue #135). Falha observada: até a `1.1.1` ela caía no
+template genérico, que não pedia nenhum dos dois, e a primeira extração paga sobre croqui
+real, em 2026-09-02, perdeu **48 de 48** leituras no funil de merge. Os dois degraus são
+MINOR pelo mesmo motivo: o texto passou a pedir o que o contrato já exigia, e o schema de
+saída (`MeasurementExtractionOutput`) não mudou nas duas.
+
+O descarte da leitura degenerada é feito **também no parser**, antes da validação estrita:
+uma caixa de área nula é removida da lista e o resto da folha segue
+(`provider_readings_dropped_degenerate_bbox` no log). Vale para `measurement-extraction` e
+para `ocr`, as duas tarefas cuja saída é uma lista de observações independentes. Nada é
+corrigido, completado ou reposicionado — a entrada é descartada como o modelo deveria
+tê-la omitido, e qualquer outra malformação continua recusando a resposta inteira.
 
 Objetivo: transcrever e normalizar anotações de uma região.
 
@@ -387,6 +407,11 @@ Todo prompt de extração contém semanticamente:
 - Validação local por schema estrito.
 - Campos desconhecidos são rejeitados na major version atual.
 - Repair automático só corrige envelope JSON, nunca valor/conteúdo.
+- Nas tarefas cuja saída é uma lista de observações independentes
+  (`measurement-extraction`, `ocr`), a observação com `bbox` de área nula é **descartada**
+  antes da validação e o resto da lista segue. Descarte não é correção: nada é
+  reposicionado, completado ou reinterpretado, e qualquer outra malformação continua
+  recusando a resposta inteira.
 - Texto livre fora do schema é falha.
 
 ## Verificação offline

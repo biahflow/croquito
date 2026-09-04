@@ -77,7 +77,13 @@ PROMPT_VERSIONS: dict[PromptTask, str] = {
     # croqui real, em 2026-09-02, perdeu 48 de 48 leituras por causa disso (issue #135).
     # MINOR e não PATCH porque o texto passou a pedir campo que não pedia; o schema de saída
     # (`MeasurementExtractionOutput`) não mudou.
-    PromptTask.MEASUREMENT_EXTRACTION: "1.2.0",
+    # 1.3.0: o texto passa a exigir bbox de largura e altura estritamente positivas. Duas
+    # amostras pagas da 1.2.0 sobre o mesmo croqui real, em 2026-09-03, devolveram ~70
+    # leituras cada e em ambas UMA veio com a caixa colapsada na borda de baixo da folha em
+    # pé (`top == bottom`) — área nula que `NormalizedBox` já recusava, derrubando a resposta
+    # inteira (issue #141). MINOR pelo mesmo motivo da 1.2.0: o texto passou a pedir o que o
+    # contrato já exigia, e o schema de saída não mudou.
+    PromptTask.MEASUREMENT_EXTRACTION: "1.3.0",
     PromptTask.SEMANTIC_ELEMENTS: "1.1.1",
     # 2.0.0: o arco passou a carregar três pontos-âncora observados (`arc_start`, `arc_mid`,
     # `arc_end`). Major porque o schema mudou: até a 1.0.0 o contrato não tinha ângulo
@@ -307,7 +313,9 @@ def _prompt_template(task: PromptTask) -> str:
             "transcription in canonical form, not arithmetic — never convert between units, "
             "never sum, never round, never complete a chain. Set `normalized_value` to null "
             "only when the text is illegible or carries no single number, and report "
-            "`legibility` as ambiguous or illegible instead of guessing. When the drawing "
+            "`legibility` as ambiguous or illegible instead of guessing. Every bbox must have "
+            "strictly positive width and height — never collapse a box onto a page edge; if "
+            "the text touches the edge, extend the box inward. When the drawing "
             "says which element a measurement belongs to — a balloon letter, a number inside "
             "a circle, a name written beside the detail — report it in `target_hint` with the "
             "label exactly as drawn; omit `target_hint` when the page does not say."
@@ -1241,20 +1249,117 @@ def _output_model(task: PromptTask) -> Any:
     }[task]
 
 
+DEGENERATE_BBOX_LIST_KEY: Final[dict[PromptTask, str]] = {
+    PromptTask.MEASUREMENT_EXTRACTION: "readings",
+    PromptTask.OCR: "lines",
+}
+"""Tarefas cuja saída é uma LISTA de observações independentes, cada uma com seu `bbox`.
+
+São as duas em que uma caixa degenerada custa caro: a folha inteira volta numa resposta só,
+e recusá-la por causa de um item joga fora todos os outros. As demais tarefas não entram
+aqui — nem por simetria: onde o `bbox` descreve o objeto único da resposta, descartá-lo
+seria descartar a resposta, e recusar é mais honesto que devolver metade.
+"""
+
+
+def _has_degenerate_bbox_area(bbox: object) -> bool:
+    """`True` só para a degeneração de ÁREA, com os quatro campos presentes e em `[0, 1]`.
+
+    É o predicado do próprio contrato (`NormalizedBox.validate_area`) aplicado ao dado cru,
+    antes do `model_validate`. Qualquer outra malformação — `bbox` ausente, de outro tipo,
+    com campo faltando, fora de `[0, 1]` ou `NaN` — devolve `False` de propósito: ela segue
+    para a validação normal e a resposta continua sendo recusada inteira, como sempre. O
+    salvamento cobre o modo de falha observado, não malformação em geral.
+
+    `bool` é subclasse de `int` e é tratado como inválido, pelo mesmo motivo de
+    `_cloud_vision_word_rotation`: `True` valeria 1 e faria uma caixa inventada passar.
+    """
+    if not isinstance(bbox, dict):
+        return False
+    edges: dict[str, float] = {}
+    for name in ("left", "top", "right", "bottom"):
+        value = bbox.get(name)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return False
+        if not 0.0 <= float(value) <= 1.0:
+            return False
+        edges[name] = float(value)
+    return edges["right"] <= edges["left"] or edges["bottom"] <= edges["top"]
+
+
+def _salvage_degenerate_bboxes(
+    task: PromptTask, payload: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """Remove da lista da tarefa apenas as observações de `bbox` com área nula.
+
+    Duas amostras pagas de `measurement-extraction` sobre o mesmo croqui real, em 2026-09-03,
+    devolveram ~70 leituras cada, e em ambas UMA veio com a caixa colapsada na borda de baixo
+    da folha em pé (`top == bottom`). Como `_parse_output` valida o output inteiro, as outras
+    69 leituras boas morriam junto com ela (`INVALID_SCHEMA`, issue #141) — o mesmo desfecho
+    que `normalise_kind_by_vertex_count` já evita na geometria, por outro caminho.
+
+    Não é reinterpretação de valor: nada é corrigido, completado nem reposicionado. A entrada
+    degenerada é DESCARTADA, como o modelo deveria tê-la omitido, e o que sobra segue para a
+    validação estrita de sempre. Lista vazia depois do descarte não vira recusa própria: quem
+    decide continua sendo o schema da tarefa.
+    """
+    key = DEGENERATE_BBOX_LIST_KEY.get(task)
+    if key is None:
+        return payload, 0
+    entries = payload.get(key)
+    if not isinstance(entries, list):
+        return payload, 0
+    kept = [
+        entry
+        for entry in entries
+        if not (isinstance(entry, dict) and _has_degenerate_bbox_area(entry.get("bbox")))
+    ]
+    dropped = len(entries) - len(kept)
+    if dropped == 0:
+        return payload, 0
+    return {**payload, key: kept}, dropped
+
+
+def _log_degenerate_bbox_drop(task: PromptTask, payload: dict[str, Any], dropped: int) -> None:
+    """Nenhum descarte é silencioso: o operador precisa ver que a folha veio incompleta.
+
+    Saem tarefa e contagens — nunca coordenada, texto ou qualquer conteúdo da folha. Uma
+    contagem alta é sinal de prompt ou modelo em regressão, não de acidente isolado.
+    """
+    if dropped == 0:
+        return
+    kept = len(payload[DEGENERATE_BBOX_LIST_KEY[task]])
+    logger.warning(
+        "provider_readings_dropped_degenerate_bbox task=%s dropped=%d kept=%d",
+        task.value,
+        dropped,
+        kept,
+        extra={"task": task.value, "dropped": dropped, "kept": kept},
+    )
+
+
 def _parse_output(task: PromptTask, payload: object) -> ProviderOutput:
     """Provider JSON is untrusted even when a provider advertises strict output."""
     if not isinstance(payload, dict):
         raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
     model = _output_model(task)
+    salvaged, dropped = _salvage_degenerate_bboxes(task, payload)
+    _log_degenerate_bbox_drop(task, salvaged, dropped)
     try:
-        parsed = model.model_validate({"task": task.value, **payload})
+        parsed = model.model_validate({"task": task.value, **salvaged})
     except ValueError as error:
         # Único repair permitido: estritamente estrutural, uma vez. Modelos às vezes
         # embrulham o payload real num envelope de chave única ("input", "parameter"…);
         # qualquer outra divergência continua sendo falha, nunca reinterpretação.
-        inner = next(iter(payload.values()), None) if len(payload) == 1 else None
+        inner = next(iter(salvaged.values()), None) if len(salvaged) == 1 else None
         if not isinstance(inner, dict):
             raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA) from error
+        # O payload efetivo é o de dentro do envelope: sem esta segunda passagem o
+        # salvamento valeria só para a resposta que veio no formato canônico. Só uma das
+        # duas pode descartar algo — se a primeira descartou, a lista da tarefa está no
+        # topo e `inner` nunca é um dict —, então o log continua saindo uma vez por chamada.
+        inner, inner_dropped = _salvage_degenerate_bboxes(task, inner)
+        _log_degenerate_bbox_drop(task, inner, inner_dropped)
         try:
             parsed = model.model_validate({"task": task.value, **inner})
         except ValueError as inner_error:
