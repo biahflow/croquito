@@ -8,6 +8,9 @@
 > Condicionado agora só ao Design Approval Package (gate 2), que precede o planejamento
 > por esta feature ser `INTERFACE_CHANGE`.
 >
+> **DAP revisão 1 produzido em 2026-09-04** ([mock/README.md](mock/README.md)) —
+> **aguardando aprovação humana**. Nenhum agente aprova design.
+>
 > Nasce em 2026-09-04 da issue
 > [#139](https://github.com/biahflow/croquito/issues/139), aberta pela primeira revisão
 > completa de croqui real (Campo da Toca): 3 das 37 leituras eram cotas-balão — medidas
@@ -139,7 +142,9 @@ fechando o elo croqui→cena→quantitativo.
 
 1. ~~**Aceite do ADR-0063**~~ — **cumprido em 2026-09-04** (Daniel Campos, pelo chat).
 2. **Design Approval Package** da tela (declarar identidade sobre propostas + candidatas
-   por identidade no seletor) — pendente; precede o planejamento (`INTERFACE_CHANGE`).
+   por identidade no seletor) — **revisão 1 produzida em 2026-09-04, aguardando
+   aprovação** ([mock/README.md](mock/README.md)); precede o planejamento
+   (`INTERFACE_CHANGE`).
 3. Aceite final contra o caso real do Toca (critério 1).
 
 ## References

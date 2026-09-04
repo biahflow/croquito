@@ -1,0 +1,1235 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-051 — A cota-balão encontra seu elemento</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css:24-51 (identidade "Grafite técnico"). A precisão por
+         traço reproduz styles.css:3230-3282 (.amostra-precisao / .cena-forma.precisao-*); o selo
+         tracejado de proposta reproduz styles.css:3734-3763 (.selo-proposta — "proposta é
+         tracejada em toda parte... porque ela não é identidade e não pode se parecer com uma");
+         a etiqueta ◇ EL-NNN reproduz a EtiquetaDeElemento de
+         apps/web/src/elementIdentityPanel.tsx:48-55. O que é novo está marcado como NOVO na
+         tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* Família da identidade de elemento — introduzida pelo pacote da F-047 (--cena) e
+           reaproveitada aqui sem alteração: azul-aço marca o que tem identidade declarada. */
+        --cena: #2b5ea8;
+        --cena-soft: #eaf0fa;
+        --cena-line: #b3c8e6;
+        --cena-ink: #1d3f73;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 80ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 400px;
+        gap: 16px;
+        align-items: start;
+      }
+      .duas.meio {
+        grid-template-columns: 1fr 1fr;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      code,
+      .codigo {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      /* Selos — mesma pílula das duas jornadas. */
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+        white-space: nowrap;
+      }
+      .selo.identidade {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+        color: var(--cena-ink);
+        font-weight: 600;
+      }
+      .selo.confirmado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.proposta {
+        border-style: dashed;
+        border-color: var(--muted);
+        background: var(--surface);
+        color: var(--ink-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .selo.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .selo.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      /* Etiqueta ◇ EL-NNN — reproduz a EtiquetaDeElemento do painel de identidade da cena
+         (elementIdentityPanel.tsx:48-55): monoespaçada, glifo ◇, cantos de 4 px. */
+      .elemento {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px solid var(--cena-line);
+        background: var(--surface);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        color: var(--cena-ink);
+      }
+      .elemento.ausente {
+        border-style: dashed;
+        border-color: var(--muted);
+        color: var(--muted);
+        font-family: inherit;
+      }
+      /* NOVO — o chip do hint do modelo na leitura: tracejado como toda sugestão do sistema,
+         nunca com a cara da identidade declarada. */
+      .hint-modelo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px dashed var(--muted);
+        background: var(--surface);
+        font-size: 11.5px;
+        color: var(--ink-secondary);
+      }
+      .hint-modelo b {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      /* Precisão: traço + palavra, nunca só cor (styles.css:3230-3253). */
+      .amostra {
+        display: inline-block;
+        width: 34px;
+        height: 0;
+        vertical-align: middle;
+        margin-right: 6px;
+        border-top-style: solid;
+        border-top-color: var(--ink);
+      }
+      .amostra.exact {
+        border-top-width: 3px;
+      }
+      .amostra.derived {
+        border-top-width: 1.5px;
+      }
+      .amostra.approximate {
+        border-top-width: 2px;
+        border-top-style: dashed;
+      }
+      .amostra.unresolved {
+        border-top-width: 2px;
+        border-top-style: dotted;
+        border-top-color: var(--muted);
+      }
+      .precisao {
+        display: inline-flex;
+        align-items: center;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        white-space: nowrap;
+      }
+      /* Avisos — mesma família das duas jornadas (.issue-panel, .decision-error, .field-hint). */
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.identidade {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+        color: var(--cena-ink);
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.neutro {
+        border-style: dashed;
+        border-color: var(--muted);
+        background: var(--surface);
+        color: var(--ink-secondary);
+      }
+      /* Carimbo do ato humano — borda esquerda de 3 px (padrão desde o pacote da F-040). */
+      .carimbo {
+        border: 1px solid var(--cena-line);
+        border-left: 3px solid var(--cena);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: var(--surface);
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .carimbo b {
+        color: var(--ink);
+        font-size: 12.5px;
+      }
+      .conta {
+        font-variant-numeric: tabular-nums;
+        font-size: 12.5px;
+        color: var(--ink);
+        padding: 9px 11px;
+        border: 1px dashed var(--cena-line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo input,
+      label.campo select,
+      label.campo textarea {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      /* O seletor de associação real é um <select> puro (CroquiApp.tsx:4982-5020). Nos estados
+         de captura ele aparece ABERTO (atributo size) para a lista ser visível na imagem —
+         isso é artifício do pacote, não proposta de listbox permanente. */
+      select.aberto {
+        padding: 4px;
+      }
+      select.aberto option {
+        padding: 5px 8px;
+        color: var(--ink);
+      }
+      select.aberto option:checked {
+        background: var(--cena-soft);
+        color: var(--cena-ink);
+      }
+      select.aberto optgroup {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        font-style: normal;
+      }
+      select.aberto optgroup option {
+        font-size: 13px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--ink);
+      }
+      .field-hint {
+        display: block;
+        font-size: 11.5px;
+        color: var(--ink-secondary);
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+      .rodape {
+        border-top: 1px solid var(--line);
+        background: var(--surface-subtle);
+        padding: 10px 16px;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      /* Linha de leitura — mesma anatomia do .review-row da etapa de decisões
+         (CroquiApp.tsx:4759-4843): bolinha de status + rótulo + selos, nunca só a bolinha. */
+      .linhas {
+        display: grid;
+        gap: 6px;
+      }
+      .linha {
+        display: grid;
+        grid-template-columns: 16px 1fr auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12.5px;
+        background: var(--surface);
+      }
+      .linha.selecionada {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+      }
+      .linha .desc {
+        color: var(--ink-secondary);
+        white-space: normal;
+      }
+      .linha .desc b {
+        color: var(--ink);
+      }
+      .status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--muted);
+        justify-self: center;
+      }
+      .status-dot.proposed {
+        background: #4a7fd4;
+      }
+      .status-dot.confirmed {
+        background: var(--accent-hover);
+      }
+      .status-dot.annotation {
+        background: var(--muted);
+      }
+      /* Linha de proposta de identidade — o molde T6: tracejada em toda parte. */
+      .linha.proposta {
+        grid-template-columns: 1fr auto;
+        border-style: dashed;
+        border-color: var(--muted);
+        background: var(--surface-subtle);
+      }
+      .linha.no-ato {
+        grid-template-columns: 1fr auto;
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+      }
+      .linha.entidade {
+        grid-template-columns: auto 1fr auto;
+      }
+      /* A folha do croqui — desenho esquemático do raster. Traço à mão: cinza-tinta fino.
+         As propostas CV aparecem pontilhadas (unresolved), como no preview da cena. */
+      svg.folha {
+        width: 100%;
+        height: auto;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      svg.folha .risco {
+        fill: none;
+        stroke: #3d434b;
+        stroke-width: 0.7;
+        vector-effect: non-scaling-stroke;
+      }
+      svg.folha .proposta-cv {
+        fill: none;
+        stroke: var(--muted);
+        stroke-width: 2;
+        stroke-dasharray: 1 5;
+        vector-effect: non-scaling-stroke;
+      }
+      svg.folha .proposta-cv.destacada {
+        stroke: var(--cena);
+        stroke-dasharray: 1 4;
+      }
+      svg.folha .balao circle {
+        fill: var(--surface);
+        stroke: #3d434b;
+        stroke-width: 0.7;
+        vector-effect: non-scaling-stroke;
+      }
+      svg.folha .balao text {
+        font-size: 5px;
+        fill: var(--ink);
+        font-family: inherit;
+        text-anchor: middle;
+        dominant-baseline: central;
+      }
+      svg.folha .nota {
+        font-size: 4.6px;
+        fill: var(--ink);
+        font-family: inherit;
+      }
+      svg.folha .rotulo {
+        font-size: 3.8px;
+        fill: var(--ink-secondary);
+        font-family: inherit;
+      }
+      svg.folha .medida-pacote {
+        stroke: var(--atencao);
+        stroke-width: 1;
+        stroke-dasharray: 4 3;
+        fill: none;
+        vector-effect: non-scaling-stroke;
+      }
+      svg.folha .medida-pacote-texto {
+        font-size: 4px;
+        fill: var(--atencao);
+        font-family: inherit;
+      }
+      dl.procedencia {
+        display: grid;
+        grid-template-columns: 148px 1fr;
+        gap: 4px 10px;
+        margin: 0;
+        font-size: 12.5px;
+      }
+      dl.procedencia dt {
+        color: var(--ink-secondary);
+      }
+      dl.procedencia dd {
+        margin: 0;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .csv {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        color: var(--ink);
+        background: var(--surface-sunken);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        overflow-x: auto;
+        white-space: pre;
+        line-height: 1.6;
+      }
+      .legenda-traco {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-051 — A cota-balão encontra seu elemento</h1>
+      <p>
+        Design Approval Package, revisão 1. Rendição autocontida: abre no navegador sem build,
+        sem rede e sem servidor. Governado pelo <b>ADR-0063</b> — a identidade de elemento pode
+        nascer na revisão, sobre propostas, por ato humano; o funil ganha candidata
+        <code>element_identity</code> quando o hint da leitura casa com um elemento declarado; a
+        confirmação continua passando pelo portão único; e o traçado transporta a identidade
+        para a cena.
+      </p>
+      <p>
+        Obra <b>sintética</b>: Praça do Cedro, a mesma fixture inventada para o pacote da F-047.
+        Nenhum dado de cliente. Os números fecham:
+        <span class="codigo">2 × (16,00 + 12,00) = 56,00</span> — o fecho da área de lazer que a
+        cota-balão <span class="codigo">(B) C = 56,00</span> mede.
+      </p>
+      <p>
+        <b>Nenhum agente aprova design.</b> Este artefato é evidência para um gate humano; o que
+        ele decide está listado no <code>README.md</code> ao lado.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="e01">
+        <h2>
+          01 · Hoje: a cota-balão morre como anotação
+          <small>
+            O técnico escreve a medida longe do elemento, ligada por letra. O funil por
+            proximidade oferece os vizinhos da nota — nunca o referente. O escape honesto,
+            anotação, não constrange geometria.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div>
+              <svg
+                class="folha"
+                viewBox="0 0 200 140"
+                role="img"
+                aria-label="Croqui esquemático da Praça do Cedro: nota de cota-balão no alto e o fecho da área de lazer no canto oposto da folha"
+              >
+                <rect class="risco" x="2" y="2" width="196" height="136" />
+                <!-- nota do técnico, no alto -->
+                <g class="balao">
+                  <circle cx="12" cy="14" r="4" />
+                  <text x="12" y="14">B</text>
+                </g>
+                <text class="nota" x="19" y="13">→ C = 56,00</text>
+                <text class="nota" x="19" y="19">h = 4,40</text>
+                <path class="risco" d="M10 22 q 8 4 14 1" />
+                <!-- quadra com grade A -->
+                <rect class="risco" x="22" y="46" width="66" height="62" />
+                <rect class="proposta-cv" x="22" y="46" width="66" height="62" />
+                <g class="balao">
+                  <circle cx="22" cy="42" r="4" />
+                  <text x="22" y="42">A</text>
+                </g>
+                <text class="rotulo" x="36" y="80">quadra · grade A</text>
+                <!-- grade do playground, C -->
+                <rect class="risco" x="104" y="34" width="42" height="28" />
+                <rect class="proposta-cv" x="104" y="34" width="42" height="28" />
+                <g class="balao">
+                  <circle cx="104" cy="30" r="4" />
+                  <text x="104" y="30">C</text>
+                </g>
+                <text class="rotulo" x="109" y="49">playground</text>
+                <!-- arquibancada D -->
+                <path class="risco" d="M24 118 h34 M26 122 h32 M28 126 h30" />
+                <g class="balao">
+                  <circle cx="18" cy="122" r="4" />
+                  <text x="18" y="122">D</text>
+                </g>
+                <text class="rotulo" x="27" y="133">arquibancada</text>
+                <!-- área de lazer com fecho B, no canto oposto ao da nota -->
+                <rect class="risco" x="132" y="92" width="56" height="42" />
+                <rect class="proposta-cv destacada" x="132" y="92" width="56" height="42" />
+                <path class="risco" d="M156 134 v-6" />
+                <g class="balao">
+                  <circle cx="146" cy="88" r="4" />
+                  <text x="146" y="88">B</text>
+                </g>
+                <text class="rotulo" x="137" y="112">área de lazer</text>
+                <text class="rotulo" x="137" y="118">16,00 × 12,00</text>
+                <!-- a distância que o funil não cruza — anotação do pacote, não da tela -->
+                <path class="medida-pacote" d="M26 20 C 70 40, 110 60, 142 86" />
+                <text class="medida-pacote-texto" x="58" y="52">≈ 2.100 px na folha</text>
+              </svg>
+              <p style="margin-top: 8px">
+                O traço pontilhado é a proposta CV (<code>unresolved</code>, como no preview da
+                cena). A linha âmbar tracejada é <b>anotação deste pacote</b>, não da tela: mede a
+                distância que o funil por proximidade nunca cruza — para cota-balão isso não é
+                impreciso, é <b>impossível por construção</b>.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Leitura selecionada</h3>
+              <div class="linhas">
+                <div class="linha selecionada">
+                  <span class="status-dot annotation"></span>
+                  <span class="desc"><b>C = 56,00 m</b> · “(B) → C= 56m”</span>
+                  <span class="selo">anotação</span>
+                </div>
+              </div>
+              <label class="campo">
+                Associação da leitura
+                <select class="aberto" size="5" aria-label="Candidatos de associação (hoje)">
+                  <option>Selecione um candidato</option>
+                  <option>Traço da própria nota · geometria mais próxima</option>
+                  <option>Moldura da folha · geometria mais próxima</option>
+                  <option>Seta da chamada · dentro ou próximo do círculo</option>
+                  <option selected>Anotação da folha — não mede um elemento</option>
+                </select>
+                <small class="field-hint">
+                  As três candidatas são os vizinhos de pixel da nota. O fecho que a cota mede
+                  está do outro lado da folha e nunca entra na lista.
+                </small>
+              </label>
+              <div class="aviso atencao">
+                <b>O custo do caminho honesto.</b> Confirmada como anotação, a cota de verdade
+                <code>C = 56,00</code> — decidida por humano — <b>não constrange geometria</b>: no
+                traçado em lote, anotação não vira constraint, e o fecho é resolvido sem ela.
+              </div>
+            </div>
+          </div>
+          <div class="legenda-traco">
+            <span class="precisao"><span class="amostra unresolved"></span>proposta CV · pontilhada · unresolved</span>
+            <span class="precisao"><span class="amostra approximate"></span>anotação do pacote · não existe na tela</span>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Issue #139 e ADR-0063, contexto — o limite é de desenho, não de esforço.</span>
+          <span>O seletor real nunca mostra score nem distância; a tela não ordena por eles.</span>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="e02">
+        <h2>
+          02 · O hint deixa de ser achatado: campo da leitura, corrigível
+          <small>
+            A extração já entrega a identidade (“B”), mas hoje ela vira string informativa e
+            ninguém a consome — nem a tela a mostra.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas meio">
+            <div class="painel">
+              <h3>Hoje</h3>
+              <dl class="procedencia">
+                <dt>raw_text</dt>
+                <dd class="codigo">(B) → C= 56m</dd>
+                <dt>target_hint</dt>
+                <dd class="codigo">"B: fecho da área de lazer"</dd>
+              </dl>
+              <div class="aviso">
+                O hint chega estruturado do provider (<code>entity_label</code> +
+                <code>feature</code>) e é <b>achatado para uma string</b> de exibição — que a
+                tela de revisão, hoje, não exibe em lugar nenhum. A letra que o técnico desenhou
+                no balão morre no transporte.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Com a F-051</h3>
+              <div class="linhas">
+                <div class="linha selecionada">
+                  <span class="status-dot proposed"></span>
+                  <span class="desc"><b>C = 56,00 m</b> · “(B) → C= 56m”</span>
+                  <span class="hint-modelo">elemento (hint do modelo): <b>B</b></span>
+                </div>
+              </div>
+              <p>
+                <code>entity_label</code> sobrevive como campo próprio da leitura; a forma
+                legível continua existindo para exibição. O chip é <b>tracejado</b>, como toda
+                sugestão do sistema: hint não é amarração.
+              </p>
+              <div class="acoes">
+                <button>Corrigir hint</button>
+              </div>
+              <div class="aviso">
+                O modelo leu a letra errada? <b>Corrigir o hint é ato de decisão da leitura</b>,
+                o mesmo idioma de retificação que a revisão já tem — registrado, nunca edição
+                silenciosa.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0063, decisão 4 — o hint vira campo consumível, e o revisor o corrige.</span>
+          <span>Chip tracejado + a palavra “hint do modelo”: sugestão nunca se veste de fato.</span>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="e03">
+        <h2>
+          03 · A sugestão assistida: os rótulos do modelo viram proposta de elemento
+          <small>
+            O molde é o painel de identidade que a cena já tem (F-047 T6): aviso fixo, selo
+            tracejado, recusa com motivo — e nada se declara sozinho.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="aviso neutro">
+            <b>⚙ Propostas de elemento a partir dos rótulos do modelo, sem toque humano.</b>
+            Proposta não é identidade: ela nasce não resolvida, não gera candidata nenhuma e não
+            vale nada até alguém declarar.
+          </div>
+          <div class="linhas">
+            <div class="linha proposta">
+              <span class="desc">
+                <span class="selo proposta">⚙ proposta · unresolved</span>
+                <b>“A” — 1 proposta de geometria</b> · rótulo do modelo «grade A» (contorno da
+                quadra)
+              </span>
+              <span class="precisao"><span class="amostra unresolved"></span>não resolvida</span>
+            </div>
+            <div class="linha proposta">
+              <span class="desc">
+                <span class="selo proposta">⚙ proposta · unresolved</span>
+                <span class="selo atencao">⚠ agrupou errado</span>
+                <b>“B” — 3 propostas de geometria</b> · «fecho B» (contorno + portão da área de
+                lazer) <b>e</b> «grade B» — que é a grade do playground: o modelo leu o balão
+                (C) espelhado
+              </span>
+              <span class="precisao"><span class="amostra unresolved"></span>não resolvida</span>
+            </div>
+          </div>
+          <div class="aviso atencao">
+            <b>A segunda proposta está errada de propósito, e é por isso que ela é só
+            proposta.</b> Rótulo de modelo é leitura de máquina sobre caligrafia: aceitar o
+            agrupamento automático penduraria a grade do playground no elemento B — e a cota
+            <code>C = 56,00</code> ganharia candidata para uma grade que ela não mede. Quem
+            declara ajusta a seleção antes do ato.
+          </div>
+          <div class="acoes">
+            <button class="primario">Declarar elemento a partir da proposta</button>
+            <button>Descartar proposta</button>
+            <label class="campo" style="min-width: 260px">
+              Motivo da recusa (obrigatório)
+              <input type="text" value="É a grade do playground — balão (C)." />
+            </label>
+          </div>
+          <div class="aviso">
+            “Declarar a partir da proposta” <b>não grava nada</b>: só semeia a seleção do ato do
+            estado 04 — um único caminho de escrita, como no painel da cena. Descartar exige
+            motivo por escrito, e a proposta descartada não reaparece.
+          </div>
+          <div class="aviso neutro">
+            Sem rótulo nenhum vindo do modelo, o painel diz isso por escrito — e falha de leitura
+            das propostas é um texto diferente de “zero propostas”, como no painel da cena.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0063, decisão 1 — modelo e CV continuam sem autoridade.</span>
+          <span>Molde F-047 T6: tracejado em toda parte, porque proposta não é identidade.</span>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="e04">
+        <h2>
+          04 · O ato de declarar: o sistema cunha a identidade, o humano dá o rótulo
+          <small>
+            O mesmo ato do ADR-0058, uma etapa antes — sobre propostas, no namespace único do
+            job.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas meio">
+            <div class="painel">
+              <h3>Declarar elemento</h3>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+                <label class="campo">
+                  Identidade do elemento
+                  <input type="text" value="EL-002" readonly />
+                  <span class="field-hint">cunhada no ato — nunca digitada, nunca reaproveitada</span>
+                </label>
+                <label class="campo">
+                  Rótulo (o que a pessoa lê)
+                  <input type="text" value="B — fecho da área de lazer" />
+                  <span class="field-hint">texto livre, ao lado da identidade e nunca no lugar dela</span>
+                </label>
+              </div>
+              <div class="linhas">
+                <div class="linha no-ato">
+                  <span class="desc"><span class="codigo">0195c2…-4b21</span> · polilinha — contorno do fecho · «fecho B»</span>
+                  <span class="precisao"><span class="amostra unresolved"></span>não resolvida</span>
+                </div>
+                <div class="linha no-ato">
+                  <span class="desc"><span class="codigo">0195c2…-7d08</span> · retângulo — portão do fecho · «fecho B»</span>
+                  <span class="precisao"><span class="amostra unresolved"></span>não resolvida</span>
+                </div>
+              </div>
+              <label class="campo">
+                Justificativa (opcional)
+                <input type="text" value="Contorno e portão são o fecho do balão B da folha." />
+              </label>
+              <div class="acoes">
+                <button class="primario">Declarar elemento com 2 propostas</button>
+                <button>Cancelar</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Depois de declarar</h3>
+              <div class="carimbo">
+                <b>◇ EL-002 “B — fecho da área de lazer”</b>
+                <span>
+                  Declarado por <b>revisão</b> em 04/09/2026 17:05 (UTC−3), sobre a revisão
+                  <span class="codigo">v5</span> do pacote de revisão · 2 propostas.
+                </span>
+              </div>
+              <p>
+                O carimbo diz o <b>papel profissional</b>, nunca o usuário — o idioma do painel
+                da cena, mantido.
+              </p>
+              <div class="aviso identidade">
+                <b>O namespace é um só por job.</b> <span class="codigo">EL-001</span> foi cunhado
+                no ato anterior (elemento “A”); o próximo ato — na revisão ou na cena, depois do
+                solve — cunha <span class="codigo">EL-003</span>. O contador é compartilhado, e
+                colisão é defeito, não caso.
+              </div>
+              <div class="acoes">
+                <button>Renomear rótulo</button>
+                <button>Revogar identidade</button>
+              </div>
+              <div class="aviso">
+                Renomear e revogar são <b>atos declarados e registrados</b>, como a declaração. A
+                identidade revogada não é apagada do histórico — e o ref nunca é reaproveitado.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0063, decisões 1 e 2 — ato humano, ref cunhado, namespace único.</span>
+          <span>Autor e instante são do sistema; o rótulo é de quem declara.</span>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="e05">
+        <h2>
+          05 · O seletor com as candidatas por identidade — ao lado, nunca no lugar
+          <small>
+            O hint “B” casa com o elemento declarado ◇ EL-002. As propostas do elemento viram
+            candidatas, independente de distância. A proximidade continua onde estava.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Associação da leitura C = 56,00 m</h3>
+              <div class="linhas">
+                <div class="linha selecionada">
+                  <span class="status-dot proposed"></span>
+                  <span class="desc"><b>C = 56,00 m</b> · “(B) → C= 56m”</span>
+                  <span class="hint-modelo">elemento (hint do modelo): <b>B</b></span>
+                </div>
+              </div>
+              <label class="campo">
+                Associação da leitura
+                <select class="aberto" size="8" aria-label="Candidatos de associação (com identidade)">
+                  <optgroup label="Pela identidade — ◇ EL-002 · B — fecho da área de lazer">
+                    <option selected>Contorno do fecho · pela identidade do elemento</option>
+                    <option>Portão do fecho · pela identidade do elemento</option>
+                  </optgroup>
+                  <optgroup label="Pela proximidade">
+                    <option>Traço da própria nota · geometria mais próxima</option>
+                    <option>Moldura da folha · geometria mais próxima</option>
+                    <option>Seta da chamada · dentro ou próximo do círculo</option>
+                  </optgroup>
+                  <option>Anotação da folha — não mede um elemento</option>
+                </select>
+                <small class="field-hint">
+                  O hint “B” casa com o elemento declarado ◇ EL-002 — as propostas dele entram
+                  como candidatas pela identidade, independente de distância.
+                </small>
+              </label>
+              <div class="aviso">
+                <b>Candidata é observação, como sempre.</b> Nasce
+                <code>unresolved</code>/<code>export=false</code>, ranqueia e não confirma nada.
+                Sem score e sem distância na tela: ela nunca ordena, filtra ou decide por eles.
+                Confirmar continua passando pelo portão único — a associação selecionada precisa
+                ser candidata da leitura.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Quem decide continua vendo a folha</h3>
+              <svg
+                class="folha"
+                viewBox="124 78 72 62"
+                role="img"
+                aria-label="Recorte da folha com o fecho da área de lazer e o balão B"
+              >
+                <rect class="risco" x="132" y="92" width="56" height="42" />
+                <rect class="proposta-cv destacada" x="132" y="92" width="56" height="42" />
+                <path class="risco" d="M156 134 v-6" />
+                <g class="balao">
+                  <circle cx="146" cy="88" r="4" />
+                  <text x="146" y="88">B</text>
+                </g>
+                <text class="rotulo" x="137" y="112">área de lazer</text>
+                <text class="rotulo" x="137" y="118">16,00 × 12,00</text>
+              </svg>
+              <p>
+                O recorte da leitura e a folha continuam na tela. O rótulo do modelo pode estar
+                errado — a candidata por identidade aparece <b>ao lado</b> das de proximidade,
+                nunca no lugar, e quem confirma olha o desenho, não o hint.
+              </p>
+              <div class="linhas">
+                <div class="linha">
+                  <span class="status-dot annotation"></span>
+                  <span class="desc"><b>h = 4,40 m</b> · mesma nota do balão B</span>
+                  <span class="selo">anotação</span>
+                </div>
+              </div>
+              <div class="aviso">
+                <b>A identidade oferece; o humano decide o que constrange.</b> O
+                <code>h = 4,40</code> da mesma nota também ganha candidatas pela identidade — e o
+                revisor o mantém como anotação: altura não é geometria de planta. Nenhuma regra
+                automática decide isso por ele.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0063, decisão 3 — candidata por identidade, observacional como sempre.</span>
+          <span>Grupo rotulado por escrito no seletor que já existe; distinção é texto, não cor.</span>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="e06">
+        <h2>
+          06 · A confirmação entra no solver, e o traçado transporta a identidade
+          <small>
+            Pelo caminho que já existe: associação confirmada → constraint. A entidade nasce com
+            o ◇ EL-002 e o rótulo — a letra do balão vira identidade da cena.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas meio">
+            <div class="painel">
+              <h3>No solver</h3>
+              <div class="linhas">
+                <div class="linha">
+                  <span class="status-dot confirmed"></span>
+                  <span class="desc"><b>C = 56,00 m</b> → contorno do fecho</span>
+                  <span class="selo confirmado">confirmada</span>
+                </div>
+              </div>
+              <div class="conta">
+                cadeia do fecho: 16,00 + 12,00 + 16,00 + 12,00 = 56,00<br />
+                constraint da cota-balão: <b>C = 56,00</b> · resíduo <b>0,00</b>
+              </div>
+              <div class="aviso">
+                Nenhuma tela nova de solver: a cota confirmada entra como <b>toda</b> associação
+                confirmada entra. Os internos do solver não mudam — mudou o alcance do funil.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Na cena, depois do traçado</h3>
+              <div class="linhas">
+                <div class="linha entidade">
+                  <span class="elemento">◇ EL-002</span>
+                  <span class="desc"><b>B — fecho da área de lazer</b> · polilinha · perímetro 56,00 m</span>
+                  <span class="precisao"><span class="amostra exact"></span>exata</span>
+                </div>
+                <div class="linha entidade">
+                  <span class="elemento ausente">— sem identidade</span>
+                  <span class="desc">meio-fio · polilinha · 92,00 m</span>
+                  <span class="precisao"><span class="amostra derived"></span>derivada</span>
+                </div>
+              </div>
+              <div class="aviso identidade">
+                A entidade criada de proposta identificada <b>nasce</b> com o
+                <code>element_ref</code> e o rótulo — camada única por ref, como o modelo exige.
+                O que a revisão não identificou continua podendo ser declarado na cena: o ato
+                pós-solve (F-047 T2) segue valendo, no mesmo contador.
+              </div>
+            </div>
+          </div>
+          <div class="csv">quantitativos.csv (o elo fechado)
+element_ref,entity_id,layer,kind,precision,length_m,perimeter_m,area_m2
+EL-002,0195c9…-2e14,ALAMBRADO,polyline,exact,,56.00,
+,0195c9…-6f30,MEIO_FIO,polyline,derived,92.00,,</div>
+          <div class="aviso identidade">
+            O quantitativo da F-047 agrupa pelo <code>element_ref</code> que nasceu na revisão:
+            <b>croqui → cena → quantitativo</b>, sem redigitar a letra do balão em etapa nenhuma.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0063, decisões 2 e 3 — o transporte respeita os invariantes do modelo.</span>
+          <span>Cota manda: a medida confirmada vira geometria, não anotação.</span>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="estado" id="e07">
+        <h2>
+          07 · As fronteiras honestas: o que não casa e o que não tem proposta
+          <small>
+            Hint sem elemento declarado → a tela de hoje. Balão cujo referente o CV nunca propôs
+            → anotação continua sendo o caminho.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas meio">
+            <div class="painel">
+              <h3>Hint que não casa</h3>
+              <div class="linhas">
+                <div class="linha selecionada">
+                  <span class="status-dot proposed"></span>
+                  <span class="desc"><b>C = 18,00 m</b> · “(E) C= 18”</span>
+                  <span class="hint-modelo">elemento (hint do modelo): <b>E</b></span>
+                </div>
+              </div>
+              <label class="campo">
+                Associação da leitura
+                <select class="aberto" size="5" aria-label="Candidatos de associação (hint sem casamento)">
+                  <option>Selecione um candidato</option>
+                  <option>Traço vizinho · geometria mais próxima</option>
+                  <option>Moldura da folha · geometria mais próxima</option>
+                  <option>Anotação da folha — não mede um elemento</option>
+                </select>
+                <small class="field-hint">
+                  Nenhum elemento declarado tem o rótulo “E” — nenhuma candidata nova. O hint
+                  fica visível, esperando ou uma declaração ou uma correção.
+                </small>
+              </label>
+              <div class="aviso">
+                Comportamento de hoje, sem candidata por identidade. Casamento é exato sobre o
+                rótulo declarado — nunca fuzzy silencioso.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Balão sem proposta</h3>
+              <div class="linhas">
+                <div class="linha selecionada">
+                  <span class="status-dot annotation"></span>
+                  <span class="desc"><b>C = 96,00 m</b> · “vão entre calçada e quadra”</span>
+                  <span class="selo">anotação</span>
+                </div>
+              </div>
+              <div class="aviso atencao">
+                O CV nunca propôs o vão — não existe proposta para declarar elemento, e
+                <b>identidade sem geometria não inventa candidata</b>. O caminho honesto continua
+                sendo <code>annotation=true</code>, com o custo que ele sempre teve: a medida não
+                constrange.
+              </div>
+              <div class="reservado">
+                <b>Reservado — não entra nesta feature.</b> O segundo passe pós-traçado (ligar
+                anotação confirmada a elemento da cena e re-resolver — caminho C do ADR-0063)
+                fica registrado como evolução possível. Nada desta composição segura lugar na
+                tela para ele: quando vier, é feature própria com gate próprio.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Critério de aceite 2 da F-051 e consequência declarada do ADR-0063.</span>
+          <span>A fronteira aparece na tela como texto, não como controle inerte.</span>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="estado" id="e08">
+        <h2>
+          08 · Recusas — e o que continua exatamente como era
+          <small>Cada recusa diz o que fazer no lugar onde ela acontece.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas meio">
+            <div class="painel">
+              <h3>Recusas novas</h3>
+              <div class="aviso recusa">
+                <b>Rótulo já declarado neste job.</b> “B” já é o rótulo de
+                <span class="codigo">◇ EL-002</span>. O casamento por identidade precisa de
+                referente inequívoco — renomeie o elemento existente ou use outro rótulo.
+              </div>
+              <div class="aviso recusa">
+                <b>Declaração sem proposta.</b> Um elemento na revisão é declarado sobre pelo
+                menos uma proposta de geometria. Para referente que o CV não propôs, o caminho é
+                a anotação (estado 07).
+              </div>
+              <div class="aviso recusa">
+                <b>Papel insuficiente.</b> Declarar identidade de elemento exige papel de
+                revisão, que esta conta não tem.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>O que não muda</h3>
+              <div class="aviso">
+                <b>O portão de confirmação é o mesmo.</b> Confirmar associação cuja proposta não
+                é candidata da leitura continua recusado — a candidata por identidade entra na
+                lista pelo funil, nunca por atalho da tela.
+              </div>
+              <div class="aviso">
+                <b>Proposta descartada não volta.</b> A recusa da sugestão assistida fica
+                registrada com motivo, e a sugestão não reaparece confirmada em lugar nenhum.
+              </div>
+              <div class="aviso">
+                <b>Conflito de versão é o de sempre.</b> Declaração concorre com as demais
+                mutações da revisão por <code>base_version</code>; no conflito, o botão
+                “Recarregar revisão atual” — o idioma que a tela já tem.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Erros em <code>application/problem+json</code> com código estável, como toda mutação.</span>
+          <span>A copy exata das recusas não é coberta por esta aprovação.</span>
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section class="estado" id="e09">
+        <h2>
+          09 · Controle: sem declaração, a revisão é a de hoje
+          <small>Os oito estados anteriores só são auditáveis porque este existe.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Job sem nenhum elemento declarado</h3>
+              <div class="linhas">
+                <div class="linha">
+                  <span class="status-dot confirmed"></span>
+                  <span class="desc"><b>16,00 m</b> · lado maior da área de lazer</span>
+                  <span class="selo confirmado">confirmada</span>
+                </div>
+                <div class="linha">
+                  <span class="status-dot proposed"></span>
+                  <span class="desc"><b>12,00 m</b> · lado menor da área de lazer</span>
+                  <span class="selo">proposta</span>
+                </div>
+              </div>
+              <label class="campo">
+                Associação da leitura
+                <select class="aberto" size="4" aria-label="Candidatos de associação (controle)">
+                  <option>Selecione um candidato</option>
+                  <option selected>Contorno do fecho · geometria mais próxima</option>
+                  <option>Anotação da folha — não mede um elemento</option>
+                </select>
+                <small class="field-hint">
+                  Cota escrita junto do elemento: a proximidade continua resolvendo o caso comum
+                  — o ranking dela não mudou.
+                </small>
+              </label>
+            </div>
+            <div class="painel">
+              <h3>O que este controle prova</h3>
+              <ul>
+                <li>Sem declaração, o seletor tem os grupos de sempre — nenhum grupo vazio de
+                  identidade aparece.</li>
+                <li>Sem hint casando, nenhuma candidata nova nasce.</li>
+                <li>O painel de sugestões sem rótulos do modelo diz isso por escrito e não ocupa
+                  a tela.</li>
+                <li>O pacote de revisão, a cena e o <code>quantitativos.csv</code> saem como
+                  hoje.</li>
+              </ul>
+              <div class="aviso">
+                A F-051 é aditiva: quem não usa cota-balão não vê a feature — e o croqui simples
+                continua com o caminho curto de sempre.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Espelho do critério de aceite 2 e da consequência aditiva do ADR-0063.</span>
+          <span>Estados de carregamento, erro e sessão perdida: os da tela de hoje, intocados.</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
