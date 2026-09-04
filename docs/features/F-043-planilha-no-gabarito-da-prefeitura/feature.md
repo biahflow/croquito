@@ -19,9 +19,11 @@
 > imprimia a **linha de grupo** (aprovada no pacote de design rev. 2/3) e emitia o grupo
 > como oitava coluna — consertado pelo PR #143, cujo merge conclui esta feature.
 >
-> **Dívidas declaradas**: o gabarito real de 433 linhas ainda não foi publicado como
-> artefato de plataforma (o mecanismo da T2 existe; o dado real entra por ato operacional);
-> o unknown 1 (gabarito por lote?) segue aberto, com evidência a favor de um só.
+> **Gabarito real publicado como artefato de plataforma em 2026-09-04** (mesma data do
+> aceite, ato operacional no ambiente local): id `01a06c0c-c56b-7c96-96e3-8254edd2a698`,
+> nome "PLANILHA ORÇAMENTÁRIA (SMH/Rio)", revisão `REV SEAC — OUT/23`, 433 linhas, digest
+> `94e6f6fd97cf…`, imutável. **Dívida que segue declarada**: o unknown 1 (gabarito por
+> lote?) continua aberto, com evidência a favor de um só.
 
 > Histórico: **as três tarefas entregues em 2026-09-01.** A T1 (o escritor do gabarito,
 > provado contra o documento real sem um finding do auditor) entrou pelo PR #115; a T2 (o
