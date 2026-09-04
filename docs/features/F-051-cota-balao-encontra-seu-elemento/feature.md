@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_BUILD`
 
 > **ADR-0063 aceito em 2026-09-04** (Daniel Campos, pelo chat) — gate 1 cumprido.
 >
@@ -10,6 +10,10 @@
 > merge do PR #157 — [mock/README.md](mock/README.md)), com as duas leituras do pacote
 > confirmadas: rótulo de elemento único por job na revisão, e revogação que não desfaz
 > associação já confirmada. **Os dois gates que precedem o planejamento estão cumpridos.**
+>
+> **Plano congelado em 2026-09-04** ([plan.md](plan.md), `PLAN_VALID`): 7 tarefas,
+> `(T1 ∥ T2) → (T3 ∥ T5) → T4 → T6 → T7`, contratos em [tasks/](tasks/). Os Unknowns 1 e 2
+> foram resolvidos ou designados no plano (achados 1 e da T4).
 >
 > Nasce em 2026-09-04 da issue
 > [#139](https://github.com/biahflow/croquito/issues/139), aberta pela primeira revisão
