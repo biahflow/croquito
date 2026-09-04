@@ -62,7 +62,9 @@ arquivos de cliente é local, no molde de `make valuation-parity`.
 
 ## Human Gates que continuam abertos
 
-1. **A prioridade da feature**, à luz do volume medido.
+1. ~~**A prioridade da feature**, à luz do volume medido.~~ — **elevada a `HIGH` em
+   2026-08-28** (Daniel Campos); este plano ficou dessincronizado do `evidence.md`, que já
+   registrava o ato (corrigido em 2026-09-04).
 2. **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
 3. ~~**A revisão 2 do [Design Approval Package](mock/README.md)**~~ — a contagem por código
    (decisão 8), **aprovada em 2026-08-28** (Daniel Campos). A revisão 1 continua intacta.
