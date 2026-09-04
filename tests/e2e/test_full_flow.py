@@ -1359,6 +1359,212 @@ def test_trace_solve_reaches_a_metric_scene_through_the_queue(
     assert review.json()["scene"]["id"] == body["result_scene_revision_id"]
 
 
+def test_element_identity_declared_on_the_review_travels_through_the_trace(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+) -> None:
+    """Round-trip da identidade (F-051 T5, ADR-0063 decisão 2), pelo caminho de produção.
+
+    Declara "B" sobre duas propostas NA REVISÃO → traçado pela fila → a cena nasce com o
+    `element_ref` e o rótulo → o ato de identidade NA CENA cunha o ref seguinte do MESMO
+    contador → o re-solve preserva o transporte. É o teste que o risco do contrato pede:
+    duas identidades divergindo (a da revisão e a da cena) só aparece com o ciclo inteiro.
+    """
+    client, worker, storage, _queue = stack
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("identidade-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("identidade-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Identidade declarada na revisão",
+            "default_unit": "m",
+        },
+    )
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+
+    bundle = write_seed_bundle(tmp_path / "identidade-bundle", source_sha256=source_sha256)
+    seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(),
+            operator_id="tenant-admin-e2e",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=_headers("identidade-decisions"),
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": WIDTH_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota conferida na evidência protegida.",
+                    "association_proposal_id": WIDTH_PROPOSAL_ID,
+                },
+                {
+                    "reading_id": HEIGHT_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota conferida na evidência protegida.",
+                    "association_proposal_id": HEIGHT_PROPOSAL_ID,
+                },
+                {
+                    "reading_id": CIRCLE_READING_ID,
+                    "action": "confirm",
+                    "justification": "Diâmetro conferido na evidência protegida.",
+                    "association_proposal_id": CIRCLE_PROPOSAL_ID,
+                },
+            ],
+        },
+    )
+    assert decided.status_code == 200
+
+    # O ato humano da revisão: estas DUAS propostas são o elemento "B". O ref é cunhado pelo
+    # servidor; o cliente nunca o escolhe.
+    declared = client.post(
+        f"/v1/jobs/{job_id}/review/elements",
+        headers=_headers("identidade-declare"),
+        json={
+            "base_version": decided.json()["version"],
+            "proposal_ids": [WIDTH_PROPOSAL_ID, HEIGHT_PROPOSAL_ID],
+            "label": "B",
+            "reason": "As duas linhas cotadas são o mesmo alambrado do balão B.",
+        },
+    )
+    assert declared.status_code == 200, declared.json()
+    assert declared.json()["element_ref"] == "EL-001"
+    review_version = declared.json()["review_version"]
+
+    requested = client.post(
+        f"/v1/jobs/{job_id}/trace-solves",
+        headers=_headers("identidade-accept"),
+        json={
+            "base_review_version": review_version,
+            "base_scene_version": decided.json()["scene"]["version"],
+            "proposal_ids": [WIDTH_PROPOSAL_ID, HEIGHT_PROPOSAL_ID, CIRCLE_PROPOSAL_ID],
+            "unlabelled_proposal_ids": [CIRCLE_PROPOSAL_ID],
+            "note": "Traçado aceito em lote pelo profissional identificado.",
+            "title": "CAMPO SINTETICO",
+        },
+    )
+    assert requested.status_code == 202
+    assert worker.run_once() == 1
+    solved = client.get(
+        f"/v1/jobs/{job_id}/trace-solves/{requested.json()['trace_solve_id']}",
+        headers=_headers("identidade-poll"),
+    ).json()
+    assert solved["status"] == "COMPLETED"
+    assert solved["solve_status"] == "solved_unapproved", solved["blockers"]
+
+    # A cena nasce com a identidade: as duas linhas carregam o ref, e o nome legível mora
+    # uma vez só, por ref. Ninguém redigitou nada depois do solver.
+    scene = client.get(f"/v1/jobs/{job_id}/scene", headers=_headers("identidade-scene")).json()
+    refs = {
+        entity["id"]: entity["element_ref"]
+        for entity in scene["entities"]
+        if entity["element_ref"] is not None
+    }
+    assert len(refs) == 2
+    assert set(refs.values()) == {"EL-001"}
+    assert scene["element_labels"] == {"EL-001": "B"}
+    circle_entity = next(entity for entity in scene["entities"] if entity["kind"] == "circle")
+    assert circle_entity["element_ref"] is None
+
+    # O contador é UM por job: o ato pós-cena continua valendo para o que a revisão não
+    # identificou, e cunha o PRÓXIMO ref — nunca reaproveita o transportado.
+    scene_act = client.post(
+        f"/v1/jobs/{job_id}/elements",
+        headers=_headers("identidade-scene-act"),
+        json={
+            "base_version": scene["version"],
+            "entity_ids": [circle_entity["id"]],
+            "label": "C",
+            "reason": "O círculo central é um elemento à parte, declarado sobre a cena.",
+        },
+    )
+    assert scene_act.status_code == 200, scene_act.json()
+    assert scene_act.json()["element_ref"] == "EL-002"
+    assert scene_act.json()["scene"]["element_labels"] == {"EL-001": "B", "EL-002": "C"}
+
+    # Re-solve sobre a mesma revisão de leitura: a identidade declarada na revisão viaja de
+    # novo, sem novo ato humano.
+    resolved = client.post(
+        f"/v1/jobs/{job_id}/trace-solves",
+        headers=_headers("identidade-resolve"),
+        json={
+            "base_review_version": client.get(
+                f"/v1/jobs/{job_id}/review", headers=_headers("identidade-reread")
+            ).json()["version"],
+            "base_scene_version": scene_act.json()["scene"]["version"],
+            "proposal_ids": [WIDTH_PROPOSAL_ID, HEIGHT_PROPOSAL_ID, CIRCLE_PROPOSAL_ID],
+            "unlabelled_proposal_ids": [CIRCLE_PROPOSAL_ID],
+            "note": "Traçado refeito depois do ato de identidade na cena.",
+            "title": "CAMPO SINTETICO",
+        },
+    )
+    assert resolved.status_code == 202
+    assert worker.run_once() == 1
+    reworked = client.get(
+        f"/v1/jobs/{job_id}/trace-solves/{resolved.json()['trace_solve_id']}",
+        headers=_headers("identidade-repoll"),
+    ).json()
+    assert reworked["solve_status"] == "solved_unapproved", reworked["blockers"]
+
+    rescene = client.get(f"/v1/jobs/{job_id}/scene", headers=_headers("identidade-rescene")).json()
+    assert rescene["element_labels"] == {"EL-001": "B"}
+    assert {
+        entity["element_ref"] for entity in rescene["entities"] if entity["element_ref"] is not None
+    } == {"EL-001"}
+    # O que foi declarado SOBRE A CENA não sobrevive a um re-solve — a cena é refeita das
+    # propostas. É exatamente o limite que o ADR-0063 registra ao mover a identidade para a
+    # revisão; o ref cunhado lá, porém, nunca volta ao estoque.
+    assert "EL-002" not in rescene["element_labels"]
+    terceiro = client.post(
+        f"/v1/jobs/{job_id}/elements",
+        headers=_headers("identidade-terceiro"),
+        json={
+            "base_version": rescene["version"],
+            "entity_ids": [
+                next(entity for entity in rescene["entities"] if entity["kind"] == "circle")["id"]
+            ],
+            "reason": "Cunhagem seguinte não reaproveita ref de elemento revogado nem refeito.",
+        },
+    )
+    assert terceiro.status_code == 200, terceiro.json()
+    assert terceiro.json()["element_ref"] == "EL-003"
+
+
 def test_traced_scene_carries_the_scope_criterion_to_the_audited_package(
     tmp_path: Path,
     stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],

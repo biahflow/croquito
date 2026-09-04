@@ -23,24 +23,32 @@ Este módulo liga as peças que já existem, nesta ordem:
 Precisão declarada, nunca inventada: entidade cujas distâncias internas são todas
 cotadas sai `exact`; o resto permanece `approximate` na layer `APROXIMADO`, aceito em
 lote por uma pessoa identificada. Nada contorna `ensure_exportable`.
+
+Identidade transportada, nunca cunhada aqui: a entidade criada a partir de proposta que
+uma pessoa declarou ser um elemento na revisão de leitura nasce com o `element_ref` e o
+rótulo dela (ADR-0063, decisão 2). O traçado não declara identidade nenhuma — ele carrega
+para a cena o que já foi afirmado uma etapa antes, e o ato pós-cena continua valendo para
+o que a revisão não identificou, no mesmo contador.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import combinations
 from pathlib import Path
-from typing import Final, Literal
+from typing import Any, Final, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from croquito_core.models import (
+    ELEMENT_LABEL_MAX_LENGTH,
+    ELEMENT_REF_PATTERN,
     CircleGeometry,
     Constraint,
     DiameterDimensionGeometry,
@@ -253,6 +261,50 @@ class TraceAcceptance(TraceModel):
             else BandSeparation(*pair)
             for pair in self.keep_apart_pairs
         ]
+
+
+class TraceElementDeclaration(TraceModel):
+    """Uma identidade de elemento declarada na REVISÃO, sobre propostas (ADR-0063, D1/D2).
+
+    Chega ao traçado já cunhada: o `element_ref` nasceu no ato humano da revisão
+    (`POST /v1/jobs/{job_id}/review/elements`), no namespace único do job — o mesmo contador
+    do ato pós-cena do ADR-0058. O traçado não cunha, não infere e não nomeia; ele
+    TRANSPORTA para a entidade o que uma pessoa já afirmou sobre a proposta.
+
+    A entrada revogada continua na lista da revisão com `status="revoked"`, porque o ref sai
+    de circulação e o histórico não pode perder o que foi afirmado. O transporte a ignora:
+    devolver à cena a identidade que alguém desfez seria desfazer o ato humano em silêncio.
+    """
+
+    element_ref: str = Field(pattern=ELEMENT_REF_PATTERN)
+    label: str | None = Field(default=None, max_length=ELEMENT_LABEL_MAX_LENGTH)
+    proposal_ids: list[str] = Field(default_factory=list)
+    status: Literal["active", "revoked"] = "active"
+
+
+def element_declarations_from_review(
+    rows: Iterable[Mapping[str, Any]],
+) -> list[TraceElementDeclaration]:
+    """As declarações gravadas na revisão, na forma que o traçado consome.
+
+    A linha persistida carrega também o rastro do ato (quem declarou, com que papel, quando,
+    e o mesmo para a revogação); o transporte não precisa de nada disso, e `TraceModel`
+    proíbe campo extra de propósito. Ler campo a campo aqui mantém a forma persistida
+    conhecida num lugar só, em vez de espalhá-la pelo worker.
+
+    Entrada malformada estoura: o worker do traçado transforma a exceção em
+    `TRACE_SOLVE_FAILED` consultável, e falhar fechado é melhor do que descartar em silêncio
+    a identidade que alguém declarou.
+    """
+    return [
+        TraceElementDeclaration(
+            element_ref=row["element_ref"],
+            label=row.get("label"),
+            proposal_ids=list(row.get("proposal_ids") or []),
+            status=row.get("status", "active"),
+        )
+        for row in rows
+    ]
 
 
 TraceUnappliedCause = Literal[
@@ -1436,6 +1488,7 @@ def solve_trace(
     note_associations: Mapping[str, str] | None = None,
     derived_dimension_requests: Sequence[DerivedDimensionRequest] = (),
     dimension_texts: Mapping[str, str] | None = None,
+    element_declarations: Sequence[TraceElementDeclaration] = (),
     required_criteria: Sequence[ScopeCriterion] = (),
     image_width: int,
     image_height: int,
@@ -1722,17 +1775,79 @@ def solve_trace(
     approximate_count = 0
     hatch_ids = set(acceptance.hatch_proposal_ids)
 
+    # ADR-0063, decisão 2: o traçado TRANSPORTA a identidade declarada na revisão sobre
+    # propostas. Só as ATIVAS viajam, e só as das propostas que o aceite em lote incluiu —
+    # proposta declarada e depois não aceita não vira entidade, e um rótulo apontando para
+    # ref que nenhuma entidade usa é órfão, que `SceneRevision` recusa
+    # (`ELEMENT_LABEL_UNKNOWN_REF`).
+    element_ref_of_proposal: dict[str, str] = {}
+    label_of_element: dict[str, str] = {}
+    for declaration in element_declarations:
+        if declaration.status != "active":
+            continue
+        if declaration.label is not None:
+            label_of_element[declaration.element_ref] = declaration.label
+        for declared_id in declaration.proposal_ids:
+            if declared_id not in accepted_ids:
+                continue
+            previous = element_ref_of_proposal.get(declared_id)
+            if previous is not None and previous != declaration.element_ref:
+                # A API recusa isso no ato (`ELEMENT_ALREADY_DECLARED`): mover proposta de um
+                # elemento para outro são dois atos. Se chegou aqui, a revisão está corrompida
+                # e eleger um dos dois refs em silêncio daria identidade errada a geometria
+                # real — o traçado recusa em vez de escolher.
+                blockers.append(f"TRACE_ELEMENT_DECLARATION_CONFLICT:{declared_id}")
+                continue
+            element_ref_of_proposal[declared_id] = declaration.element_ref
+    proposals_of_element: dict[str, list[str]] = {}
+    for declared_id, declared_ref in element_ref_of_proposal.items():
+        proposals_of_element.setdefault(declared_ref, []).append(declared_id)
+
+    # A camada nasce por proposta, mas a cena exige camada ÚNICA por `element_ref`
+    # (`ELEMENT_REF_LAYER_MISMATCH`, `SceneRevision.validate_references`). Quem declarou o
+    # elemento na revisão não tinha como saber em que camada cada proposta cairia: isso só se
+    # decide aqui, quando o solver diz quais distâncias ficaram determinadas. Então o traçado
+    # harmoniza — se as propostas do elemento discordam de camada, o elemento inteiro é
+    # desenhado em `APROXIMADO`, a única camada que não afirma natureza nenhuma e que nunca
+    # promove traçado de pixel a camada semântica. Eleger uma das camadas semânticas
+    # discordantes seria o traçado afirmando "isto é muro" sobre o que ninguém afirmou.
+    layer_of_proposal: dict[str, LayerName] = {}
+    exact_of_proposal: dict[str, bool] = {}
+    junctions_of_proposal: dict[str, list[int]] = {}
     for proposal in accepted:
-        geometry = proposal.geometry
         state = _state_of[proposal.id]
-        detail_key = group_of[proposal.id]
-        detail_tag = [f"detail:{detail_key}"] if detail_key else []
         junctions = _proposal_junctions(proposal, state.junction_of)
+        junctions_of_proposal[proposal.id] = junctions
         exact = (
             state.solved is not None
             and bool(junctions)
             and state.solved.junctions_are_determined(state.bands, junctions)
         )
+        exact_of_proposal[proposal.id] = exact
+        if isinstance(proposal.geometry, PixelLine | PixelPolyline):
+            layer_of_proposal[proposal.id] = _layer_for(proposal, exact=exact)
+        elif proposal.id in circle_radius:
+            layer_of_proposal[proposal.id] = _layer_for(proposal, exact=True)
+        else:
+            layer_of_proposal[proposal.id] = LayerName.APROXIMADO
+    harmonised_elements = [
+        element_ref
+        for element_ref, member_ids in sorted(proposals_of_element.items())
+        if len({layer_of_proposal[member_id] for member_id in member_ids}) > 1
+    ]
+    for element_ref in harmonised_elements:
+        for member_id in proposals_of_element[element_ref]:
+            layer_of_proposal[member_id] = LayerName.APROXIMADO
+
+    for proposal in accepted:
+        geometry = proposal.geometry
+        state = _state_of[proposal.id]
+        detail_key = group_of[proposal.id]
+        detail_tag = [f"detail:{detail_key}"] if detail_key else []
+        junctions = junctions_of_proposal[proposal.id]
+        exact = exact_of_proposal[proposal.id]
+        layer = layer_of_proposal[proposal.id]
+        element_ref_of_entity = element_ref_of_proposal.get(proposal.id)
         precision = Precision.EXACT if exact else Precision.APPROXIMATE
         if state.solved is None:
             summary_code = "DETAIL_SKETCH_AS_DRAWN"
@@ -1750,19 +1865,20 @@ def solve_trace(
             entity = Entity(
                 id=entity_id,
                 kind=EntityKind.LINE,
-                layer=_layer_for(proposal, exact=exact),
+                layer=layer,
                 precision=precision,
                 geometry=LineGeometry(
                     start=state.cad_position[junctions[0]],
                     end=state.cad_position[junctions[1]],
                 ),
                 provenance=provenance,
+                element_ref=element_ref_of_entity,
             )
         elif isinstance(geometry, PixelPolyline):
             entity = Entity(
                 id=entity_id,
                 kind=EntityKind.POLYLINE,
-                layer=_layer_for(proposal, exact=exact),
+                layer=layer,
                 precision=precision,
                 geometry=PolylineGeometry(
                     points=[state.cad_position[junction] for junction in junctions],
@@ -1770,6 +1886,7 @@ def solve_trace(
                 ),
                 provenance=provenance,
                 fill="hatch" if proposal.id in hatch_ids and geometry.closed else "none",
+                element_ref=element_ref_of_entity,
             )
             if proposal.id in hatch_ids and not geometry.closed:
                 blockers.append(f"HATCH_TARGET_NOT_CLOSED:{proposal.id}")
@@ -1780,7 +1897,7 @@ def solve_trace(
             entity = Entity(
                 id=entity_id,
                 kind=EntityKind.CIRCLE,
-                layer=_layer_for(proposal, exact=True),
+                layer=layer,
                 precision=Precision.EXACT,
                 geometry=CircleGeometry(
                     center=state.cad_point(geometry.center),
@@ -1796,6 +1913,7 @@ def solve_trace(
                     ],
                     summary_code="TRACED_CIRCLE_DETERMINED_BY_CONFIRMED_READING",
                 ),
+                element_ref=element_ref_of_entity,
             )
         else:
             # Círculo sem leitura confirmada de raio/diâmetro permanece círculo com raio
@@ -1804,13 +1922,14 @@ def solve_trace(
             entity = Entity(
                 id=entity_id,
                 kind=EntityKind.CIRCLE,
-                layer=LayerName.APROXIMADO,
+                layer=layer,
                 precision=Precision.APPROXIMATE,
                 geometry=CircleGeometry(
                     center=state.cad_point(geometry.center),
                     radius=geometry.radius * state.radius_scale,
                 ),
                 provenance=provenance,
+                element_ref=element_ref_of_entity,
             )
         if entity.precision is Precision.APPROXIMATE:
             accepted_approximations.add(entity.id)
@@ -1825,6 +1944,27 @@ def solve_trace(
             display_label = f"{display_label} — {spec}" if display_label else spec
         if display_label and proposal.id not in acceptance.unlabelled_proposal_ids:
             labelled.append((entity, display_label))
+
+    for element_ref in harmonised_elements:
+        # Rebaixar camada em silêncio é o tipo de mudança que ninguém vê na prancha e todo
+        # mundo herda: a harmonização vira aviso na cena, com as entidades do elemento
+        # nomeadas. Aviso, não crítica — o desenho continua exportável, e quem revisa decide
+        # se prefere declarar um elemento por camada.
+        issues.append(
+            Issue(
+                id=_uuid(packet.dataset_id, feature_id, f"issue:element-layer:{element_ref}"),
+                code="ELEMENT_LAYER_HARMONISED",
+                severity=IssueSeverity.WARNING,
+                message=(
+                    f"Elemento {element_ref}: as propostas declaradas caíram em camadas "
+                    "diferentes no traçado; o elemento inteiro foi desenhado em APROXIMADO."
+                ),
+                entity_ids=[
+                    entity_by_proposal[member_id].id
+                    for member_id in proposals_of_element[element_ref]
+                ],
+            )
+        )
 
     measurements: list[Measurement] = []
     scene_constraints: list[Constraint] = []
@@ -2608,6 +2748,14 @@ def solve_trace(
         measurements=measurements,
         constraints=scene_constraints,
         issues=[*issues, *blocker_issues, *criteria_issues],
+        # Só o rótulo de elemento que alguma entidade desta cena de fato usa: o de uma
+        # declaração cujas propostas ficaram todas fora do aceite não nomeia nada aqui, e
+        # `SceneRevision` recusa rótulo órfão (`ELEMENT_LABEL_UNKNOWN_REF`).
+        element_labels={
+            element_ref: label
+            for element_ref, label in sorted(label_of_element.items())
+            if element_ref in proposals_of_element
+        },
     )
     status: Literal["solved_unapproved", "conflict"] = (
         "conflict" if blockers else "solved_unapproved"

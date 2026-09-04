@@ -51,6 +51,14 @@ usam o mínimo de control points que preserva a forma aceita.
 Cores e lineweights são defaults do produto, não alegações de conformidade
 automática com norma. Templates por cliente ficam fora do MVP.
 
+Uma exceção declarada em `APROXIMADO`: quando as entidades de um mesmo `element_ref` cairiam
+em camadas diferentes, o traçado desenha o elemento inteiro nessa camada para respeitar a
+invariante de camada única por elemento — inclusive a entidade `exact` do grupo, que é a
+direção conservadora (o contrário promoveria traçado de pixel a camada semântica). A camada
+diz onde desenhar; quem declara exatidão é `precision`, que continua no XDATA de cada
+entidade, e a cena carrega a `Issue` `ELEMENT_LAYER_HARMONISED`
+([Estágio de traçado](TRACE_STAGE.md)).
+
 ## Provenance
 
 O DXF inclui XDATA no application registry `CROQUITO` para:

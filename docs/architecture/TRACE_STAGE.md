@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-13 (nome inline aposentado; todo elemento rotulado vira balão)
+Última revisão: 2026-09-04 (o traçado transporta a identidade declarada na revisão)
 
 Este documento é a referência canônica do estágio de traçado em lote
 (`services/worker/src/croquito_worker/tracing.py`, comandos `solve-trace` e
@@ -256,6 +256,40 @@ um detalhe bloqueia a prancha inteira, como qualquer cota confirmada incompatív
 detalhe é parte do desenho, não um anexo decorativo. A tipografia da prancha
 (altura de cota, rótulos, legenda) segue a **planta**; `scale_m_per_px` do resultado é
 a escala da planta e `detail_group_scales` registra a de cada grupo.
+
+## Transporte da identidade de elemento (F-051, ADR-0063 decisão 2)
+
+O traçado **transporta** a identidade que uma pessoa declarou na revisão de leitura sobre
+propostas (`POST /v1/jobs/{id}/review/elements`): a entidade criada a partir de uma proposta
+declarada nasce com o `element_ref`, e o rótulo entra em `SceneRevision.element_labels`. A
+letra do balão vira identidade da cena sem redigitação depois do solver — é o elo
+croqui→cena→quantitativo que a F-047 espera do outro lado.
+
+O traçado **não cunha, não infere e não nomeia**: o ref já veio cunhado pelo servidor, no
+namespace único do job. Três regras governam o transporte:
+
+- **Só a declaração ativa viaja.** A revogada continua no histórico da revisão (o ref não
+  volta ao estoque de cunhagem), mas devolver a identidade desfeita à cena seria desfazer o
+  ato humano em silêncio.
+- **Só as propostas do aceite em lote.** Proposta declarada e depois não aceita não vira
+  entidade; o rótulo dela não entra na cena, porque rótulo de `element_ref` que nenhuma
+  entidade usa é órfão e `SceneRevision` o recusa (`ELEMENT_LABEL_UNKNOWN_REF`).
+- **Camada coerente por elemento.** A cena exige camada única por `element_ref`
+  (`ELEMENT_REF_LAYER_MISMATCH`), mas em qual camada cada proposta cai só se decide aqui,
+  depois de o solver dizer quais distâncias ficaram determinadas — quem declarou não tinha
+  como saber. Quando as propostas de um elemento caem em camadas diferentes, o elemento
+  inteiro é desenhado em `APROXIMADO` (nunca o contrário, que promoveria traçado de pixel a
+  camada semântica) e a cena carrega a `Issue` de aviso `ELEMENT_LAYER_HARMONISED`. A
+  **precisão não é rebaixada junto**: a camada diz onde desenhar, `precision` diz o que a
+  cota determinou.
+
+O worker lê as declarações da MESMA revisão de leitura que deu o snapshot de propostas — a
+que a rota pinou em `base_review_revision_id` —, e a revisão que o traçado cria as leva
+adiante, para que um re-solve não nasça sem a identidade que já está desenhada. A mesma
+proposta declarada em dois elementos ativos bloqueia com
+`TRACE_ELEMENT_DECLARATION_CONFLICT`. O ato de identidade **sobre a cena** (F-047) continua
+valendo para o que a revisão não identificou, no mesmo contador — e, por ser edição da cena,
+é substituído quando o traçado refaz a cena a partir das propostas.
 
 ## Convenções de prancha (decididas com o usuário em 2026-08-11, nomes revisados em 2026-08-13)
 

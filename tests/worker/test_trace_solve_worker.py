@@ -243,6 +243,69 @@ def test_trace_solve_creates_the_scene_and_records_the_acceptance(
     assert queue.deleted == ["receipt-1"]
 
 
+def test_trace_solve_transports_the_identity_of_the_pinned_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O transporte lê as declarações da MESMA revisão que deu o snapshot de propostas.
+
+    Snapshot e identidade moram na linha que a rota pinou em `base_review_revision_id`, e é
+    dela que o worker lê os dois — casar `element_ref` com proposta de outro snapshot é o
+    defeito nomeado no contrato da F-051 T5. A revisão que o traçado cria leva a declaração
+    adiante: sem isso o re-solve seguinte nasceria sem a identidade que já está na cena.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database, database_url = _seed(tmp_path)
+    declarations = [
+        {
+            "element_ref": "EL-001",
+            "label": "B",
+            "proposal_ids": [WIDTH_PROPOSAL_ID, HEIGHT_PROPOSAL_ID],
+            "status": "active",
+            "declared_by": "eng-trace",
+            "declared_role": "engineer",
+            "declared_at": "2026-09-04T12:00:00+00:00",
+        },
+        {
+            "element_ref": "EL-002",
+            "label": "C",
+            "proposal_ids": [CIRCLE_PROPOSAL_ID],
+            "status": "revoked",
+            "declared_by": "eng-trace",
+            "declared_role": "engineer",
+            "declared_at": "2026-09-04T12:01:00+00:00",
+            "revoked_by": "eng-trace",
+            "revoked_role": "engineer",
+            "revoked_at": "2026-09-04T12:02:00+00:00",
+        },
+    ]
+    with database.sessions.begin() as session:
+        base = session.get(ReviewRevisionRecord, REVIEW_ID)
+        assert base is not None
+        base.element_declarations_json = declarations
+    worker, _queue = _worker(database_url, _message())
+
+    assert worker.run_once() == 1
+
+    with database.sessions() as session:
+        record = session.get(TraceSolveRecord, TRACE_SOLVE_ID)
+        assert record is not None
+        assert record.solve_status == "solved_unapproved"
+        scene_record = session.get(RevisionRecord, record.result_scene_revision_id)
+        assert scene_record is not None
+        scene = SceneRevision.model_validate(scene_record.scene)
+        transported = {
+            entity.element_ref for entity in scene.entities if entity.element_ref is not None
+        }
+        # Só a ATIVA viaja: a revogada fica no histórico da revisão e não volta à cena.
+        assert transported == {"EL-001"}
+        assert scene.element_labels == {"EL-001": "B"}
+
+        review_record = session.get(ReviewRevisionRecord, record.result_review_revision_id)
+        assert review_record is not None
+        assert review_record.element_declarations_json == declarations
+
+
 def test_trace_solve_materialises_the_scope_criterion_of_the_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
