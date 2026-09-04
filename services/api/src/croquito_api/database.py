@@ -656,6 +656,24 @@ class ReviewRevisionRecord(Base):
         JSON, default=list, server_default=text("'[]'")
     )
     """Conclusões humanas sobre fotos, versionadas com a revisão e fora da cena."""
+    element_declarations_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    """Identidades de elemento declaradas sobre PROPOSTAS, uma etapa antes da cena (F-051 T2).
+
+    O mesmo ato do ADR-0058 uma etapa antes (ADR-0063, decisão 1): uma pessoa declara que
+    um conjunto de `proposal_ids` do snapshot desta revisão É um elemento, e o servidor cunha
+    o `element_ref` no namespace ÚNICO do job — o mesmo contador da declaração pós-solve.
+
+    A identidade REVOGADA não sai da lista: ela fica com ``status="revoked"``, porque o ref
+    nunca é reaproveitado e apagar a entrada faria o histórico do job mentir sobre o que já
+    foi afirmado. Revogar também não toca `selected_associations_json`: corrigir associação é
+    a retificação de decisão que a revisão já tem (leitura confirmada no aceite do DAP).
+
+    O ``server_default`` mantém writers da imagem anterior compatíveis durante o deploy
+    rolante da migration ``0031``; a leitura tolera ``NULL`` de banco antigo pelo mesmo padrão
+    das colunas da F-030.
+    """
     calibration_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     proposal_decisions_json: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True

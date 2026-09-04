@@ -183,6 +183,19 @@ nunca infere o agrupamento por proximidade ou por rótulo próximo
 ([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
 decisão 2). Sem nenhuma declaração, toda a cadeia responde exatamente como antes.
 
+Desde a F-051 o **mesmo ato existe uma etapa antes**, sobre as propostas de geometria da
+revisão de leitura: `POST /v1/jobs/{job_id}/review/elements` declara que um conjunto de
+`proposal_ids` é um elemento, `.../review/elements/revocations` desfaz e
+`.../review/elements/labels` renomeia. É o que permite a **cota-balão** — a medida escrita
+longe do elemento, ligada a ele por letra — alcançar seu referente antes de a cena existir
+([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md), decisão 1). O
+**namespace de `element_ref` é um só por job**: o contador é o mesmo dos dois lados, e a
+revisão cunha `EL-002` quando a cena já cunhou `EL-001` (e vice-versa). Aqui o rótulo legível
+é **único entre as identidades ativas do job** (decisão 2), porque é por ele que o hint da
+leitura procura o referente; e revogar **não desfaz associação já confirmada** — corrigir
+associação é a retificação de decisão que a revisão já tem. A identidade revogada continua no
+histórico, e o ref revogado nunca é reaproveitado.
+
 ## 6. Cadeia de medição e orçamento
 
 Vive em `packages/valuation`, que não depende do worker nem do scene graph. A referência
@@ -281,7 +294,8 @@ não defeito.
 | Código de saída 2 do CLI | `rectangle_solver.py`, `tracing.py` | o solver terminou em `review_required` **ou** em `conflict` — nos dois casos não há cena métrica aprovável |
 | Associação explícita obrigatória | solver | falta `reading_id → proposal_id`; proximidade em pixels nunca é associação implícita |
 | Auditoria do DXF | `dxf.py` | o auditor reprova o arquivo gerado ao reabri-lo — o ZIP não é publicado |
-| `ELEMENT_REF_NOT_ASSIGNABLE` / `ELEMENT_REF_LAYER_MISMATCH` / `ELEMENT_ALREADY_DECLARED` / `ELEMENT_NOT_DECLARED` / `ELEMENT_LABEL_INVALID` | rotas de identidade de elemento (`croquito_api/main.py`), invariante em `croquito_core.models.SceneRevision` | o cliente tentou **escolher** o `element_ref` (a cunhagem é do servidor), o grupo mistura camadas, a entidade já pertence a outro elemento (mudar exige revogar antes, nunca reescrever por cima), o ref a revogar ou renomear não existe na revisão corrente, ou o rótulo legível veio vazio/só de espaço (para ficar sem nome, omite-se o campo) |
+| `ELEMENT_REF_NOT_ASSIGNABLE` / `ELEMENT_REF_LAYER_MISMATCH` / `ELEMENT_ALREADY_DECLARED` / `ELEMENT_NOT_DECLARED` / `ELEMENT_LABEL_INVALID` | rotas de identidade de elemento (`croquito_api/main.py`), invariante em `croquito_core.models.SceneRevision` | o cliente tentou **escolher** o `element_ref` (a cunhagem é do servidor), o grupo mistura camadas, a entidade (ou a proposta, na revisão) já pertence a outro elemento (mudar exige revogar antes, nunca reescrever por cima), o ref a revogar ou renomear não existe ativo na revisão corrente, ou o rótulo legível veio vazio/só de espaço (para ficar sem nome, omite-se o campo) |
+| `ELEMENT_LABEL_ALREADY_USED` | rotas de identidade de elemento **da revisão** (`croquito_api/main.py`) | o rótulo já nomeia outra identidade ativa do job. Só na revisão: é por ele que o hint da cota-balão procura o referente, e nome ambíguo não tem referente. Na cena, dois elementos podem ter o mesmo rótulo, porque lá quem casa é o `element_ref` |
 | `CALIBRATION_INVALID` | `proposal_calibration.py` | âncoras degeneradas ou erro acima da tolerância |
 | `QUANTITY_SOURCE_UNRESOLVED` / `QUANTITY_SOURCE_ITEM_ALREADY_QUANTIFIED` / `QUANTITY_SOURCE_DUPLICATE_ELEMENT_REF` | `valuation/quantity_source.py` | a cena não tem quantidade para aquele item (sem identidade num dos lados, precisão `approximate`/`unresolved`, unidade que não bate ou grandeza ausente), o item já traz o número da legenda — a cena **não** sobrescreve a legenda — ou o `quantitativos.csv` repete uma identidade, caso em que nem "pegar a primeira" é aceitável |
 | `SCENE_LINK_REQUIRED` / `SCENE_LINK_SCENE_NOT_APPROVED` / `SCENE_LINK_EXPORT_REQUIRED` / `SCENE_PACKAGE_REQUIRED` | rotas do elo com o croqui (`croquito_api/valuation_rounds.py`) | a rodada não declarou croqui nenhum; o croqui citado não tem cena aprovada; ele tem cena aprovada mas nenhum pacote publicado; ou o pacote citado não está utilizável agora (objeto ausente, ilegível, sem `quantitativos.csv`, ou export que voltou à fila) |

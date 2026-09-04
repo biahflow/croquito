@@ -962,6 +962,118 @@ parcela de si mesmo ou leitura ainda não confirmada), `404 CHAIN_NOT_FOUND` (re
 de cadeia inexistente), `409 REVISION_CONFLICT`, `403 FORBIDDEN`, `404 NOT_FOUND` e
 `409 JOB_NOT_READY`.
 
+### `POST /v1/jobs/{job_id}/review/elements`
+
+Declara que um conjunto de **propostas de geometria** é um elemento, cunhando o
+`element_ref` no ato — o mesmo ato de
+[`POST /v1/jobs/{job_id}/elements`](#post-v1jobsjob_idelements) uma etapa antes da cena
+([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md), decisão 1). É ato
+humano: a rota não infere agrupamento por rótulo do modelo, proximidade ou camada.
+
+Entrada:
+
+```json
+{
+  "base_version": 3,
+  "proposal_ids": ["vp_1111111111111111", "vp_2222222222222222"],
+  "reason": "Estas propostas são o alambrado B",
+  "label": "B"
+}
+```
+
+Saída: o ato, a versão da revisão nova e a lista inteira de identidades depois dele.
+
+```json
+{
+  "act": "declared",
+  "element_ref": "EL-002",
+  "label": "B",
+  "proposal_ids": ["vp_1111111111111111", "vp_2222222222222222"],
+  "acted_by_role": "engineer",
+  "acted_at": "2026-09-04T21:00:00Z",
+  "review_version": 4,
+  "declarations": [
+    {
+      "element_ref": "EL-002",
+      "label": "B",
+      "proposal_ids": ["vp_1111111111111111", "vp_2222222222222222"],
+      "status": "active",
+      "declared_by_role": "engineer",
+      "declared_at": "2026-09-04T21:00:00Z",
+      "revoked_by_role": null,
+      "revoked_at": null
+    }
+  ]
+}
+```
+
+- **O namespace de `element_ref` é UM por job**, partilhado com a declaração da cena: se a
+  cena já cunhou `EL-001`, a revisão cunha `EL-002`, e vice-versa. Um ref revogado não volta
+  ao estoque. Mandar `element_ref` na entrada é `422 ELEMENT_REF_NOT_ASSIGNABLE`.
+- **O grupo só cita proposta do snapshot desta revisão** (`proposals_json`): id de fora
+  responde `422 DOMAIN_VALIDATION_FAILED` com `details.proposal_ids`, e proposta repetida no
+  mesmo grupo, o mesmo código. Declarar exige pelo menos uma proposta — o balão cujo
+  referente ninguém propôs continua no caminho de hoje (`annotation=true`).
+- **Proposta já declarada em outro elemento ativo recusa** com
+  `409 ELEMENT_ALREADY_DECLARED`: mudar de elemento é revogar e declarar de novo.
+- **O `label` é opcional e ÚNICO entre as identidades ativas do job**: um segundo elemento
+  com o mesmo rótulo responde `409 ELEMENT_LABEL_ALREADY_USED` apontando o existente em
+  `details.element_ref` — é por ele que o hint da cota-balão procura o referente, e um nome
+  ambíguo não tem referente. O rótulo é aparado nas pontas; vazio ou só de espaço é
+  `422 ELEMENT_LABEL_INVALID`. **O casamento é EXATO**, nunca difuso em silêncio.
+- **O autor vem do JWT** e o instante é do servidor. A resposta devolve o **papel**
+  profissional, nunca o subject; o subject fica na revisão (`created_by`) e na auditoria
+  (`REVIEW_ELEMENT_IDENTITY_DECLARED`), e o TEXTO do rótulo nunca entra em auditoria.
+- **A revisão nova carrega todo o resto verbatim**: pacote, candidatas, associações
+  confirmadas, calibração, cena, blockers e solver não são tocados. Sem declaração nenhuma,
+  `GET /v1/jobs/{job_id}/review` responde exatamente como antes desta feature — a lista de
+  identidades sai pelas três rotas de ato, não pela leitura da revisão.
+
+### `POST /v1/jobs/{job_id}/review/elements/labels`
+
+Renomeia a identidade da revisão: ato declarado, com autor, instante e motivo, criando
+revisão nova. Não move proposta e não troca `element_ref`.
+
+```json
+{
+  "base_version": 4,
+  "element_ref": "EL-002",
+  "label": "grade B",
+  "reason": "Nome conferido com a folha"
+}
+```
+
+Responde no mesmo formato, com `"act": "relabeled"`. O rótulo novo continua sendo único
+entre as identidades ativas (`409 ELEMENT_LABEL_ALREADY_USED`); ref que a revisão não tem
+ativo — inexistente ou já revogado — responde `409 ELEMENT_NOT_DECLARED`.
+
+### `POST /v1/jobs/{job_id}/review/elements/revocations`
+
+Desfaz a identidade declarada na revisão, numa revisão nova, com autor, instante e motivo.
+
+```json
+{"base_version": 4, "element_ref": "EL-002", "reason": "Agrupamento errado"}
+```
+
+Responde no mesmo formato, com `"act": "revoked"`. Duas coisas que a revogação **não** faz,
+ambas confirmadas no aceite do Design Approval Package da
+[F-051](../features/F-051-cota-balao-encontra-seu-elemento/mock/README.md):
+
+- **não apaga a identidade do histórico** — a entrada fica `"status": "revoked"`, com o
+  rótulo que teve e o carimbo de quem revogou, e o ref continua fora do estoque de cunhagem;
+- **não desfaz associação já confirmada por ela** — `selected_associations` sai intacto;
+  corrigir associação é a retificação de decisão que a revisão já tem.
+
+O rótulo do elemento revogado volta a ficar livre para outra identidade: o que nunca se
+reaproveita é o ref. As propostas liberadas podem ser declaradas de novo.
+
+As três rotas exigem `Idempotency-Key`, papel profissional elegível
+(`engineer`, `architect` ou `domain_reviewer`) e concorrência otimista por `base_version`.
+Duas declarações simultâneas sobre a mesma versão cunham o mesmo número: a segunda a gravar
+colide na unicidade `(job_id, version)` da revisão de leitura e recebe
+`409 REVISION_CONFLICT`. Revisão inexistente responde `409 JOB_NOT_READY`; revisão sem
+snapshot de propostas, `409 PROPOSALS_NOT_READY`.
+
 ### `POST /v1/jobs/{job_id}/review/witnesses`
 
 Associa ou retrata uma testemunha observacional. Entrada comum: `base_version` e `action`.

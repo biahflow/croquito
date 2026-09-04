@@ -468,6 +468,53 @@ def test_refresh_carries_the_declared_chains_forward(tmp_path: Path) -> None:
         assert next_review.declared_chains_json == declared_chains
 
 
+def test_refresh_carries_the_element_declarations_forward(tmp_path: Path) -> None:
+    """A identidade de elemento é ato humano da revisão (F-051 T2); o refresh não a decide.
+
+    Mesmo risco da cadeia declarada, na coluna nova: esquecê-la em `insert_next_review_revision`
+    não falha em lugar nenhum — apaga em silêncio a identidade que uma pessoa declarou, e o
+    `element_ref` cunhado some sem ninguém ter revogado nada.
+    """
+    database, database_url, bundle, digest = _seed_v1(tmp_path)
+    element_declarations = [
+        {
+            "element_ref": "EL-001",
+            "label": "B",
+            "proposal_ids": [WIDTH_PROPOSAL_ID],
+            "status": "active",
+            "declared_by": "reviewer",
+            "declared_role": "engineer",
+            "declared_at": "2026-09-04T12:00:00+00:00",
+        }
+    ]
+    with database.sessions.begin() as session:
+        review = session.query(ReviewRevisionRecord).filter_by(job_id=str(JOB_ID)).one()
+        # A semente do worker nunca declara identidade: ato humano não nasce de pipeline.
+        assert review.element_declarations_json == []
+        review.element_declarations_json = element_declarations
+
+    refined_path = _write_json(
+        tmp_path / "refined.json", _refined_proposals(_proposals(digest=digest), "quality")
+    )
+    result = refresh_proposals(
+        RefreshInputs(
+            job_id=JOB_ID,
+            tenant_id=TENANT_ID,
+            proposals_path=refined_path,
+            image_path=bundle["image"],
+            operator_id="tenant-admin-02",
+        ),
+        _settings(database_url),
+    )
+
+    assert result.review_version_after == 2
+    with database.sessions() as session:
+        next_review = (
+            session.query(ReviewRevisionRecord).filter_by(job_id=str(JOB_ID), version=2).one()
+        )
+        assert next_review.element_declarations_json == element_declarations
+
+
 def test_refresh_refuses_a_second_run_of_the_same_refined_file(tmp_path: Path) -> None:
     database, database_url, bundle, digest = _seed_v1(tmp_path)
     refined = _refined_proposals(_proposals(digest=digest), "quality")
