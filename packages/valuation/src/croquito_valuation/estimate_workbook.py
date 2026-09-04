@@ -37,6 +37,12 @@ publicam o documento que a prefeitura recebe — a ordem é a do gabarito declar
 (inclusive as de quantidade zero) e a aba de memória de cálculo vai ao lado, renderizada
 pelo MESMO `workbook_writer.plan_calc_block` da medição. Quem não declara `estimate_grid`
 continua na rodada de hoje, byte a byte.
+
+O grupo é uma LINHA própria, com apenas o número, intercalada antes da primeira linha de
+cada grupo — não é coluna. O documento da prefeitura tem sete colunas
+(`ITEM | COD. | DESCRIÇÃO | UN | VALOR UNIT | QUANT | TOTAL`) e 21 linhas de grupo entre as
+433 de código; imprimir o grupo como oitava coluna faria o arquivo divergir do documento em
+21 lugares, cada um deles visível quando os dois são abertos lado a lado.
 """
 
 from __future__ import annotations
@@ -584,18 +590,25 @@ def _plan_grid_sheet(
         cells.append(_text(f"{grid.label_column}{row}", "header_label", label, bold=True))
         cells.append(_text(f"{grid.value_column}{row}", "header_value", value))
 
-    for column in columns.ordered:
+    for column in columns.printed:
         cells.append(
             _text(f"{column.letter}{grid.header_row}", "column_label", column.label, bold=True)
         )
 
     first_line_row = grid.header_row + 1
-    for index, grid_row in enumerate(grid.rows):
-        row = first_line_row + index
+    row = first_line_row
+    previous_group: str | None = None
+    for grid_row in grid.rows:
+        # O documento imprime o grupo como LINHA própria, com apenas o número, e nunca como
+        # coluna (pacote aprovado da F-043, revisões 2 e 3). Grupo que reaparece depois de
+        # outro imprime a linha de novo: a ordem impressa é a que o gabarito declara, e
+        # validar contiguidade seria o escritor decidindo sobre o documento do cliente.
+        if grid_row.group != previous_group:
+            cells.append(_text(f"{columns.item.letter}{row}", "group_row", grid_row.group))
+            row += 1
+        previous_group = grid_row.group
+
         item = grid_row.item
-        cells.append(
-            _text(f"{columns.group.letter}{row}", "line_group", grid_row.group, item_number=item)
-        )
         cells.append(_text(f"{columns.item.letter}{row}", "line_item", item, item_number=item))
         cells.append(
             _text(f"{columns.code.letter}{row}", "line_code", grid_row.code, item_number=item)
@@ -688,7 +701,13 @@ def _plan_grid_sheet(
                 )
             )
 
-    last_line_row = first_line_row + len(grid.rows) - 1
+        row += 1
+
+    # Última linha IMPRESSA — o cursor já passou dela. O intervalo do total começa na
+    # primeira linha impressa e inclui as linhas de grupo, que não têm célula na coluna do
+    # total e por isso não entram na soma: é assim que o documento do cliente soma
+    # (`G10:G463`), e o mini-avaliador da gramática ignora célula vazia do mesmo jeito.
+    last_line_row = row - 1
     total_col = columns.total.letter
     total_without_bdi_row = last_line_row + 2
     bdi_amount_row = total_without_bdi_row + 1
@@ -772,7 +791,10 @@ def _plan_grid_sheet(
         EstimatePlannedSheet(
             name=grid.sheet_name,
             cells=cells,
-            column_widths={column.letter: column.width for column in columns.ordered},
+            # Só as colunas impressas ganham largura: declarar largura para a coluna de
+            # grupo criaria, no arquivo entregue, uma coluna vazia que o documento da
+            # prefeitura não tem.
+            column_widths={column.letter: column.width for column in columns.printed},
         ),
         pinned,
     )

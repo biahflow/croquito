@@ -551,7 +551,14 @@ class EstimateTemplateRow(ValuationContractModel):
 
 
 class EstimateTemplateColumns(ValuationContractModel):
-    """As oito colunas da planilha orçamentária do gabarito, na ordem impressa."""
+    """As colunas da planilha orçamentária do gabarito, na ordem declarada.
+
+    SETE delas são impressas (`printed`); `group` NÃO é. O documento da prefeitura imprime
+    o grupo como linha própria, com apenas o número, intercalada entre as linhas de código
+    — não como oitava coluna. `group` continua existindo, exigindo letra distinta das
+    demais e sendo transportada pelo template porque cada `EstimateTemplateRow` declara a
+    que grupo pertence; o que ela não é é uma coluna do arquivo entregue.
+    """
 
     group: SheetColumn
     item: SheetColumn
@@ -564,7 +571,7 @@ class EstimateTemplateColumns(ValuationContractModel):
 
     @property
     def ordered(self) -> tuple[SheetColumn, ...]:
-        """Colunas na ordem impressa."""
+        """Todas as colunas declaradas, `group` inclusive — a base da unicidade de letra."""
         return (
             self.group,
             self.item,
@@ -575,6 +582,11 @@ class EstimateTemplateColumns(ValuationContractModel):
             self.unit_price,
             self.total,
         )
+
+    @property
+    def printed(self) -> tuple[SheetColumn, ...]:
+        """As sete colunas que o arquivo imprime; quem as posiciona é a letra de cada uma."""
+        return tuple(column for column in self.ordered if column is not self.group)
 
     @model_validator(mode="after")
     def validate_distinct_letters(self) -> EstimateTemplateColumns:

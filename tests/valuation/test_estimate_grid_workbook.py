@@ -63,6 +63,40 @@ _SCO_CODE = "AD04050060(/)"
 _EMOP_CODE = "EMOP.CE.001"
 """Código que o gabarito sintético imprime na linha 04.3 — a NONA linha dele."""
 
+_FIRST_PRINTED_ROW = 8
+"""`header_row=7` no gabarito sintético, então a primeira linha impressa é a 8."""
+
+_LAST_PRINTED_ROW = 20
+"""Dez linhas de código e três de grupo, a partir da 8."""
+
+
+def _printed_rows() -> list[tuple[int, str, str | None]]:
+    """A sequência que o arquivo deve imprimir: `(linha, valor do ITEM, código)`.
+
+    Linha de grupo tem só o número na coluna do ITEM e código `None`; linha de código traz
+    a numeração `GG.N` e o código. É a mesma conta do escritor, escrita de outro jeito no
+    teste de propósito — o oráculo forte é o documento real, conferido fora da suíte.
+    """
+    printed: list[tuple[int, str, str | None]] = []
+    row = _FIRST_PRINTED_ROW
+    previous_group: str | None = None
+    for grid_row in estimate_grid_rows():
+        if grid_row.group != previous_group:
+            printed.append((row, grid_row.group, None))
+            row += 1
+        previous_group = grid_row.group
+        printed.append((row, grid_row.item, grid_row.code))
+        row += 1
+    return printed
+
+
+def _row_of_code(code: str) -> int:
+    """Linha impressa de um código do gabarito sintético."""
+    for row, _, printed_code in _printed_rows():
+        if printed_code == code:
+            return row
+    raise AssertionError(f"código ausente do gabarito sintético: {code}")
+
 
 def _calc_sheet_with_named_operands(item_number: str, quantity: Decimal) -> CalcSheet:
     """Um bloco de dois operandos nomeados e uma dedução: 2,00 x 2,00 - dedução."""
@@ -182,8 +216,9 @@ def _write(tmp_path: Path, estimate: Estimate, template: WorkbookTemplate) -> Pa
 def test_the_printed_order_and_numbering_are_the_grid_s_not_the_estimate_s(
     tmp_path: Path,
 ) -> None:
-    """A linha da planilha é `header_row + 1 + índice no gabarito`, e a numeração `GG.N`
-    e as lacunas de grupo saem como o gabarito as declarou."""
+    """A ordem impressa é a do gabarito, e a numeração `GG.N` e as lacunas de grupo saem
+    como ele as declarou — agora com a LINHA de grupo intercalada, que desloca as linhas de
+    código pelo número de grupos abertos antes delas."""
     template = estimate_grid_template()
     grid = template.estimate_grid
     assert grid is not None
@@ -191,23 +226,89 @@ def test_the_printed_order_and_numbering_are_the_grid_s_not_the_estimate_s(
 
     cells = _cells(canonicalize_workbook(workbook_path, template), ESTIMATE_GRID_SHEET_NAME)
     columns = grid.columns
-    first_line_row = grid.header_row + 1
 
     printed = [
         (
-            str(cells[f"{columns.group.letter}{first_line_row + index}"]["value"]),
-            str(cells[f"{columns.item.letter}{first_line_row + index}"]["value"]),
-            str(cells[f"{columns.code.letter}{first_line_row + index}"]["value"]),
+            row,
+            str(cells[f"{columns.item.letter}{row}"]["value"]),
+            None
+            if f"{columns.code.letter}{row}" not in cells
+            else str(cells[f"{columns.code.letter}{row}"]["value"]),
         )
-        for index in range(len(grid.rows))
+        for row in range(_FIRST_PRINTED_ROW, _LAST_PRINTED_ROW + 1)
     ]
 
-    assert printed == [(row.group, row.item, row.code) for row in estimate_grid_rows()]
+    assert printed == _printed_rows()
+    # Treze linhas impressas: as dez do gabarito e as três de grupo abertas por elas.
+    assert len(printed) == len(grid.rows) + 3
     # A lacuna de grupo é o próprio gabarito não declarar linha do grupo 03.
-    assert sorted({group for group, _, _ in printed}) == ["01", "02", "04"]
+    assert [item for _, item, code in printed if code is None] == ["01", "02", "04"]
     # O orçamento tem duas linhas e elas caem nas posições do gabarito, não em 8 e 9.
-    assert cells[f"{columns.code.letter}13"]["value"] == _SCO_CODE
-    assert cells[f"{columns.code.letter}16"]["value"] == _EMOP_CODE
+    assert cells[f"{columns.code.letter}15"]["value"] == _SCO_CODE
+    assert cells[f"{columns.code.letter}19"]["value"] == _EMOP_CODE
+
+
+def test_the_group_is_a_row_with_only_the_number_and_never_a_column(tmp_path: Path) -> None:
+    """A forma aprovada (pacote da F-043, revisões 2 e 3): o grupo é uma LINHA própria, com
+    apenas o número, na coluna do item — e a coluna de grupo não é impressa em lugar
+    nenhum, porque o documento da prefeitura tem SETE colunas, não oito."""
+    template = estimate_grid_template()
+    grid = template.estimate_grid
+    assert grid is not None
+    workbook_path = _write(tmp_path, _build_estimate(), template)
+
+    cells = _cells(canonicalize_workbook(workbook_path, template), ESTIMATE_GRID_SHEET_NAME)
+    columns = grid.columns
+
+    # Uma linha de grupo é uma célula SÓ: o número na coluna do item, nada nas outras seis.
+    for row, group in ((8, "01"), (12, "02"), (16, "04")):
+        assert cells[f"{columns.item.letter}{row}"]["value"] == group
+        assert cells[f"{columns.item.letter}{row}"]["kind"] == "text"
+        for column in (columns.code, columns.description, columns.unit, columns.quantity):
+            assert f"{column.letter}{row}" not in cells
+        for column in (columns.unit_price, columns.total):
+            assert f"{column.letter}{row}" not in cells
+
+    # Nenhuma célula na coluna declarada como `group`, em linha alguma da faixa impressa.
+    group_column = columns.group.letter
+    # Só o bloco de identificação (título e os quatro rótulos), que mora na mesma letra.
+    assert sorted(ref for ref in cells if ref.startswith(group_column)) == [
+        f"{group_column}{row}" for row in (1, 2, 3, 4, 5)
+    ]
+
+    # O cabeçalho traz os SETE rótulos impressos, sem GRUPO.
+    header = [
+        str(cells[f"{column.letter}{grid.header_row}"]["value"]) for column in columns.printed
+    ]
+    assert header == ["ITEM", "CÓDIGO", "ESPECIFICAÇÃO", "UN", "QUANT", "VALOR UNIT", "TOTAL"]
+    assert f"{group_column}{grid.header_row}" not in cells
+    assert columns.group.label not in header
+
+
+def test_a_group_that_comes_back_after_another_prints_its_row_again(tmp_path: Path) -> None:
+    """A ordem impressa é a que o gabarito declara, e nada além dela ordena a planilha: um
+    grupo que reaparece depois de outro abre linha de grupo de novo. Validar contiguidade
+    seria o escritor decidindo sobre o documento do cliente."""
+    rows = list(estimate_grid_rows())
+    # 01, 02, 01, 04: o segundo bloco do grupo 01 vem DEPOIS do 02, como o gabarito
+    # declarou. As duas linhas do orçamento (02.3 e 04.3) continuam no gabarito, senão a
+    # recusa por código ausente entraria na frente e o teste mediria outra coisa.
+    scattered = [rows[0], rows[5], rows[1], rows[8]]
+    template = estimate_grid_template(rows=scattered)
+    grid = template.estimate_grid
+    assert grid is not None
+    workbook_path = _write(tmp_path, _build_estimate(), template)
+
+    cells = _cells(canonicalize_workbook(workbook_path, template), ESTIMATE_GRID_SHEET_NAME)
+    columns = grid.columns
+
+    printed = [
+        str(cells[f"{columns.item.letter}{row}"]["value"])
+        for row in range(_FIRST_PRINTED_ROW, _FIRST_PRINTED_ROW + 8)
+    ]
+
+    assert printed == ["01", "01.1", "02", "02.3", "01", "01.2", "04", "04.3"]
+    assert audit_estimate_grid_workbook(workbook_path, _build_estimate(), template).status == "ok"
 
 
 def test_a_row_the_estimate_does_not_fill_is_printed_zeroed_instead_of_absent(
@@ -222,20 +323,21 @@ def test_a_row_the_estimate_does_not_fill_is_printed_zeroed_instead_of_absent(
     cells = _cells(canonicalize_workbook(workbook_path, template), ESTIMATE_GRID_SHEET_NAME)
     columns = grid.columns
 
-    # 01.1 (linha 8) não está no orçamento e tem preço declarado no gabarito.
-    assert cells[f"{columns.quantity.letter}8"]["value"] == "0.00"
-    assert cells[f"{columns.unit_price.letter}8"]["value"] == "612.50"
-    assert cells[f"{columns.total.letter}8"]["value"] == "0.00"
-    # 01.3 (linha 10) não está no orçamento e o gabarito não declara preço: a célula de
+    # 01.1 (linha 9, depois da linha de grupo) não está no orçamento e tem preço declarado
+    # no gabarito.
+    assert cells[f"{columns.quantity.letter}9"]["value"] == "0.00"
+    assert cells[f"{columns.unit_price.letter}9"]["value"] == "612.50"
+    assert cells[f"{columns.total.letter}9"]["value"] == "0.00"
+    # 01.3 (linha 11) não está no orçamento e o gabarito não declara preço: a célula de
     # preço não nasce, e o total é literal — fórmula sobre célula vazia derrubaria a
     # auditoria inteira (`FORMULA_REFERENCE_EMPTY`) em vez de imprimir zero.
-    assert f"{columns.unit_price.letter}10" not in cells
-    assert cells[f"{columns.quantity.letter}10"]["value"] == "0.00"
-    assert cells[f"{columns.total.letter}10"]["kind"] == "number"
-    assert cells[f"{columns.total.letter}10"]["value"] == "0.00"
+    assert f"{columns.unit_price.letter}11" not in cells
+    assert cells[f"{columns.quantity.letter}11"]["value"] == "0.00"
+    assert cells[f"{columns.total.letter}11"]["kind"] == "number"
+    assert cells[f"{columns.total.letter}11"]["value"] == "0.00"
     # Nenhuma linha do gabarito falta.
-    for index in range(len(grid.rows)):
-        assert f"{columns.total.letter}{grid.header_row + 1 + index}" in cells
+    for row, _, code in _printed_rows():
+        assert (f"{columns.total.letter}{row}" in cells) is (code is not None)
 
 
 def test_the_estimate_price_wins_over_the_price_declared_in_the_grid(tmp_path: Path) -> None:
@@ -251,8 +353,9 @@ def test_the_estimate_price_wins_over_the_price_declared_in_the_grid(tmp_path: P
 
     cells = _cells(canonicalize_workbook(workbook_path, template), ESTIMATE_GRID_SHEET_NAME)
 
-    assert cells[f"{grid.columns.code.letter}13"]["value"] == _SCO_CODE
-    assert cells[f"{grid.columns.unit_price.letter}13"]["value"] == "11.01"
+    sco_row = _row_of_code(_SCO_CODE)
+    assert cells[f"{grid.columns.code.letter}{sco_row}"]["value"] == _SCO_CODE
+    assert cells[f"{grid.columns.unit_price.letter}{sco_row}"]["value"] == "11.01"
     assert audit_estimate_grid_workbook(workbook_path, _build_estimate(), template).status == "ok"
 
 
@@ -283,13 +386,17 @@ def test_the_bdi_amount_is_still_the_difference_of_the_truncated_totals(
     cells = _cells(canonicalize_workbook(workbook_path, template), ESTIMATE_GRID_SHEET_NAME)
     total_col = grid.columns.total.letter
 
-    # dez linhas de gabarito: header_row=7 -> linhas 8..17; bloco de totais em 19/20/21.
-    assert cells[f"{total_col}19"]["value"] == "65.06"
-    assert cells[f"{total_col}20"]["formula"] == f"={total_col}21-{total_col}19"
-    assert cells[f"{total_col}20"]["value"] == "6.50"
-    assert cells[f"{total_col}21"]["formula"] == f"=SUM({total_col}8:{total_col}17)"
-    assert cells[f"{total_col}21"]["value"] == "71.56"
+    # dez linhas de gabarito e três de grupo: header_row=7 -> linhas 8..20; bloco de totais
+    # em 22/23/24. O intervalo do SUM inclui as linhas de grupo, que não têm célula na
+    # coluna do total e por isso não somam nada — é o que o documento do cliente faz.
+    assert cells[f"{total_col}22"]["value"] == "65.06"
+    assert cells[f"{total_col}23"]["formula"] == f"={total_col}24-{total_col}22"
+    assert cells[f"{total_col}23"]["value"] == "6.50"
+    assert cells[f"{total_col}24"]["formula"] == f"=SUM({total_col}8:{total_col}20)"
+    assert cells[f"{total_col}24"]["value"] == "71.56"
     assert estimate.total_amount - estimate.total_amount_without_bdi == Decimal("6.50")
+    for group_row in (8, 12, 16):
+        assert f"{total_col}{group_row}" not in cells
 
 
 def test_a_code_outside_the_grid_is_refused_by_name_with_the_disk_untouched(
@@ -391,7 +498,7 @@ def test_the_happy_path_audits_clean_on_both_sheets(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("sheet_name", "ref"),
-    [(ESTIMATE_GRID_SHEET_NAME, "G13"), (ESTIMATE_GRID_MEMORY_SHEET_NAME, "C7")],
+    [(ESTIMATE_GRID_SHEET_NAME, "G15"), (ESTIMATE_GRID_MEMORY_SHEET_NAME, "C7")],
 )
 def test_a_tampered_cell_makes_the_audit_divergent(
     tmp_path: Path, sheet_name: str, ref: str
