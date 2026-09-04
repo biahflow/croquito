@@ -32,6 +32,7 @@ import {
   contributionKey,
   disassembleCalcMatrix,
   type CalcContributionDraft,
+  type CalcMatrix,
 } from "./matrix";
 import { siteSetupApplyBody, siteSetupPreviewBody } from "./requests";
 
@@ -520,7 +521,10 @@ describe("da aplicação para a matriz", () => {
     const contribuicoes = matriz?.services.flatMap((service) => service.contributions);
 
     expect(contribuicoes?.every((c) => c.source_item_id === null)).toBe(true);
+    // A IDENTIDADE do acervo viaja junto com a versão desde a Emenda 1 do ADR-0060: é ela
+    // que o merge do apply usa para reconhecer as parcelas do próprio acervo.
     expect(contribuicoes?.[0]?.kit_origin).toEqual({
+      kit_id: KIT.kit_id,
       kit_version: "sco-site-setup-v1",
       parcel_id: "p1",
     });
@@ -593,22 +597,80 @@ describe("reaplicação", () => {
   });
 
   /**
-   * A parcela HIDRATADA não sabe de qual acervo nasceu — a matriz gravada leva
-   * `{kit_version, parcel_id}` e nada mais. Sem alcançá-la pela lista de `parcel_id` da
-   * resposta, reaplicar depois de recarregar deixaria de pé, em silêncio, a parcela que a
-   * nova aplicação removeu.
+   * A matriz como ela era gravada ANTES da Emenda 1: proveniência sem `kit_id`.
+   *
+   * Montada pelo próprio `assembleCalcMatrix`, a partir de rascunhos sem identidade — que é
+   * justamente o caso em que ele omite a chave —, e não escrita à mão: a forma legada é a que
+   * a tela produzia, e reproduzi-la pelo caminho real impede este teste de envelhecer
+   * afirmando que ela era outra coisa.
    */
-  it("a reaplicação alcança a parcela hidratada, que não sabe o acervo de origem", () => {
-    const hidratadas = Object.fromEntries(
+  function matrizAnteriorAEmenda(): CalcMatrix {
+    const semIdentidade = contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows).map((draft) => ({
+      ...draft,
+      kitOrigin: {
+        kitId: "",
+        kitName: "",
+        kitVersion: PREVIA.kit_version,
+        parcelId: draft.itemId,
+      },
+    }));
+    const matriz = assembleCalcMatrix(semIdentidade);
+    if (matriz === null) {
+      throw new Error("fixture inválida: a matriz anterior à emenda não pode ser vazia");
+    }
+    const noFio = matriz.services.flatMap((service) => service.contributions);
+    expect(noFio.every((c) => c.kit_origin?.kit_id === undefined)).toBe(true);
+    return matriz;
+  }
+
+  /** As parcelas relidas da matriz gravada, como a tela as tem depois de um recarregamento. */
+  function hidratadasDoAcervo(): Record<string, CalcContributionDraft> {
+    return Object.fromEntries(
       disassembleCalcMatrix(
         assembleCalcMatrix(contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows)),
       ).map((draft) => [contributionKey(draft.itemId, draft.code), draft]),
     );
+  }
+
+  /**
+   * Desde a Emenda 1 do ADR-0060 a parcela HIDRATADA sabe de qual acervo nasceu: o fio leva
+   * `kit_id`. A reaplicação a alcança pela identidade, sem depender de lista nenhuma — e é
+   * por isso que a lista de `parcel_id` vai VAZIA aqui.
+   */
+  it("a reaplicação alcança a parcela hidratada pela identidade que o fio carrega", () => {
     const mao = autoradaAMao();
-    const atual = { ...hidratadas, [contributionKey(mao.itemId, mao.code)]: mao };
+    const atual = { ...hidratadasDoAcervo(), [contributionKey(mao.itemId, mao.code)]: mao };
+    expect(atual[contributionKey("p1", "AC01100010")]?.kitOrigin?.kitId).toBe(KIT.kit_id);
+
+    // Reaplica só a primeira, e sem o eco de `parcel_id`: a identidade basta.
+    const proximo = substituirParcelasDoAcervo(
+      atual,
+      KIT.kit_id,
+      contribuicoesDoAcervo(KIT, PREVIA, [PREVIA.rows[0]]),
+    );
+
+    expect(proximo[contributionKey("p1", "AC01100010")]?.kitOrigin?.kitId).toBe(
+      KIT.kit_id,
+    );
+    expect(proximo[contributionKey("p2", "AC01100020")]).toBeUndefined();
+    expect(proximo[contributionKey("p3", "AC02200030")]).toBeUndefined();
+    // A autorada à mão continua intocada, como em toda reaplicação.
+    expect(proximo[contributionKey("entulho-extra", "AC09900001")]).toEqual(mao);
+  });
+
+  /**
+   * A matriz gravada ANTES da emenda não tem identidade nenhuma, e a parcela relida dela fica
+   * com `kitId` vazio. É para ela que a lista de `parcel_id` da resposta continua existindo:
+   * sem alcançá-la, reaplicar depois de recarregar deixaria de pé, em silêncio, a parcela que
+   * a nova aplicação removeu.
+   */
+  it("a parcela anterior à emenda, sem identidade, é alcançada pela lista de parcel_id", () => {
+    const anterior = disassembleCalcMatrix(matrizAnteriorAEmenda());
+    const atual = Object.fromEntries(
+      anterior.map((draft) => [contributionKey(draft.itemId, draft.code), draft]),
+    );
     expect(atual[contributionKey("p1", "AC01100010")]?.kitOrigin?.kitId).toBe("");
 
-    // Reaplica só a primeira; a resposta enumera as três parcelas do acervo.
     const proximo = substituirParcelasDoAcervo(
       atual,
       KIT.kit_id,
@@ -620,9 +682,74 @@ describe("reaplicação", () => {
       KIT.kit_id,
     );
     expect(proximo[contributionKey("p2", "AC01100020")]).toBeUndefined();
-    expect(proximo[contributionKey("p3", "AC02200030")]).toBeUndefined();
-    // A autorada à mão continua intocada, como em toda reaplicação.
-    expect(proximo[contributionKey("entulho-extra", "AC09900001")]).toEqual(mao);
+  });
+
+  /**
+   * A lista de `parcel_id` NÃO varre a parcela que tem identidade de OUTRO acervo, mesmo
+   * quando o `parcel_id` colide — e ele pode colidir: o id é derivado de
+   * `{kit_version, índice, código, rótulo}` e não inclui o acervo (`_parcel_id`,
+   * `site_setup_kits.py`), então dois acervos de mesma versão produzem os mesmos ids.
+   * Varrê-la seria refazer, na tela, a confusão que a Emenda 1 tirou do servidor.
+   */
+  it("a lista de parcel_id não alcança a parcela de OUTRO acervo que colide de id", () => {
+    const deOutroAcervo = {
+      ...contribuicoesDoAcervo(KIT, PREVIA, [PREVIA.rows[0]])[0],
+      kitOrigin: {
+        kitId: "kit-canteiro-outra-linhagem",
+        kitName: "Canteiro — outra linhagem",
+        // A MESMA versão do acervo aplicado: é a coincidência que a emenda tornou esperada.
+        kitVersion: PREVIA.kit_version,
+        parcelId: PREVIA.rows[0].parcel_id,
+      },
+    };
+    const atual = {
+      [contributionKey(deOutroAcervo.itemId, deOutroAcervo.code)]: deOutroAcervo,
+    };
+
+    const proximo = substituirParcelasDoAcervo(
+      atual,
+      KIT.kit_id,
+      [],
+      PREVIA.rows.map((row) => row.parcel_id),
+    );
+
+    expect(proximo[contributionKey("p1", "AC01100010")]).toEqual(deOutroAcervo);
+  });
+
+  /**
+   * O ciclo inteiro que a Emenda 1 conserta, no nível que esta suíte alcança: aplicar, montar
+   * a matriz que o build envia (`assembleCalcMatrix`, a mesma chamada de `montar`),
+   * recarregar (`disassembleCalcMatrix`) e reaplicar.
+   *
+   * Enquanto o fio não levava `kit_id`, o build gravava a matriz SEM identidade e a
+   * reaplicação seguinte não reconhecia as parcelas que ela mesma tinha materializado: elas
+   * duplicavam. Aqui a contagem não se move, e cada parcela continua citando o acervo dela.
+   */
+  it("o ciclo aplicar → montar → recarregar → reaplicar não duplica as parcelas", () => {
+    const aplicadas = contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows);
+    const corpoDoBuild = assembleCalcMatrix(aplicadas);
+
+    // O que o build POSTA carrega a identidade em toda parcela de acervo.
+    const noFio = corpoDoBuild?.services.flatMap((service) => service.contributions) ?? [];
+    expect(noFio).toHaveLength(3);
+    expect(noFio.every((c) => c.kit_origin?.kit_id === KIT.kit_id)).toBe(true);
+
+    const recarregadas = Object.fromEntries(
+      disassembleCalcMatrix(corpoDoBuild).map((draft) => [
+        contributionKey(draft.itemId, draft.code),
+        draft,
+      ]),
+    );
+    const reaplicadas = substituirParcelasDoAcervo(
+      recarregadas,
+      KIT.kit_id,
+      contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows),
+    );
+
+    expect(Object.keys(reaplicadas)).toHaveLength(3);
+    expect(
+      Object.values(reaplicadas).every((d) => d.kitOrigin?.kitId === KIT.kit_id),
+    ).toBe(true);
   });
 });
 

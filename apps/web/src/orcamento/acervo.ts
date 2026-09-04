@@ -532,12 +532,19 @@ function paraOperandDraft(operand: SiteSetupOperand): OperandDraft {
  *
  * `parcelasDoAcervo` são os `parcel_id` que a aplicação tocou: as linhas que nasceram mais
  * as que a resposta ecoou como excluídas — a prévia e a aplicação não devolvem linha para
- * parcela excluída, e sem o eco a removida ficaria de fora. Ele existe por causa da
- * hidratação: a matriz
- * gravada leva `{kit_version, parcel_id}` e NÃO leva a identidade do acervo, então a
- * parcela reconstruída da leitura tem `kitId` vazio e o filtro por acervo não a alcança.
- * Sem esta lista, reaplicar depois de recarregar deixaria de pé, em silêncio, a parcela que
- * a nova aplicação removeu.
+ * parcela excluída, e sem o eco a removida ficaria de fora. Ele nasceu por causa da
+ * hidratação: a matriz gravada não levava a identidade do acervo, a parcela reconstruída da
+ * leitura ficava com `kitId` vazio, e o filtro por acervo não a alcançava — reaplicar depois
+ * de recarregar deixaria de pé, em silêncio, a parcela que a nova aplicação removeu.
+ *
+ * Com a Emenda 1 do ADR-0060 o fio passou a levar `kit_id`, e a parcela relida volta com a
+ * identidade verdadeira: o filtro a alcança sozinho. A lista continua, mas **só para a
+ * parcela sem identidade** (`kitId === ""`, gravada antes da emenda). Aplicá-la também às
+ * que TÊM identidade seria um erro que a emenda acabou de tornar alcançável: `parcel_id` é
+ * derivado de `{kit_version, índice, código, rótulo}` e não inclui o acervo
+ * (`_parcel_id`, `site_setup_kits.py`), então dois acervos de mesma versão podem colidir de
+ * `parcel_id` — e a lista varreria a parcela do OUTRO acervo, que é exatamente o que a
+ * emenda foi escrita para impedir.
  */
 export function substituirParcelasDoAcervo(
   contribuicoes: Readonly<Record<string, CalcContributionDraft>>,
@@ -550,7 +557,8 @@ export function substituirParcelasDoAcervo(
     const origem = draft.kitOrigin;
     const doMesmoAcervo =
       origem !== undefined &&
-      (origem.kitId === kitId || parcelasDoAcervo.includes(origem.parcelId));
+      (origem.kitId === kitId ||
+        (origem.kitId === "" && parcelasDoAcervo.includes(origem.parcelId)));
     if (!doMesmoAcervo) {
       proximo[chave] = draft;
     }

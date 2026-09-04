@@ -96,9 +96,11 @@ export type ParcelaAutoravel = {
   /**
    * A versão do acervo de onde a parcela nasceu, ou `null` quando ela foi autorada à mão.
    *
-   * A matriz gravada leva `{kit_version, parcel_id}` e **não** leva a identidade do acervo,
-   * então é a versão — e só ela — que a tela pode afirmar sobre a origem, exatamente como no
-   * selo do painel de canteiro.
+   * A matriz gravada também leva a identidade (`kit_origin.kit_id`) desde a Emenda 1 do
+   * ADR-0060, mas ela não entra aqui de propósito: esta lista existe para a orçamentista
+   * conferir O QUE virou parâmetro antes de guardar o acervo, e o que ela lê nessa
+   * conferência é o rótulo de origem — a mesma versão que o selo do painel de canteiro
+   * mostra. Um UUID na tela não ajuda ninguém a decidir binding.
    */
   kitVersion: string | null;
   operandos: OperandoAutoravel[];
