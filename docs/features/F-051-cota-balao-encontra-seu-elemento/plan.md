@@ -76,6 +76,16 @@ Ordem: `(T1 ∥ T2) → (T3 ∥ T5) → T4 → T6 → T7`.
 tarefa, paralelismo classificado (um risco registrado com resolução), caminho crítico e
 integração declarados. Desvios após o congelamento entram como `PLAN_DEVIATION` aqui.
 
+### Desvios registrados
+
+- **`PLAN_DEVIATION` (T2 → T6, 2026-09-04).** Planejado: a T6 consumiria os tipos das
+  APIs novas. Executado: a T2 preservou `GET /review` **byte a byte** (critério 6) e por
+  isso não expôs as declarações na leitura — elas saem inteiras só nas respostas dos três
+  atos. Impacto: quem carrega a tela do zero não tem por onde ler as identidades
+  declaradas. Resolução: a **T6 ganha como escopo explícito a superfície de leitura**
+  (rota `GET` própria ou campo aditivo na resposta existente — decisão lá, honrando o
+  teste de controle da T2).
+
 ## Achados de planejamento
 
 1. **Unknown 2 do contrato, resolvido**: a `ElementDeclaration` persiste como coluna JSON
