@@ -420,13 +420,20 @@ def test_export_gate_does_not_change_behaviour_because_of_the_label() -> None:
 # variava a cada corrida, antes desta mudança (`$TDCREATE`, `$FINGERPRINTGUID`,
 # `generated_at`, `dxf_sha256`) — por isso não entram na âncora byte a byte; o resto do
 # conteúdo de `auditoria.json` entra, com esses campos removidos.
+#
+# `preview.png` NÃO tem âncora byte a byte de propósito (issue #163): o PNG é RENDERIZADO,
+# e a rasterização de fonte muda entre plataformas — a âncora original, capturada em macOS,
+# nunca bateu no Ubuntu do runner e manteve a quality da main vermelha por seis dias sem
+# que o hash divergente significasse regressão nenhuma. O preview é verificado por
+# determinismo dentro da corrida (duas execuções → bytes idênticos) e por estrutura; a
+# não-regressão byte a byte mora nos artefatos determinísticos acima.
 _QUANTITIES_SHA256_BEFORE_F047_T1 = (
     "5c357a521777cd5b48b569f343c1ae14fb25a49803e0e6caf92733e1694969fb"
 )
 _HYPOTHESES_SHA256_BEFORE_F047_T1 = (
     "9dd5a891a61c2139d0d28614a9fe66322384c3536feb6446f53de720e392f6d1"
 )
-_PREVIEW_SHA256_BEFORE_F047_T1 = "ec2d37c1dcbfb36f665331a283c0b055fb722a8a9d7a73ea9514ae158cdaa8c8"
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _AUDIT_BEFORE_F047_T1 = {
     "checks": {
         "entity_count_matches": True,
@@ -457,12 +464,14 @@ def test_scene_without_element_ref_produces_the_same_export_package_as_before(
 ) -> None:
     """Não-regressão (critério mais importante da T1): a fixture sintética não declara
     `element_ref`, e o pacote exportado tem que sair idêntico ao que saía antes deste campo
-    existir. `quantitativos.csv`, `hipoteses.json` e `preview.png` são determinísticos e
+    existir. `quantitativos.csv` e `hipoteses.json` são determinísticos entre plataformas e
     comparados byte a byte contra a âncora capturada antes da mudança; `auditoria.json` é
     comparado igual, com os dois campos que já variavam por corrida (ver comentário acima)
-    excluídos dos dois lados.
+    excluídos dos dois lados. `preview.png` é render — determinístico dentro da corrida,
+    não entre plataformas (issue #163): é verificado por estrutura e por duas execuções
+    idênticas, nunca por âncora.
     """
-    result = run_synthetic_pipeline(tmp_path)
+    result = run_synthetic_pipeline(tmp_path / "primeira")
 
     with ZipFile(result.package_path) as archive:
         assert (
@@ -473,11 +482,16 @@ def test_scene_without_element_ref_produces_the_same_export_package_as_before(
             hashlib.sha256(archive.read("hipoteses.json")).hexdigest()
             == _HYPOTHESES_SHA256_BEFORE_F047_T1
         )
-        assert (
-            hashlib.sha256(archive.read("preview.png")).hexdigest()
-            == _PREVIEW_SHA256_BEFORE_F047_T1
-        )
+        preview = archive.read("preview.png")
+        assert preview.startswith(_PNG_SIGNATURE)
+        assert len(preview) > 1024, "preview vazio ou trivial não é um render da cena"
         auditoria = json.loads(archive.read("auditoria.json"))
         auditoria.pop("generated_at")
         auditoria.pop("dxf_sha256")
         assert auditoria == _AUDIT_BEFORE_F047_T1
+
+    segunda = run_synthetic_pipeline(tmp_path / "segunda")
+    with ZipFile(segunda.package_path) as archive:
+        assert archive.read("preview.png") == preview, (
+            "o render do preview deixou de ser determinístico dentro da mesma plataforma"
+        )
