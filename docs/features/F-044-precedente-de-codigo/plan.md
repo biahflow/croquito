@@ -25,8 +25,27 @@ pacote de códigos idêntico ou contido.
 | T1 | [Medir a repetição de rótulo entre praças](tasks/T1-medir-a-repeticao.md) | **Entregue** |
 | T2 | [O índice de precedentes, com as duas fontes](tasks/T2-indice-e-semeadura.md) | **Entregue** |
 | T3a | [Precedente no payload da shortlist e o aceite do pacote (API)](tasks/T3a-precedente-na-shortlist-api.md) | **Entregue** |
-| T3b | [Precedente no topo da shortlist (tela)](tasks/T3b-precedente-na-shortlist-tela.md) | **Entregue** |
+| T3b | [Precedente no topo da shortlist (tela)](tasks/T3b-precedente-na-shortlist-tela.md) | **Entregue** — critério 3 reprovado pela evidência de navegador de 2026-09-04 e **cumprido no mesmo dia** (ver abaixo) |
 | T3c | [A contagem de praças por código, à vista (tela)](tasks/T3c-contagem-por-codigo.md) | **Entregue** — sob a revisão 2 do pacote de design, aprovada em 2026-08-28 |
+
+## O contrato escrito na task não era o contrato da rota (2026-09-04)
+
+A evidência de navegador da T3b/T3c achou o que nenhuma suíte tinha achado: **o aceite em lote
+nunca gravou**. O corpo saía sem `catalog_sha256`, a rota o recusava com `422`, e as duas
+metades passavam isoladas — a da rota porque o teste dela manda o campo, a da tela porque o
+teste dela afirmava o corpo sem ele.
+
+A origem é anterior às duas: o "Contrato de API" fixado na
+[T3b](tasks/T3b-precedente-na-shortlist-tela.md) (e espelhado na
+[T3a](tasks/T3a-precedente-na-shortlist-api.md)) **omitia o campo** no aceite de lote, embora a
+rota sempre o exigisse em toda confirmação e o
+[API Contract](../../architecture/API_CONTRACT.md) já a acompanhasse. A arbitragem foi pelo
+contrato da rota; o reparo é de tela, e a re-verificação de navegador do mesmo dia provou o
+`200`, a revisão única e os três pares gravados. O critério 3 da T3b está cumprido por inteiro.
+
+A lição que fica para as próximas tasks: um contrato de API transcrito à mão no documento da
+task é uma **terceira** cópia, ao lado da rota e do `API_CONTRACT.md`, e foi a cópia que
+divergiu. Quando as três existirem, a rota é a autoridade e a task cita, não transcreve.
 
 ## A semeadura entrou no escopo, e é ela que tira o ganho da espera
 

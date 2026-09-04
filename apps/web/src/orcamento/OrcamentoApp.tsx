@@ -72,6 +72,7 @@ import {
   isForbidden,
   isSelfApprovalForbidden,
   recusaDaAutoriaDeAcervo,
+  recusaDaDecisaoDeCodigo,
   recusaDeMutacao,
   recusaDoAcervo,
   SELF_APPROVAL_FORBIDDEN_CODE,
@@ -258,6 +259,7 @@ import {
   PRECEDENTE_OBSERVACAO,
   PRECEDENTE_REPETIDO_NOS_DOIS,
   PRECEDENTE_SELO_INEDITO,
+  PRECEDENTE_SEM_FONTE_UNICA,
   PRECEDENTE_TITULO,
 } from "./labels";
 import {
@@ -973,6 +975,10 @@ export function SeloDePrecedenteDoItem({
  * O bloco não confirma nada: o botão põe o pacote à vista, e quem grava é a confirmação.
  * A distinção dele não é só cor — cabeçalho escrito com a contagem de praças, borda
  * própria e as duas notas em texto.
+ *
+ * `fonte === null` é o pacote sem fonte de preço convergente, e ali o bloco existe SEM o
+ * botão de aceitar: o pedido em lote cita uma fonte só, e oferecer o ato sem ela seria um
+ * botão que o servidor recusaria sempre.
  */
 export function BlocoDePrecedente({
   precedente,
@@ -1065,17 +1071,25 @@ export function BlocoDePrecedente({
           )}
         </p>
       )}
-      <div className="acoes-linha">
-        <button
-          type="button"
-          className="botao-precedente"
-          onClick={onAceitar}
-          disabled={submitting}
-        >
-          {fraseAceitarPacote(precedente.codes.length)}
-        </button>
-        <span className="selo selo-precedente">{PRECEDENTE_OBSERVACAO}</span>
-      </div>
+      {/* O aceite em lote cita UMA fonte de preço (`catalog_sha256`), e `fonte === null` é o
+          pacote que atravessa duas tabelas: não há fonte a citar, e o servidor recusaria o
+          pedido sempre. O botão sai — AUSENTE, não desabilitado, como o resto da jornada
+          trata controle inexercível —, o bloco fica inteiro, e a saída vai escrita. */}
+      {fonte === null ? (
+        <p className="aviso-precedente-sem-fonte">{PRECEDENTE_SEM_FONTE_UNICA}</p>
+      ) : (
+        <div className="acoes-linha">
+          <button
+            type="button"
+            className="botao-precedente"
+            onClick={onAceitar}
+            disabled={submitting}
+          >
+            {fraseAceitarPacote(precedente.codes.length)}
+          </button>
+          <span className="selo selo-precedente">{PRECEDENTE_OBSERVACAO}</span>
+        </div>
+      )}
       <p className="aviso-precedente">{PRECEDENTE_REPETIDO_NOS_DOIS}</p>
     </section>
   );
@@ -4670,6 +4684,25 @@ export function OrcamentoApp({
     setAlertMessage(recusa.conflito ? null : recusa.mensagem);
   }, []);
 
+  /**
+   * Envelope da DECISÃO DE CÓDIGO — a confirmação de um código e o aceite do pacote do
+   * precedente, que são a mesma rota.
+   *
+   * Ele existe porque a recusa mais provável deste ato é a de CONTRATO, e ela é a única sem
+   * código estável: até 2026-09-04 ela chegava à tela como "Falha na API (422).", sem o
+   * motivo que o servidor tinha escrito. O `409` e o `403` continuam tratados como em toda
+   * mutação; a auditoria de planilha não é desfecho desta rota e não aparece aqui.
+   */
+  const registrarRecusaDaDecisaoDeCodigo = useCallback((error: unknown) => {
+    if (isForbidden(error)) {
+      setSemAcesso(error instanceof Error ? error.message : null);
+      return;
+    }
+    const recusa = recusaDaDecisaoDeCodigo(error);
+    setRevisionConflict(recusa.conflito);
+    setAlertMessage(recusa.conflito ? null : recusa.mensagem);
+  }, []);
+
   const criarOrcamento = async () => {
     const token = tokenDaSessao();
     if (token === null) {
@@ -5081,7 +5114,7 @@ export function OrcamentoApp({
       );
       await carregarEstado();
     } catch (error) {
-      registrarRecusa(error);
+      registrarRecusaDaDecisaoDeCodigo(error);
     } finally {
       setSubmitting(false);
     }
@@ -5133,7 +5166,7 @@ export function OrcamentoApp({
     } catch (error) {
       // Recusa preserva a lista à vista: o lote é atômico, nada foi gravado, e apagar a
       // confirmação obrigaria a reabrir o pacote para tentar de novo.
-      registrarRecusa(error);
+      registrarRecusaDaDecisaoDeCodigo(error);
     } finally {
       setSubmitting(false);
     }
@@ -5908,6 +5941,17 @@ export function OrcamentoApp({
   );
   const candidatos = blocos.candidatos;
   const precedenteDoItemAberto = blocos.precedente;
+  /**
+   * A fonte de preço do bloco: a que o cabeçalho nomeia E a que o aceite em lote cita.
+   *
+   * Uma leitura só para os dois usos de propósito — se o selo do cabeçalho e o
+   * `catalog_sha256` do pedido pudessem divergir, a tela mostraria uma tabela e gravaria
+   * contra outra. `null` é o pacote que atravessa duas tabelas: ali não há ato em lote.
+   */
+  const fonteDoPrecedenteAberto =
+    precedenteDoItemAberto === null
+      ? null
+      : fonteDoPrecedente(precedenteDoItemAberto, cascade);
   /**
    * O selo de cada elemento pendente. `Map` vazio numa rodada sem precedente nenhum: ali a
    * lista é a de hoje, sem selo em item nenhum.
@@ -7078,11 +7122,7 @@ export function OrcamentoApp({
                       ou com precedente de outra fonte de preço, nada é renderizado aqui. */}
                   <BlocoDePrecedente
                     precedente={precedenteDoItemAberto}
-                    fonte={
-                      precedenteDoItemAberto === null
-                        ? null
-                        : fonteDoPrecedente(precedenteDoItemAberto, cascade)
-                    }
+                    fonte={fonteDoPrecedenteAberto}
                     submitting={submitting}
                     onAceitar={() =>
                       precedenteDoItemAberto === null
@@ -7091,6 +7131,10 @@ export function OrcamentoApp({
                             abrirConfirmacao(
                               precedenteDoItemAberto,
                               itemPendente.label,
+                              // A MESMA fonte que o cabeçalho nomeia: o pedido cita o que
+                              // está escrito na tela, e `null` não abre confirmação —
+                              // embora o botão que chega aqui já não exista nesse caso.
+                              fonteDoPrecedenteAberto,
                             ),
                           )
                     }

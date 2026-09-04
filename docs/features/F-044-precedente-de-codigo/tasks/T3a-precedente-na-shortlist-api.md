@@ -62,11 +62,20 @@ decisão de hoje, **um lote de códigos para o mesmo item**:
 
 ```json
 {"base_version": 12, "item_id": "ti_...", "action": "confirm",
- "codes": ["BP09100050(B)", "ET39050109(/)"]}
+ "codes": ["BP09100050(B)", "ET39050109(/)"],
+ "catalog_sha256": "..."}
 ```
+
+> **Correção de 2026-09-04.** O corpo escrito aqui **omitia `catalog_sha256`**, e a
+> [T3b](T3b-precedente-na-shortlist-tela.md) copiou a omissão. A rota, implementada, manteve a
+> exigência da fonte em **toda** confirmação — que é o certo, e é o que o
+> [API Contract](../../../architecture/API_CONTRACT.md) diz —, então o aceite em lote da tela
+> voltava `422` e nada gravava. Ninguém atravessou a fronteira até a evidência de navegador.
 
 - `codes` é **mutuamente exclusivo** com `code`; os dois juntos, ou nenhum dos dois numa
   confirmação, é recusa de fronteira (`422`), no molde das validações que a rota já tem.
+- `catalog_sha256` é **obrigatório na confirmação**, lote incluído: os N códigos citam a MESMA
+  fonte, e sem citação a rota recusa (`422`). Ele não é exclusivo com nada.
 - `codes` só vale para `action: "confirm"`. Com `reject`, é recusa.
 - Os N códigos entram numa **revisão só**, pelo `CodeAssignmentBatch` que o domínio já tem
   (`assignment.py:1008-1020`) — **não** faça N chamadas internas nem N revisões.

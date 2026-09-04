@@ -1226,6 +1226,23 @@ export function fraseParametrosFaltantes(nomes: readonly string[]): string {
   return `${RECUSA_PARAMETRO_FALTANTE} Falta declarar ${rotulo}: ${listarPorExtenso(nomes)}.`;
 }
 
+/**
+ * A recusa de CONTRATO da decisão de código, com o motivo que o servidor nomeou.
+ *
+ * A validação de esquema do Pydantic não tem código estável (ver `CONTRACT_ERRORS_KEY` em
+ * `../api`), então não há tabela a consultar: o que se pode fazer é dizer que a recusa foi
+ * do contrato e repetir o motivo dela, em vez de mostrar só o status. A frase base declara o
+ * efeito primeiro — nada foi gravado —, como as recusas do acervo declaram.
+ *
+ * Sem motivo legível sobra a frase base, nunca um motivo inventado.
+ */
+export function fraseRecusaDeContrato(motivos: readonly string[]): string {
+  const base = "A decisão não foi gravada: o servidor recusou o formato do pedido.";
+  return motivos.length === 0
+    ? base
+    : `${base} Motivo: ${listarPorExtenso(motivos.map((motivo) => motivo.trim()))}.`;
+}
+
 /** A recusa do código ausente do catálogo, nomeando o código (decisão 9). */
 export function fraseCodigosAusentes(codigos: readonly string[]): string {
   if (codigos.length === 0) {
@@ -1404,6 +1421,19 @@ export const PRECEDENTE_REPETIDO_NOS_DOIS =
   "O código que já era candidato aparece duas vezes: no precedente e no bloco da fonte. " +
   "Isso é intencional — esconder a repetição faria o bloco da cascata parecer incompleto " +
   "e mudaria a ordem instalada.";
+
+/**
+ * Por que o aceite em lote NÃO é oferecido neste bloco: os códigos do rótulo vêm de mais de
+ * uma tabela, e o pedido cita uma só.
+ *
+ * O bloco continua inteiro — a memória é verdadeira e vale ser lida —, e o que sai é o
+ * botão, ausente e não desabilitado, como o resto desta jornada trata controle que não pode
+ * ser exercido. A frase diz o caminho que continua aberto: confirmar código a código pela
+ * cascata, que é o ato de sempre.
+ */
+export const PRECEDENTE_SEM_FONTE_UNICA =
+  "Estes códigos vieram de mais de uma tabela de preços, e o aceite de uma vez cita uma " +
+  "fonte só. Confirme-os um a um pelos blocos da cascata, abaixo.";
 
 /** O botão que põe o pacote à vista. Ele não grava nada. */
 export function fraseAceitarPacote(codigos: number): string {

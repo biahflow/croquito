@@ -19,6 +19,7 @@ import {
   type ItemPrecedent,
   type PrecedentCode,
   precisaRelerPrecedentes,
+  type ConfirmacaoDoPrecedente,
 } from "./precedente";
 import { codeDecisionBody } from "./requests";
 import { postCodeClosure, postCodeDecision, type CascadeEntry } from "./api";
@@ -125,6 +126,43 @@ const UMA_PRACA: ItemPrecedent = {
   worksite_count: 1,
   codes: [codigo("BP09100060(B)", { worksite_count: 1, unit_price: "131.07" })],
 };
+
+/**
+ * O pacote que atravessa DUAS tabelas instaladas: `fonteDoPrecedente` não tem fonte única
+ * para nomear, e o aceite em lote — que cita uma só — não pode ser oferecido.
+ *
+ * Ele é defensivo, não observado: a API monta o precedente sobre o catálogo cabeça da
+ * cascata e carimba o mesmo `catalog_sha256` em todo código. É a tela recusando exprimir um
+ * corpo que a rota recusaria, e não um estado que o servidor produza hoje.
+ */
+const PACOTE_DE_DUAS_TABELAS: ItemPrecedent = {
+  ...PISO,
+  codes: [
+    codigo("BP09100050(B)"),
+    codigo("EM00000001(/)", { catalog_sha256: EMOP }),
+  ],
+};
+
+/**
+ * A confirmação como a TELA a abre: com a fonte que o cabeçalho do bloco nomeia.
+ *
+ * Ela nunca é `null` aqui porque todo precedente desta bancada converge para o SCO — a
+ * não-convergência tem teste próprio, e é lá que o `null` é o oráculo.
+ */
+function confirmacaoDe(
+  precedente: ItemPrecedent,
+  rotulo = "PISO EM CONCRETO",
+): ConfirmacaoDoPrecedente {
+  const confirmacao = abrirConfirmacao(
+    precedente,
+    rotulo,
+    fonteDoPrecedente(precedente, CASCATA),
+  );
+  if (confirmacao === null) {
+    throw new Error("este precedente não tem fonte convergente");
+  }
+  return confirmacao;
+}
 
 function candidato(
   code: string,
@@ -282,9 +320,11 @@ describe("os selos da lista de elementos", () => {
 
 describe("a lista de confirmação", () => {
   it("carrega o elemento e some quando o elemento aberto é outro", () => {
-    const confirmacao = abrirConfirmacao(PISO, "PISO EM CONCRETO");
+    const confirmacao = confirmacaoDe(PISO);
 
     expect(confirmacao.itemId).toBe("ti_piso");
+    // A fonte que o cabeçalho nomeia viaja na confirmação: é ela que o pedido vai citar.
+    expect(confirmacao.catalogSha256).toBe(SCO);
     expect(confirmacao.codes.map((code) => code.code)).toEqual([
       "BP09100050(B)",
       "ET39050109(/)",
@@ -296,25 +336,43 @@ describe("a lista de confirmação", () => {
     expect(confirmacaoDoItem(null, "ti_piso")).toBeNull();
   });
 
-  /** Um pedido, N códigos, e `confirm` — nunca fechamento. */
-  it("vira um pedido só, com os N códigos e a versão-base da rodada", () => {
-    const pedido = pedidoDeConfirmacao(
-      abrirConfirmacao(PISO, "PISO EM CONCRETO"),
-      7,
-    );
+  /**
+   * Um pedido, N códigos, `confirm` — nunca fechamento — **e a fonte citada**.
+   *
+   * O `catalog_sha256` é o oráculo desta asserção, e não um detalhe: a rota exige a fonte em
+   * toda confirmação, e sem ela o pedido volta `422`. Este teste afirmava o corpo SEM o
+   * campo até 2026-09-04, e por isso a suíte inteira passava sobre um aceite que nunca
+   * gravou (evidência de navegador da F-044).
+   */
+  it("vira um pedido só, com os N códigos, a fonte citada e a versão-base", () => {
+    const pedido = pedidoDeConfirmacao(confirmacaoDe(PISO), 7);
 
     expect(pedido).toEqual({
       itemId: "ti_piso",
       action: "confirm",
       baseVersion: 7,
+      catalogSha256: SCO,
       codes: ["BP09100050(B)", "ET39050109(/)"],
     });
     expect(codeDecisionBody(pedido)).toEqual({
       base_version: 7,
       item_id: "ti_piso",
       action: "confirm",
+      catalog_sha256: SCO,
       codes: ["BP09100050(B)", "ET39050109(/)"],
     });
+  });
+
+  /**
+   * Sem fonte convergente NÃO há confirmação a abrir: o aceite em lote cita uma fonte só, e
+   * um pacote de duas tabelas não tem o que citar. Abrir a lista assim mesmo prometeria
+   * gravar o que o servidor recusaria — o defeito de 2026-09-04 com outra causa.
+   */
+  it("não abre confirmação para o pacote sem fonte convergente", () => {
+    expect(fonteDoPrecedente(PACOTE_DE_DUAS_TABELAS, CASCATA)).toBeNull();
+    expect(
+      abrirConfirmacao(PACOTE_DE_DUAS_TABELAS, "PISO EM CONCRETO", null),
+    ).toBeNull();
   });
 
   /**
@@ -335,6 +393,9 @@ describe("a lista de confirmação", () => {
       base_version: 7,
       item_id: "ti_piso",
       action: "confirm",
+      // A exclusão mútua é entre `code` e `codes`; a fonte sai nos DOIS caminhos, porque a
+      // exigência da rota é da confirmação e não do formato do corpo.
+      catalog_sha256: SCO,
       codes: ["BP09100050(B)", "ET39050109(/)"],
     });
 
@@ -384,12 +445,8 @@ describe("o transporte do aceite de pacote", () => {
    * Aceitar o precedente é UM pedido com os N códigos — e não N pedidos —, e ele **não**
    * fecha o pacote: o fechamento continua sendo ato separado, de outra rota (F-038).
    */
-  it("manda um pedido só, com os N códigos, e não toca na rota de fechamento", async () => {
-    await postCodeDecision(
-      TOKEN,
-      ROUND,
-      pedidoDeConfirmacao(abrirConfirmacao(PISO, "PISO EM CONCRETO"), 7),
-    );
+  it("manda um pedido só, com os N códigos e a fonte, sem tocar na rota de fechamento", async () => {
+    await postCodeDecision(TOKEN, ROUND, pedidoDeConfirmacao(confirmacaoDe(PISO), 7));
 
     expect(chamadas).toHaveLength(1);
     expect(chamadas[0].url).toBe(
@@ -399,6 +456,7 @@ describe("o transporte do aceite de pacote", () => {
       base_version: 7,
       item_id: "ti_piso",
       action: "confirm",
+      catalog_sha256: SCO,
       codes: ["BP09100050(B)", "ET39050109(/)"],
     });
     expect(
@@ -414,6 +472,76 @@ describe("o transporte do aceite de pacote", () => {
     expect(JSON.parse(String(chamadas[1].init?.body))).not.toHaveProperty(
       "codes",
     );
+  });
+
+  /**
+   * O caminho feliz pela composição EXATA da tela, do payload da API ao pedido gravado —
+   * `blocosDaShortlist` → `fonteDoPrecedente` → `abrirConfirmacao` → `pedidoDeConfirmacao`.
+   *
+   * Ele existe porque cada peça passava isolada e o conjunto não gravava: a fonte que o
+   * cabeçalho nomeia e a que o pedido cita eram calculadas em lugares diferentes, e uma
+   * delas não era calculada de todo. Aqui as duas são a MESMA leitura, e os dois blocos
+   * desenhados saem dela.
+   *
+   * O clique de verdade — evento do navegador — não cabe nesta suíte (o repositório testa
+   * componente por SSR estático, sem harness de eventos): quem o prova é a evidência de
+   * navegador da F-044.
+   */
+  it("do payload da API ao pedido: a fonte que a tela mostra é a que o corpo cita", async () => {
+    const blocos = blocosDaShortlist(
+      [candidato("BP09100050(B)")],
+      [PISO],
+      "ti_piso",
+      CASCATA,
+    );
+    const precedente = blocos.precedente;
+    if (precedente === null) {
+      throw new Error("o precedente do payload deveria existir");
+    }
+    const fonte = fonteDoPrecedente(precedente, CASCATA);
+    const confirmacao = abrirConfirmacao(precedente, "PISO EM CONCRETO", fonte);
+    if (confirmacao === null) {
+      throw new Error("a confirmação deveria abrir com fonte convergente");
+    }
+
+    // O que está desenhado: o selo da fonte no bloco e a lista do que vai ser gravado.
+    const bloco = renderToStaticMarkup(
+      <BlocoDePrecedente
+        precedente={precedente}
+        fonte={fonte}
+        onAceitar={() => undefined}
+        submitting={false}
+      />,
+    );
+    const lista = renderToStaticMarkup(
+      <ConfirmacaoDePrecedente
+        confirmacao={confirmacao}
+        submitting={false}
+        onConfirmar={() => undefined}
+        onCancelar={() => undefined}
+      />,
+    );
+    expect(bloco).toContain("SCO");
+    expect(bloco).toContain("Aceitar os 2 códigos deste rótulo");
+    expect(lista).toContain("Confirmar os 2 códigos");
+
+    await postCodeDecision(TOKEN, ROUND, pedidoDeConfirmacao(confirmacao, 7));
+
+    expect(chamadas).toHaveLength(1);
+    const corpo = JSON.parse(String(chamadas[0].init?.body));
+    expect(corpo).toEqual({
+      base_version: 7,
+      item_id: "ti_piso",
+      action: "confirm",
+      catalog_sha256: SCO,
+      codes: ["BP09100050(B)", "ET39050109(/)"],
+    });
+    // A fonte do corpo é a mesma que o bloco nomeou — uma leitura, dois usos.
+    expect(corpo.catalog_sha256).toBe(fonte?.source_sha256);
+    // Toda mutação da jornada cita a chave de idempotência.
+    expect(
+      (chamadas[0].init?.headers as Record<string, string>)["Idempotency-Key"],
+    ).toBeTruthy();
   });
 });
 
@@ -448,7 +576,7 @@ describe("o bloco desenhado", () => {
     const html = renderToStaticMarkup(
       <BlocoDePrecedente
         precedente={precedenteDoItem([UMA_PRACA], "ti_piso", CASCATA)}
-        fonte={null}
+        fonte={fonteDoPrecedente(UMA_PRACA, CASCATA)}
         onAceitar={() => undefined}
         submitting={false}
       />,
@@ -471,6 +599,34 @@ describe("o bloco desenhado", () => {
         />,
       ),
     ).toBe("");
+  });
+
+  /**
+   * O pacote sem fonte convergente mantém o bloco — a memória é verdadeira e vale ser lida —
+   * e perde o ATO: o pedido em lote cita uma fonte só, e oferecê-lo aqui seria um botão que
+   * o servidor recusaria sempre. Ausente, nunca desabilitado, e a saída vai escrita.
+   */
+  it("sem fonte convergente o bloco fica, o botão de aceitar sai, e o motivo vai escrito", () => {
+    const html = renderToStaticMarkup(
+      <BlocoDePrecedente
+        precedente={precedenteDoItem([PACOTE_DE_DUAS_TABELAS], "ti_piso", CASCATA)}
+        fonte={fonteDoPrecedente(PACOTE_DE_DUAS_TABELAS, CASCATA)}
+        onAceitar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    // O bloco existe inteiro: cabeçalho, códigos e a nota da repetição.
+    expect(html).toContain("Você já usou isto em 4 praças");
+    expect(html).toContain("BP09100050(B)");
+    expect(html).toContain("EM00000001(/)");
+    // O ato não é oferecido — nem como botão apagado.
+    expect(html).not.toContain("Aceitar os 2 códigos deste rótulo");
+    expect(html).not.toContain("<button");
+    // E o motivo é palavra, não ausência muda nem cor sozinha.
+    expect(html).toContain("aviso-precedente-sem-fonte");
+    expect(html).toContain("vieram de mais de uma tabela de preços");
+    expect(html).toContain("Confirme-os um a um pelos blocos da cascata");
   });
 
   /**
@@ -514,7 +670,7 @@ describe("a confirmação desenhada", () => {
   it("mostra o que vai ser gravado e diz que o pacote não fecha por isso", () => {
     const html = renderToStaticMarkup(
       <ConfirmacaoDePrecedente
-        confirmacao={abrirConfirmacao(PISO, "PISO EM CONCRETO")}
+        confirmacao={confirmacaoDe(PISO)}
         submitting={false}
         onConfirmar={() => undefined}
         onCancelar={() => undefined}
@@ -628,7 +784,7 @@ describe("o pacote que não é unânime", () => {
     const html = renderToStaticMarkup(
       <BlocoDePrecedente
         precedente={precedenteDoItem([soUmMinoritario], "ti_piso", CASCATA)}
-        fonte={null}
+        fonte={fonteDoPrecedente(soUmMinoritario, CASCATA)}
         onAceitar={() => undefined}
         submitting={false}
       />,
@@ -638,22 +794,14 @@ describe("o pacote que não é unânime", () => {
     );
     expect(html).not.toContain("1 dos 1");
 
+    const todoMinoritario: ItemPrecedent = {
+      ...PACOTE_MISTO,
+      codes: PACOTE_MISTO.codes.map((code) => ({ ...code, worksite_count: 2 })),
+    };
     const nenhumUnanime = renderToStaticMarkup(
       <BlocoDePrecedente
-        precedente={precedenteDoItem(
-          [
-            {
-              ...PACOTE_MISTO,
-              codes: PACOTE_MISTO.codes.map((code) => ({
-                ...code,
-                worksite_count: 2,
-              })),
-            },
-          ],
-          "ti_piso",
-          CASCATA,
-        )}
-        fonte={null}
+        precedente={precedenteDoItem([todoMinoritario], "ti_piso", CASCATA)}
+        fonte={fonteDoPrecedente(todoMinoritario, CASCATA)}
         onAceitar={() => undefined}
         submitting={false}
       />,
@@ -665,7 +813,7 @@ describe("o pacote que não é unânime", () => {
   });
 
   it("a marca se repete na lista de confirmação, que é onde o clique grava", () => {
-    const confirmacao = abrirConfirmacao(PACOTE_MISTO, "PISO EM CONCRETO");
+    const confirmacao = confirmacaoDe(PACOTE_MISTO);
     const html = renderToStaticMarkup(
       <ConfirmacaoDePrecedente
         confirmacao={confirmacao}
@@ -694,7 +842,7 @@ describe("o pacote que não é unânime", () => {
   it("a confirmação do pacote unânime não ganha marca nenhuma", () => {
     const html = renderToStaticMarkup(
       <ConfirmacaoDePrecedente
-        confirmacao={abrirConfirmacao(PISO, "PISO EM CONCRETO")}
+        confirmacao={confirmacaoDe(PISO)}
         submitting={false}
         onConfirmar={() => undefined}
         onCancelar={() => undefined}

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError, apiJson, CONTRACT_ERRORS_KEY } from "../api";
 import {
+  contractRefusalReasons,
   describeError,
   exportBlockedViolations,
   isAbortError,
@@ -10,6 +11,7 @@ import {
   isWorkbookAuditFailure,
   orcamentoErrorCode,
   recusaDaAutoriaDeAcervo,
+  recusaDaDecisaoDeCodigo,
   recusaDeMutacao,
   recusaDoAcervo,
   siteSetupAbsentCodes,
@@ -365,5 +367,131 @@ describe("recusas da autoria de acervo", () => {
 
     expect(frase).toContain("0.SEMANAS");
     expect(frase).toContain("9.MESES");
+  });
+});
+
+/**
+ * A recusa da DECISÃO DE CÓDIGO (F-044, reparo de 2026-09-04).
+ *
+ * A recusa de CONTRATO é a única sem código estável — ela é a validação de esquema do
+ * Pydantic, que sai no envelope nativo do FastAPI —, e era a que chegava à tela como
+ * "Falha na API (422)." A evidência de navegador provou o silêncio: o servidor tinha escrito
+ * o motivo e ninguém o lia.
+ */
+describe("recusa da decisão de código", () => {
+  /** O corpo exato que o servidor devolve na validação de esquema: `detail` é LISTA. */
+  const recusaDeContrato = new ApiError(
+    "Falha na API (422).",
+    422,
+    null,
+    null,
+    {
+      [CONTRACT_ERRORS_KEY]: [
+        "Value error, confirmação de código exige a fonte de preço em `catalog_sha256`",
+      ],
+    },
+  );
+
+  it("nomeia o motivo que o servidor escreveu, em vez de mostrar só o status", () => {
+    const recusa = recusaDaDecisaoDeCodigo(recusaDeContrato);
+
+    expect(recusa.conflito).toBe(false);
+    expect(recusa.mensagem).toContain("A decisão não foi gravada");
+    expect(recusa.mensagem).toContain("catalog_sha256");
+    expect(recusa.mensagem).not.toBe("Falha na API (422).");
+  });
+
+  /**
+   * O que já funcionava não muda: recusa com código estável continua saindo pela tabela de
+   * `labels.ts`, e não pelo texto cru do servidor.
+   */
+  it("a recusa com código estável continua vindo da tabela de frases", () => {
+    const recusa = recusaDaDecisaoDeCodigo(
+      apiError("ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED"),
+    );
+
+    expect(recusa.mensagem).toBe(
+      errorMessage("ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED", null),
+    );
+    expect(contractRefusalReasons(recusa)).toEqual([]);
+  });
+
+  it("o conflito de revisão continua sendo o banner do orçamento", () => {
+    const recusa = recusaDaDecisaoDeCodigo(apiError("REVISION_CONFLICT", 409));
+
+    expect(recusa.conflito).toBe(true);
+    expect(recusa.mensagem).toBe(MENSAGEM_ORCAMENTO_MUDOU);
+  });
+
+  /** Sem lista legível sobra a frase do transporte, nunca um motivo fabricado. */
+  it("recusa sem motivo legível não inventa motivo", () => {
+    const semLista = new ApiError("Falha na API (500).", 500, null, null, {});
+
+    expect(contractRefusalReasons(semLista)).toEqual([]);
+    expect(recusaDaDecisaoDeCodigo(semLista).mensagem).toBe("Falha na API (500).");
+    expect(
+      contractRefusalReasons(
+        new ApiError("x", 422, null, null, { [CONTRACT_ERRORS_KEY]: "não é lista" }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+/**
+ * O transporte é quem preserva o motivo da recusa de contrato: sem isso a jornada não teria
+ * o que nomear, porque `apiJson` consome o corpo da resposta e o descarta.
+ */
+describe("o motivo da recusa de contrato atravessa o transporte", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function recusar(status: number, corpo: unknown): Promise<unknown> {
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(
+        new Response(JSON.stringify(corpo), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    return apiJson("/v1/qualquer", "token").then(
+      () => null,
+      (erro: unknown) => erro,
+    );
+  }
+
+  it("preserva os motivos do envelope nativo do FastAPI, sem o corpo recusado", async () => {
+    const erro = await recusar(422, {
+      detail: [
+        {
+          type: "value_error",
+          loc: ["body"],
+          msg: "Value error, confirmação de código exige a fonte de preço em `catalog_sha256`",
+          input: { item_id: "ti_0000000000f04402", codes: ["ZA20200100(/)"] },
+        },
+      ],
+    });
+
+    expect(erro).toBeInstanceOf(ApiError);
+    const motivos = contractRefusalReasons(erro);
+    expect(motivos).toHaveLength(1);
+    expect(motivos[0]).toContain("catalog_sha256");
+    // O `input` é o corpo do cliente e NÃO volta para a tela.
+    expect(JSON.stringify((erro as ApiError).details)).not.toContain("ti_0000");
+  });
+
+  /** Com envelope de domínio, `details` é do servidor e não se mistura com nada. */
+  it("não acrescenta nada à recusa que já tem código estável", async () => {
+    const erro = await recusar(422, {
+      detail: {
+        code: "DOMAIN_VALIDATION_FAILED",
+        detail: "invariante",
+        details: { code: "ASSIGNMENT_BATCH_EMPTY" },
+      },
+    });
+
+    expect((erro as ApiError).details).toEqual({ code: "ASSIGNMENT_BATCH_EMPTY" });
+    expect(contractRefusalReasons(erro)).toEqual([]);
   });
 });

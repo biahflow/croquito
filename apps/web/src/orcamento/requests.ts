@@ -274,7 +274,9 @@ export function takeoffDecisionBody(
  * da rejeição (`ASSIGNMENT_CATALOG_ON_REJECT`). A tela já manda só o que cabe em cada ato.
  *
  * O aceite do PRECEDENTE (F-044) é o terceiro ato desta mesma rota: `codes` com os N
- * códigos do rótulo, numa revisão só, mutuamente exclusivo com o `code` singular.
+ * códigos do rótulo, numa revisão só, mutuamente exclusivo com o `code` singular — e com
+ * `catalog_sha256` do mesmo jeito, porque a exigência da fonte é da CONFIRMAÇÃO, não do
+ * caminho singular.
  */
 /**
  * Corpo do `POST .../code-assignments/closures`.
@@ -330,21 +332,29 @@ export function codeDecisionBody(
     // rótulo numa revisão só, e o singular não vai junto. A precedência é do lote porque
     // é ele que a tela oferece quando existe — e um corpo com os dois seria ambíguo sobre
     // o que está sendo gravado.
+    //
+    // A fonte de preço, ao contrário, viaja nos DOIS: a rota exige `catalog_sha256` em
+    // TODA confirmação, e no lote ela é a fonte única para a qual os N códigos convergem
+    // ("todos os códigos citam a MESMA fonte, que é a que `catalog_sha256` declara"). Foi
+    // esta linha que faltou até 2026-09-04, e por ela todo aceite em lote levou `422`.
+    const catalog = draft.catalogSha256?.trim();
     const codes = (draft.codes ?? [])
       .map((code) => code.trim())
       .filter((code) => code.length > 0);
     if (codes.length > 0) {
-      // Sem `note`: o corpo do aceite de pacote é o que o contrato da rota fixou —
-      // `base_version`, `item_id`, `action` e `codes` —, e a rota recusa o que ela não
-      // declara (`extra="forbid"`). A nota da decisão continua existindo no ato singular.
+      // Sem `note`: o corpo do aceite de pacote é `base_version`, `item_id`, `action`,
+      // `codes` e a fonte, e a rota recusa o que ela não declara (`extra="forbid"`). A
+      // nota da decisão continua existindo no ato singular.
       body.codes = codes;
+      if (catalog) {
+        body.catalog_sha256 = catalog;
+      }
       return body;
     }
     const code = draft.code?.trim();
     if (code) {
       body.code = code;
     }
-    const catalog = draft.catalogSha256?.trim();
     if (catalog) {
       body.catalog_sha256 = catalog;
     }

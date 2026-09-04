@@ -651,6 +651,39 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Chave sob a qual os motivos de uma recusa de CONTRATO chegam em `ApiError.details`.
+ *
+ * A API tem dois envelopes de recusa, e só um deles carrega código estável. As invariantes
+ * de domínio saem em `application/problem+json` (`{detail: {code, detail, details}}`), que é
+ * o caminho normal e o que `labels.ts` traduz por tabela. Já a validação de ESQUEMA — a que
+ * o Pydantic faz no corpo antes de a rota rodar — sai no envelope nativo do FastAPI, com
+ * `detail` como LISTA e sem código nenhum: dela a tela só conseguia dizer "Falha na API
+ * (422)", que é o segundo achado da evidência de navegador da F-044 (2026-09-04).
+ *
+ * O transporte passa a preservar os motivos daquela lista, e nada mais: quem os exibe é a
+ * jornada, ato a ato. A `message` continua a mesma, de propósito — mudá-la aqui reescreveria
+ * a recusa de todas as jornadas de uma vez, e o texto de tela é gate de desenho.
+ */
+export const CONTRACT_ERRORS_KEY = "contract_errors";
+
+/**
+ * Os motivos do envelope nativo do FastAPI (`detail: [{msg, loc, type}]`), na ordem em que
+ * vieram — ou lista vazia quando a resposta não é desse formato.
+ *
+ * Só `msg` é lido. `input` traz de volta o pedaço do corpo recusado, e o corpo é dado do
+ * cliente: ele não volta para a tela nem para log nenhum.
+ */
+function contractErrorsOf(payload: unknown): string[] {
+  const detail = (payload as { detail?: unknown } | null)?.detail;
+  if (!Array.isArray(detail)) {
+    return [];
+  }
+  return detail
+    .map((entry) => (entry as { msg?: unknown } | null)?.msg)
+    .filter((msg): msg is string => typeof msg === "string" && msg.length > 0);
+}
+
 export async function apiJson<T>(
   path: string,
   accessToken: string,
@@ -706,12 +739,19 @@ export async function apiJson<T>(
         : code
           ? `${code}: ${detail ?? "Falha na API."}${cause}`
           : `Falha na API (${response.status}).${cause}`;
+    // Os motivos do envelope nativo só entram quando NÃO há código estável: com envelope
+    // de domínio, `details` é do servidor e não se mistura com nada montado aqui.
+    const contractErrors = code === null ? contractErrorsOf(payload) : [];
     throw new ApiError(
       message,
       response.status,
       code,
       detail,
-      details && typeof details === "object" ? details : {},
+      details && typeof details === "object"
+        ? details
+        : contractErrors.length > 0
+          ? { [CONTRACT_ERRORS_KEY]: contractErrors }
+          : {},
     );
   }
   return response.json() as Promise<T>;
