@@ -276,7 +276,7 @@ def test_provider_snapshot_preserves_dual_lineage_and_requires_review(tmp_path: 
         suite=build_synthetic_provider_suite(),
     )
 
-    assert snapshot.packet.schema_version == "1.1.0"
+    assert snapshot.packet.schema_version == "1.2.0"
     assert snapshot.packet.safety_status == "human_review_required"
     assert all(
         reading.status.value in {"proposed", "ambiguous"} for reading in snapshot.packet.readings
@@ -780,6 +780,26 @@ def _reading_without_target_hint(
     )
 
 
+def _reading_with_structured_target_hint(
+    *, entity_label: str = "B", feature: str = "fecho"
+) -> MeasurementExtractionOutput:
+    """Cota legível com hint estruturado: a T1 preserva `entity_label` até a leitura."""
+    return MeasurementExtractionOutput(
+        readings=[
+            MeasurementReadingOutput(
+                raw_text="56,00 m",
+                kind="length",
+                normalized_value=Decimal("56.00"),
+                unit="m",
+                written_precision=2,
+                bbox=NormalizedBox(left=0.08, top=0.12, right=0.20, bottom=0.18),
+                target_hint=TargetHint(entity_label=entity_label, feature=feature),
+                legibility="clear",
+            )
+        ]
+    )
+
+
 def _count_reading() -> MeasurementExtractionOutput:
     """kind="count" completo: continua fora do enum de MeasurementKind."""
     return MeasurementExtractionOutput(
@@ -909,6 +929,43 @@ def test_legacy_packet_with_target_hint_still_validates() -> None:
     reloaded = ReviewPacket.model_validate(packet.model_dump(mode="json"))
 
     assert reloaded.readings[0].target_hint == "campo principal"
+
+
+def test_reading_with_target_hint_carries_the_structured_entity_label(tmp_path: Path) -> None:
+    """F-051 T1, critério 1: `TargetHint("B", "fecho")` sobrevive como campo próprio da
+    leitura, sem substituir a string legível — `target_hint` continua para exibição."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _reading_with_structured_target_hint(entity_label="B", feature="fecho")
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings[0].target_entity_label == "B"
+    assert snapshot.packet.readings[0].target_hint == "B: fecho"
+
+
+def test_legacy_review_packet_without_structured_label_still_validates() -> None:
+    """F-051 T1, critério 2: pacote gravado antes do campo estruturado (`schema_version`
+    anterior, leitura sem `target_entity_label`) continua validando sem erro e sem mudar
+    comportamento — o campo novo nasce `None`, aditivo."""
+    packet = build_packet(dataset_id="synthetic-provider-contract-v1", digest="b" * 64)
+    legacy_payload = packet.model_dump(mode="json")
+    legacy_payload["schema_version"] = "1.1.0"
+    for reading in legacy_payload["readings"]:
+        reading.pop("target_entity_label", None)
+
+    reloaded = ReviewPacket.model_validate(legacy_payload)
+
+    assert reloaded.schema_version == "1.1.0"
+    assert reloaded.readings[0].target_hint == "campo principal"
+    assert reloaded.readings[0].target_entity_label is None
 
 
 def test_count_reading_is_still_discarded_as_unsupported_kind(tmp_path: Path) -> None:

@@ -65,6 +65,10 @@ export type ReviewReading = {
   unit?: string;
   written_decimals?: number;
   target_hint?: string;
+  // Rótulo estruturado do elemento (F-051 T1): sobrevive da extração até a leitura,
+  // aditivo. Sem consumidor ainda (a T4 casa por identidade); `target_hint` continua
+  // sendo a string legível para exibição.
+  target_entity_label?: string | null;
   // Sinal do pipeline: o modelo leu a linha como recado da folha (anotação), não como
   // cota de elemento. É observação, nunca decisão — quem declara continua sendo o
   // revisor. Opcional porque pacote persistido antes do campo responde sem ele.

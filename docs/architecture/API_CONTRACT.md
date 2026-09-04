@@ -797,6 +797,17 @@ sem hint entra no pacote com `target_hint: null` e a nota
 de descarte (`READING_{n}_INCOMPLETE`, ou `READING_{n}_NOTE_WITHOUT_VALUE` quando
 `kind="note"`) continua intacto.
 
+`target_entity_label` de `packet.readings` é `string | null` (F-051 T1, 2026-09-04): o
+`TargetHint.entity_label` estruturado do provider, sobrevivendo até a leitura em vez de
+ser achatado só na string legível de `target_hint`. Sem nenhum consumidor ainda — a
+candidata por identidade que o casa contra um elemento declarado é a F-051 T4. O comando
+de decisão (`POST .../review/decisions`) e o de correção
+(`POST .../review/rectifications`) aceitam o campo com a mesma semântica aditiva de
+`target_hint`: ausente não altera o valor vigente, presente corrige (ato registrado,
+nunca edição silenciosa). `ReviewPacket.schema_version` sobe para `"1.2.0"`
+(retrocompatível: pacote persistido em `"1.0.0"`/`"1.1.0"` continua validando, com o
+campo novo em `null`).
+
 `required_criteria` lista os critérios de escopo declarados para o caso quando a
 evidência foi carregada, como pares `{code, text}`:
 

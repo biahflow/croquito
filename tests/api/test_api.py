@@ -1928,6 +1928,80 @@ def test_rectification_refuses_every_declared_failure(tmp_path: Path) -> None:
     assert other_tenant.status_code == 404
 
 
+def test_decision_and_rectification_correct_the_structured_target_entity_label(
+    tmp_path: Path,
+) -> None:
+    """F-051 T1, critério 3: `target_entity_label` se corrige pelo mesmo ato humano do
+    hint legível — ausente não altera o valor vigente, presente corrige (ato registrado,
+    nunca edição silenciosa) — tanto na decisão inicial quanto na retificação declarada."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "decide-entity-label"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Cota confirmada contra a folha original.",
+                    "association_proposal_id": "vp_1111111111111111",
+                    "target_entity_label": "B",
+                }
+            ],
+        },
+    )
+    assert decided.status_code == 200
+    decided_reading = next(
+        item for item in decided.json()["packet"]["readings"] if item["id"] == "rd_1111111111111111"
+    )
+    assert decided_reading["target_entity_label"] == "B"
+    # O hint legível não é tocado pela decisão: os dois campos corrigem independentemente.
+    assert decided_reading["target_hint"] == "campo principal"
+
+    # Retificação SEM o campo não altera o valor vigente — precisa de outra mudança real
+    # (aqui, `raw_text`) para não cair em `RECTIFICATION_ALREADY_APPLIED`.
+    unrelated_change = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rectify-unrelated"},
+        json=_rectification_payload(
+            decided.json()["version"],
+            rectifies_decision_id=decided_reading["decision"]["decision_id"],
+            raw_text="largura sintética revisada",
+        ),
+    )
+    assert unrelated_change.status_code == 200
+    unchanged_reading = next(
+        item
+        for item in unrelated_change.json()["packet"]["readings"]
+        if item["id"] == "rd_1111111111111111"
+    )
+    assert unchanged_reading["target_entity_label"] == "B"
+
+    # Retificação COM o campo: corrige de fato, como ato humano novo (decision_id muda).
+    corrected = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rectify-entity-label"},
+        json=_rectification_payload(
+            unrelated_change.json()["version"],
+            rectifies_decision_id=unchanged_reading["decision"]["decision_id"],
+            target_entity_label="grade B",
+        ),
+    )
+    assert corrected.status_code == 200
+    corrected_reading = next(
+        item
+        for item in corrected.json()["packet"]["readings"]
+        if item["id"] == "rd_1111111111111111"
+    )
+    assert corrected_reading["target_entity_label"] == "grade B"
+    assert (
+        corrected_reading["decision"]["decision_id"] != unchanged_reading["decision"]["decision_id"]
+    )
+
+
 def test_rectification_replays_the_same_revision_for_the_same_key(tmp_path: Path) -> None:
     client = _client(tmp_path)
     job_id = _seed_review_session(client)
