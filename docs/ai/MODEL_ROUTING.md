@@ -2,8 +2,10 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-23 (`field-photo-classification@1.0.0`, F-030 T6, adicionada como
-rota Anthropic sem fallback; rodada real pendente do corpus humano)
+Última revisão: 2026-09-03 (o OCR passou a ser a primeira chamada do snapshot e a decidir a
+orientação da folha — ver "Orientação da folha"; issue #138. Antes, 2026-08-23:
+`field-photo-classification@1.0.0`, F-030 T6, adicionada como rota Anthropic sem fallback;
+rodada real pendente do corpus humano)
 
 ## Rotas padrão
 
@@ -16,7 +18,7 @@ Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
 |---|---|---|
 | Extração — braço primário | Anthropic API direta `claude-opus-5` (`CROQUITO_ANTHROPIC_MODEL`) | page survey, extração de geometria, e um dos dois lados da extração de medida |
 | Extração — braço reserva/contraparte (opcional) | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`), ligado/desligado por `CROQUITO_OPENAI_ARM_ENABLED` | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
-| OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) por padrão; Google Document AI (`GcpDocumentAiOcrAdapter`, `ProviderName.GCP_DOCUMENT_AI`) quando `CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
+| OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) por padrão; Google Document AI (`GcpDocumentAiOcrAdapter`, `ProviderName.GCP_DOCUMENT_AI`) quando `CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md) | **primeira** chamada do snapshot: decide a orientação da folha e corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
 | Leitura de foto de campo (`field-photo-reading`, F-032) — mesmos braços de visão | primário Anthropic `claude-opus-5`; reserva OpenAI `gpt-5.6-terra` quando o braço está ligado | uma chamada por foto confirmada, depois do passe offline de qualidade; transcreve só o que está ESCRITO na foto (placa, anotação, visor), sem coordenada e sem medida derivada |
 | Classificação visual de campo (`field-photo-classification`, F-030) | somente Anthropic `claude-opus-5`; sem fallback OpenAI | uma chamada por foto e somente sob pedido explícito; categoria fechada, descrição e topologia não geométrica em rascunho, nunca medida, cena ou decisão humana |
 | Transcrição de nota de voz (`audio-transcription`, F-032) — braço próprio, fornecedor próprio | primário **provisório** Groq `whisper-large-v3-turbo` (`CROQUITO_GROQ_TRANSCRIPTION_MODEL`), escolhido por `CROQUITO_TRANSCRIPTION_PRIMARY` (default `groq`); reserva DESLIGADO por default (`CROQUITO_TRANSCRIPTION_FALLBACK`, default `none`; aceita `openai`, que usa `CROQUITO_OPENAI_TRANSCRIPTION_MODEL`, default `whisper-1`) | uma chamada por nota de voz confirmada; produz RASCUNHO (`status: "draft"`) num artefato próprio, sem medida estruturada e sem confirmar nada |
@@ -203,6 +205,26 @@ default `0.0015`) no mesmo `CostBudget` da rodada; ultrapassar
 
 ## Etapas
 
+### Orientação da folha (determinística, antes de qualquer LLM)
+
+O croqui de campo chega deitado com frequência, e o PDF não declara rotação. A folha é
+endireitada **antes** da primeira chamada de modelo, a partir dos vértices de palavra que o
+OCR devolve: o vetor v0→v1 de cada palavra diz para onde o texto corre, o quarto de volta
+mais próximo é o voto da palavra (peso = número de símbolos), o parágrafo decide por maioria
+e a página decide por maioria ponderada pelo tamanho do texto de cada linha
+(`croquito_worker.page_orientation`). Com veredito, a página é girada e o pacote ganha a nota
+`PAGE_ROTATED_{90|180|270}CCW_FROM_OCR_ORIENTATION`.
+
+O campo `orientation` do `page-survey` **não** é usado para isso: sondado contra o corpus real
+de campo (7 páginas, 2026-09-03), ele respondeu `up` para uma folha girada 90°. O voto por
+vértice do OCR acertou 7/7 no mesmo corpus, com share entre 52% e 100% — daí o piso de 50%.
+
+Girar uma vez, no começo, é o que mantém a cadeia consistente sem transformar coordenada em
+consumidor nenhum: survey, extração, geometria, corroboração de tinta, `source.png` e a tela
+da revisão leem a MESMA imagem, e é a girada. O digest do pacote passa a ser o da folha
+girada; o `input_digest` da chamada de OCR continua sendo o da folha como chegou, porque foi
+essa que saiu para o fornecedor.
+
 ### Page survey
 
 Recebe página completa e identifica regiões, tipos de desenho, vocabulário e
@@ -250,8 +272,13 @@ desambiguação. Não recebe a preferência do sistema.
   `status` já calculado da leitura. A partir da F-010 (2026-08-20), a mesma corroboração
   também chega ao revisor como campo `ocr_corroborated` de cada leitura do pacote — não
   só na nota posicional/telemetria.
+- OCR que não sustenta veredito de orientação (voto abaixo de 50% do peso, menos de 20
+  caracteres votantes, empate exato, ou braço que não reporta vértice de palavra — Textract e
+  Document AI não reportam): a folha **não** é girada e o snapshot segue com a página como ela
+  chegou. Não girar é o comportamento seguro: girar errado custaria a extração inteira.
 - `BUDGET_EXCEEDED` em qualquer braço, inclusive OCR: propaga sempre, nunca é absorvido em modo
-  degradado — o teto é do job, não do braço.
+  degradado — o teto é do job, não do braço. Como o OCR passou a ser a primeira chamada, o
+  estouro de teto passa a interromper o job antes de qualquer chamada de LLM.
 - **Extração de legenda (medição E orçamento) com braço de reserva**, desde 2026-08-21:
   `CROQUITO_EXTRACTION_RESERVE_ARM` (forma `NOME=PROVIDER:MODELO`), **vazia por padrão**.
   Vazia significa comportamento idêntico ao anterior — falha do primário propaga, sem

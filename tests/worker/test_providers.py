@@ -1231,12 +1231,15 @@ def test_ocr_corroboration_permanent_failure_adds_a_single_note(
 
 
 def test_ocr_corroboration_budget_exceeded_propagates_without_a_note(tmp_path: Path) -> None:
+    """O teto estoura na PRIMEIRA chamada do snapshot desde que o OCR decide a orientação."""
     image_path = tmp_path / "fixture.png"
     render_synthetic_input(image_path)
     base = build_synthetic_provider_suite()
     ocr_adapter = cast(FixtureProviderAdapter, base.ocr)
+    anthropic = _CountingAdapter(base.anthropic)
     suite = replace(
         base,
+        anthropic=anthropic,
         ocr=replace(ocr_adapter, failures={PromptTask.OCR: ProviderFailureCode.BUDGET_EXCEEDED}),
     )
 
@@ -1246,6 +1249,210 @@ def test_ocr_corroboration_budget_exceeded_propagates_without_a_note(tmp_path: P
         )
 
     assert error.value.code is ProviderFailureCode.BUDGET_EXCEEDED
+    # Nenhum braço de LLM chega a ser chamado: o teto é do job e já estourou.
+    assert anthropic.calls == []
+
+
+class _RecordingAdapter:
+    """Guarda a requisição de cada chamada para provar QUAL imagem o braço recebeu."""
+
+    def __init__(self, inner: ProviderAdapter) -> None:
+        self.inner = inner
+        self.requests: list[ProviderRequest] = []
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        self.requests.append(request)
+        return self.inner.execute(request)
+
+
+# As três linhas do OCR na folha DEITADA, posicionadas de modo que um quarto de volta
+# anti-horária as leve exatamente sobre as bboxes das três leituras da fixture sintética
+# (que o modelo produz olhando a folha já em pé). É a corroboração que prova a transformação:
+# se `rotate_normalized_box` errar um canto, nenhuma das três confirma.
+_SIDEWAYS_OCR_LINES: Final = (
+    ("25,90 m", 0.82, 0.08, 0.88, 0.20),
+    ("21,75 m", 0.82, 0.24, 0.88, 0.36),
+    ("Ø 6.00 m", 0.82, 0.40, 0.88, 0.54),
+)
+
+
+def _sideways_ocr_output(*, rotation: int | None = 90) -> OcrOutput:
+    return OcrOutput(
+        lines=[
+            OcrLineOutput(
+                raw_text=raw_text,
+                bbox=NormalizedBox(left=left, top=top, right=right, bottom=bottom),
+                text_type="printed",
+                rotation_ccw_degrees=rotation,
+            )
+            for raw_text, left, top, right, bottom in _SIDEWAYS_OCR_LINES
+        ]
+    )
+
+
+def _sideways_suite(
+    ocr_output: OcrOutput,
+) -> tuple[ProviderSuite, _RecordingAdapter, _CountingAdapter]:
+    base = build_synthetic_provider_suite()
+    anthropic = _RecordingAdapter(base.anthropic)
+    ocr = _CountingAdapter(
+        replace(cast(FixtureProviderAdapter, base.ocr), outputs={PromptTask.OCR: ocr_output})
+    )
+    return replace(base, anthropic=anthropic, ocr=ocr), anthropic, ocr
+
+
+def test_sideways_page_is_turned_upright_before_any_model_call(tmp_path: Path) -> None:
+    """A folha deitada é endireitada uma vez, e todo braço a recebe já em pé."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    original_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    suite, anthropic, ocr = _sideways_suite(_sideways_ocr_output())
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.applied_rotation_ccw_degrees == 90
+    assert "PAGE_ROTATED_90CCW_FROM_OCR_ORIENTATION" in snapshot.packet.safety_notes
+    assert snapshot.packet.safety_notes.count("PAGE_ROTATED_90CCW_FROM_OCR_ORIENTATION") == 1
+    # Uma chamada de OCR no snapshot inteiro: a orientação e a corroboração usam a mesma.
+    assert ocr.calls == [PromptTask.OCR]
+    # A fixture é 1400x1050; em pé ela vira 1050x1400 e ganha digest próprio.
+    rotated_sha = hashlib.sha256(snapshot.source_image_bytes).hexdigest()
+    assert rotated_sha != original_sha
+    assert snapshot.packet.image_sha256 == rotated_sha
+    assert snapshot.associations.image_sha256 == rotated_sha
+    assert snapshot.proposals.image_sha256 == rotated_sha
+    assert (snapshot.proposals.image_width_px, snapshot.proposals.image_height_px) == (1050, 1400)
+    # Survey, extração e geometria: todas as tarefas do braço primário receberam a folha
+    # girada, e nenhuma delas viu os bytes originais.
+    assert [request.task for request in anthropic.requests] == [
+        PromptTask.PAGE_SURVEY,
+        PromptTask.MEASUREMENT_EXTRACTION,
+        PromptTask.GEOMETRY_EXTRACTION,
+    ]
+    assert all(request.image_sha256 == rotated_sha for request in anthropic.requests)
+    assert all(
+        (request.image_width_px, request.image_height_px) == (1050, 1400)
+        for request in anthropic.requests
+    )
+
+
+def test_corroboration_survives_the_rotation_of_the_ocr_boxes(tmp_path: Path) -> None:
+    """As linhas lidas na folha deitada confirmam as leituras lidas na folha em pé."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite, _anthropic, _ocr = _sideways_suite(_sideways_ocr_output())
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert "READING_1_OCR_CONFIRMED" in snapshot.packet.safety_notes
+    assert "READING_2_OCR_CONFIRMED" in snapshot.packet.safety_notes
+    assert "READING_3_OCR_CONFIRMED" in snapshot.packet.safety_notes
+    assert not any(note.endswith("_OCR_EVIDENCE_MISSING") for note in snapshot.packet.safety_notes)
+    assert "OCR_UNAVAILABLE" not in snapshot.packet.safety_notes
+
+
+def test_undecided_orientation_vote_leaves_the_page_alone(tmp_path: Path) -> None:
+    """Voto empatado não gira nada — e não deixa nota de rotação para o revisor caçar."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    original_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    tied = _sideways_ocr_output()
+    # Dois textos de 15 caracteres, um votando 90 e o outro 0: 30 caracteres votantes (bem
+    # acima do piso, para que o empate seja a ÚNICA razão de não decidir) e share 0,5 de
+    # cada lado. A terceira linha sai do voto por não declarar rotação.
+    lines = [
+        tied.lines[0].model_copy(update={"raw_text": "cota deitada 90"}),
+        tied.lines[1].model_copy(update={"raw_text": "cota em pe 0000", "rotation_ccw_degrees": 0}),
+        tied.lines[2].model_copy(update={"rotation_ccw_degrees": None}),
+    ]
+    assert len(lines[0].raw_text) == len(lines[1].raw_text)
+    suite, _anthropic, _ocr = _sideways_suite(OcrOutput(lines=lines))
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.applied_rotation_ccw_degrees == 0
+    assert snapshot.source_image_bytes == image_path.read_bytes()
+    assert snapshot.packet.image_sha256 == original_sha
+    assert not any(note.startswith("PAGE_ROTATED_") for note in snapshot.packet.safety_notes)
+
+
+def test_thin_orientation_vote_leaves_the_page_alone(tmp_path: Path) -> None:
+    """Unanimidade de 7 caracteres não sustenta veredito: abaixo do piso, não gira."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    single = _sideways_ocr_output().lines[0]
+    suite, _anthropic, _ocr = _sideways_suite(OcrOutput(lines=[single]))
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.applied_rotation_ccw_degrees == 0
+    assert not any(note.startswith("PAGE_ROTATED_") for note in snapshot.packet.safety_notes)
+
+
+def test_suite_without_an_ocr_arm_never_rotates_the_page(tmp_path: Path) -> None:
+    """Sem braço de OCR não há veredito de orientação, e as notas ficam como sempre foram."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    original_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    suite = replace(build_synthetic_provider_suite(), ocr=None)
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.applied_rotation_ccw_degrees == 0
+    assert snapshot.packet.image_sha256 == original_sha
+    assert not any(note.startswith("PAGE_ROTATED_") for note in snapshot.packet.safety_notes)
+    assert snapshot.packet.safety_notes.count("OCR_UNAVAILABLE") == 1
+
+
+def test_rotation_travels_through_the_early_return_of_an_ambiguous_page(tmp_path: Path) -> None:
+    """Página que nem chega à extração devolve a folha GIRADA: é ela que o humano classifica."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite, _anthropic, ocr = _sideways_suite(_sideways_ocr_output())
+    ambiguous = PageSurveyOutput(
+        orientation="up",
+        regions=[
+            SurveyRegion(
+                kind="main_plan",
+                polygon=[NormalizedPoint(x=0, y=0), NormalizedPoint(x=1, y=1)],
+                label="planta A",
+                evidence="candidato A",
+            ),
+            SurveyRegion(
+                kind="main_plan",
+                polygon=[NormalizedPoint(x=0, y=0), NormalizedPoint(x=1, y=1)],
+                label="planta B",
+                evidence="candidato B",
+            ),
+        ],
+        page_notes=[],
+    )
+    inner = cast(FixtureProviderAdapter, cast(_RecordingAdapter, suite.anthropic).inner)
+    inner.outputs[PromptTask.PAGE_SURVEY] = ambiguous
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert "REGION_CLASSIFICATION_REQUIRED" in snapshot.packet.safety_notes
+    assert snapshot.applied_rotation_ccw_degrees == 90
+    assert "PAGE_ROTATED_90CCW_FROM_OCR_ORIENTATION" in snapshot.packet.safety_notes
+    assert snapshot.packet.image_sha256 == hashlib.sha256(snapshot.source_image_bytes).hexdigest()
+    assert (snapshot.proposals.image_width_px, snapshot.proposals.image_height_px) == (1050, 1400)
+    # O OCR rodou e custou, mesmo com o job morrendo antes da extração: é o preço declarado
+    # de decidir a orientação antes de qualquer chamada de LLM.
+    assert ocr.calls == [PromptTask.OCR]
+    assert len(snapshot.executions) == 2
 
 
 def test_ocr_text_normalization_matches_decimal_comma_and_dot() -> None:
@@ -1287,8 +1494,17 @@ def test_ocr_corroboration_eval_passes(tmp_path: Path) -> None:
     assert report_path.exists()
 
 
-def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() -> None:
-    response_body: dict[str, object] = {
+def _vision_word(text: str, vertices: list[dict[str, int]] | None) -> dict[str, object]:
+    """Uma palavra do `fullTextAnnotation`; `vertices=None` reproduz a resposta sem caixa."""
+    word: dict[str, object] = {"symbols": [{"text": character} for character in text]}
+    if vertices is not None:
+        word["boundingBox"] = {"vertices": vertices}
+    return word
+
+
+def _vision_response(words: list[dict[str, object]]) -> dict[str, object]:
+    """Um parágrafo, um bloco, uma página — a forma mínima que o parser precisa ver."""
+    return {
         "responses": [
             {
                 "fullTextAnnotation": {
@@ -1306,17 +1522,7 @@ def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() 
                                                     {"x": 10, "y": 40},
                                                 ]
                                             },
-                                            "words": [
-                                                {
-                                                    "symbols": [
-                                                        {"text": "3"},
-                                                        {"text": ","},
-                                                        {"text": "5"},
-                                                        {"text": "0"},
-                                                    ]
-                                                },
-                                                {"symbols": [{"text": "m"}]},
-                                            ],
+                                            "words": words,
                                         }
                                     ]
                                 }
@@ -1328,6 +1534,8 @@ def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() 
         ]
     }
 
+
+def _vision_lines_of(response_body: dict[str, object]) -> list[OcrLineOutput]:
     def post(
         _url: str, headers: dict[str, str], _body: bytes, _timeout: float
     ) -> tuple[int, dict[str, object]]:
@@ -1335,19 +1543,56 @@ def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() 
         return 200, response_body
 
     adapter = GcpVisionOcrAdapter(credentials=_FakeGcpCredentials(), http_post=post)
-
     execution = adapter.execute(_request(PromptTask.OCR))
-
     assert execution.provider is ProviderName.GCP_VISION
     assert execution.output.task is PromptTask.OCR
     assert isinstance(execution.output, OcrOutput)
-    line = execution.output.lines[0]
+    assert execution.raw_response_ref is None
+    return list(execution.output.lines)
+
+
+def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() -> None:
+    # v0→v1 apontando para leste: texto correndo da esquerda para a direita, folha em pé.
+    lines = _vision_lines_of(
+        _vision_response(
+            [
+                _vision_word("3,50", [{"x": 10, "y": 20}, {"x": 50, "y": 20}]),
+                _vision_word("m", [{"x": 60, "y": 20}, {"x": 90, "y": 20}]),
+            ]
+        )
+    )
+
+    line = lines[0]
     assert line.raw_text == "3,50 m"
     assert line.bbox.left == pytest.approx(0.10)
     assert line.bbox.top == pytest.approx(0.20)
     assert line.bbox.right == pytest.approx(0.90)
     assert line.bbox.bottom == pytest.approx(0.40)
-    assert execution.raw_response_ref is None
+    assert line.rotation_ccw_degrees == 0
+
+
+def test_gcp_vision_adapter_reads_a_sideways_page_from_the_word_vertices() -> None:
+    """v0→v1 apontando para BAIXO: a folha precisa de um quarto de volta anti-horária."""
+    lines = _vision_lines_of(
+        _vision_response(
+            [
+                _vision_word("3,50", [{"x": 10, "y": 20}, {"x": 10, "y": 60}]),
+                _vision_word("m", [{"x": 10, "y": 70}, {"x": 10, "y": 90}]),
+            ]
+        )
+    )
+
+    assert lines[0].rotation_ccw_degrees == 90
+
+
+def test_gcp_vision_adapter_abstains_when_the_words_carry_no_vertices() -> None:
+    """Sem caixa de palavra não há direção: a linha sai sem voto, nunca com voto zero."""
+    lines = _vision_lines_of(
+        _vision_response([_vision_word("3,50", None), _vision_word("m", None)])
+    )
+
+    assert lines[0].raw_text == "3,50 m"
+    assert lines[0].rotation_ccw_degrees is None
 
 
 class _FakeMetadataResponse:

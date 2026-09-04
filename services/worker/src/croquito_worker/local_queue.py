@@ -1478,6 +1478,19 @@ class LocalQueueWorker:
                         failure_code="AI_BUDGET_EXCEEDED",
                     )
                     return 1
+            if review_snapshot.applied_rotation_ccw_degrees:
+                # A folha chegou deitada e foi endireitada antes de qualquer chamada de
+                # modelo. Sem este rastro, o operador que abrisse a revisão veria uma
+                # página em orientação diferente da do PDF e não teria como saber por quê.
+                # Só número e IDs opacos: nunca a imagem nem o conteúdo da folha.
+                logger.info(
+                    "page_orientation_corrected rotation_ccw_degrees=%d",
+                    review_snapshot.applied_rotation_ccw_degrees,
+                    extra={
+                        "stage": "PREVIEWING",
+                        "rotation_ccw_degrees": review_snapshot.applied_rotation_ccw_degrees,
+                    },
+                )
             if validated_upload.page_count > 1:
                 review_snapshot = ProviderReviewSnapshot(
                     packet=review_snapshot.packet.model_copy(
@@ -1492,7 +1505,9 @@ class LocalQueueWorker:
                     proposals=review_snapshot.proposals,
                     source_image_bytes=review_snapshot.source_image_bytes,
                     # A cópia é só para acrescentar a nota da página; perder as execuções
-                    # aqui faria o job de várias páginas ser o único a não publicar custo.
+                    # ou a rotação aqui faria o job de várias páginas ser o único a não
+                    # publicar custo e a não registrar que a folha foi endireitada.
+                    applied_rotation_ccw_degrees=review_snapshot.applied_rotation_ccw_degrees,
                     executions=review_snapshot.executions,
                 )
             source_image_key = f"tenants/{tenant_id}/jobs/{job_id}/review/source.png"
