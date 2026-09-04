@@ -1,6 +1,6 @@
 # F-051 · T2 — O ato de declarar elemento na revisão
 
-Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Pendente**  
+Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**  
 `feature_id: F-051` · `task_id: T2` · `depends_on: —`
 
 ## Objetivo

@@ -39,6 +39,8 @@ from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
 from croquito_worker.review_seed import SeedInputs, seed_review
 from tests.api.test_field_evidence import _packet as _survey_packet
 from tests.bundles import (
+    BALLOON_M,
+    BALLOON_READING_ID,
     CIRCLE_PROPOSAL_ID,
     CIRCLE_READING_ID,
     ELEVATION_M,
@@ -47,6 +49,7 @@ from tests.bundles import (
     HEIGHT_M,
     HEIGHT_PROPOSAL_ID,
     HEIGHT_READING_ID,
+    ORPHAN_BALLOON_READING_ID,
     WIDTH_M,
     WIDTH_PROPOSAL_ID,
     WIDTH_READING_ID,
@@ -1563,6 +1566,261 @@ def test_element_identity_declared_on_the_review_travels_through_the_trace(
     )
     assert terceiro.status_code == 200, terceiro.json()
     assert terceiro.json()["element_ref"] == "EL-003"
+
+
+def test_a_cota_balao_com_hint_vira_restricao_e_a_orfa_segue_como_hoje(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+) -> None:
+    """Os critérios 1 e 2 da F-051 pela cadeia inteira, num pacote com DUAS cotas-balão.
+
+    A T5 já provou que a identidade declarada na revisão viaja até a cena; o que falta, e é
+    o que este teste cobre, é o outro lado do elo: a cota escrita LONGE do referente
+    (`C=25,90 m`, hint estruturado "B") não tem candidata nenhuma até alguém declarar o
+    elemento — o portão a recusa —, e depois da declaração ela é confirmável e **entra no
+    solver**, aparecendo em `applied_spans` com o vão em metros.
+
+    A segunda cota-balão (`h=4,40 m`, hint "E") é o controle do critério 2: nenhum elemento
+    "E" foi declarado, ela não ganha candidata nenhuma pelo mesmo ato, e o único caminho que
+    lhe resta continua sendo o de hoje — `annotation=true`, fora do solver.
+    """
+    client, worker, storage, _queue = stack
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("balao-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("balao-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Cota-balão encontra seu elemento",
+            "default_unit": "m",
+        },
+    )
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+
+    bundle = write_seed_bundle(
+        tmp_path / "balao-bundle", source_sha256=source_sha256, balloons=True
+    )
+    seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(),
+            operator_id="tenant-admin-e2e",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+
+    # O ponto de partida: o hint estruturado chegou até a leitura (F-051 T1) e as duas
+    # cotas-balão estão na lista das NÃO associadas — a proximidade não as alcança.
+    inicial = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("balao-inicial")).json()
+    leituras = {reading["id"]: reading for reading in inicial["packet"]["readings"]}
+    assert leituras[BALLOON_READING_ID]["target_entity_label"] == "B"
+    assert leituras[ORPHAN_BALLOON_READING_ID]["target_entity_label"] == "E"
+    assert set(inicial["associations"]["unassociated_reading_ids"]) == {
+        BALLOON_READING_ID,
+        ORPHAN_BALLOON_READING_ID,
+    }
+
+    # Sem identidade declarada não há por onde confirmar: o portão único recusa a associação
+    # que ninguém propôs, e é essa recusa que a declaração vai destravar.
+    sem_identidade = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=_headers("balao-sem-identidade"),
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": BALLOON_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota-balão conferida contra a folha original.",
+                    "association_proposal_id": WIDTH_PROPOSAL_ID,
+                }
+            ],
+        },
+    )
+    assert sem_identidade.status_code == 422
+    assert sem_identidade.json()["detail"]["code"] == "DOMAIN_VALIDATION_FAILED"
+
+    declared = client.post(
+        f"/v1/jobs/{job_id}/review/elements",
+        headers=_headers("balao-declara"),
+        json={
+            "base_version": 1,
+            "proposal_ids": [WIDTH_PROPOSAL_ID, HEIGHT_PROPOSAL_ID],
+            "label": "B",
+            "reason": "As duas linhas cotadas são o alambrado que o balão B nomeia.",
+        },
+    )
+    assert declared.status_code == 200, declared.json()
+    assert declared.json()["element_ref"] == "EL-001"
+    review_version = declared.json()["review_version"]
+
+    # A leitura da revisão é a mesma rota de sempre: o ato recunhou os candidatos, e eles
+    # chegam ao revisor pelo conjunto persistido — dois pela identidade para o balão "B",
+    # NENHUM para o "E", que não casa com elemento nenhum (critério de aceite 2).
+    depois = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("balao-depois")).json()
+    por_identidade = [
+        candidate
+        for candidate in depois["associations"]["candidates"]
+        if candidate["relation"] == "element_identity"
+    ]
+    assert [candidate["proposal_id"] for candidate in por_identidade] == [
+        WIDTH_PROPOSAL_ID,
+        HEIGHT_PROPOSAL_ID,
+    ]
+    assert {candidate["reading_id"] for candidate in por_identidade} == {BALLOON_READING_ID}
+    assert all(candidate["precision"] == "unresolved" for candidate in por_identidade)
+    assert all(candidate["export"] is False for candidate in por_identidade)
+    # As de proximidade continuam onde estavam: a candidata por identidade se soma a elas.
+    assert [
+        (candidate["reading_id"], candidate["proposal_id"], candidate["relation"])
+        for candidate in depois["associations"]["candidates"]
+        if candidate["relation"] != "element_identity"
+    ] == [
+        (WIDTH_READING_ID, WIDTH_PROPOSAL_ID, "nearest_geometry"),
+        (HEIGHT_READING_ID, HEIGHT_PROPOSAL_ID, "nearest_geometry"),
+        (CIRCLE_READING_ID, CIRCLE_PROPOSAL_ID, "inside_or_near_circle"),
+    ]
+    assert depois["associations"]["unassociated_reading_ids"] == [ORPHAN_BALLOON_READING_ID]
+
+    declaradas = client.get(
+        f"/v1/jobs/{job_id}/review/elements", headers=_headers("balao-elementos")
+    ).json()
+    assert [
+        (item["element_ref"], item["label"], item["status"]) for item in declaradas["declarations"]
+    ] == [("EL-001", "B", "active")]
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=_headers("balao-decisions"),
+        json={
+            "base_version": review_version,
+            "decisions": [
+                {
+                    "reading_id": WIDTH_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota conferida na evidência protegida.",
+                    "association_proposal_id": WIDTH_PROPOSAL_ID,
+                },
+                {
+                    "reading_id": HEIGHT_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota conferida na evidência protegida.",
+                    "association_proposal_id": HEIGHT_PROPOSAL_ID,
+                },
+                {
+                    "reading_id": CIRCLE_READING_ID,
+                    "action": "confirm",
+                    "justification": "Diâmetro conferido na evidência protegida.",
+                    "association_proposal_id": CIRCLE_PROPOSAL_ID,
+                },
+                {
+                    # A confirmação da cota-balão passa pelo MESMO portão que recusou acima.
+                    "reading_id": BALLOON_READING_ID,
+                    "action": "confirm",
+                    "justification": "Balão B conferido: mede o alambrado declarado.",
+                    "association_proposal_id": WIDTH_PROPOSAL_ID,
+                },
+                {
+                    # O balão órfão só tem o caminho de hoje.
+                    "reading_id": ORPHAN_BALLOON_READING_ID,
+                    "action": "confirm",
+                    "justification": "Altura de balão sem elemento declarado: anotação.",
+                    "annotation": True,
+                },
+            ],
+        },
+    )
+    assert decided.status_code == 200, decided.json()
+    assert decided.json()["selected_associations"][BALLOON_READING_ID] == WIDTH_PROPOSAL_ID
+    assert ORPHAN_BALLOON_READING_ID not in decided.json()["selected_associations"]
+
+    requested = client.post(
+        f"/v1/jobs/{job_id}/trace-solves",
+        headers=_headers("balao-tracado"),
+        json={
+            "base_review_version": decided.json()["version"],
+            "base_scene_version": decided.json()["scene"]["version"],
+            "proposal_ids": [WIDTH_PROPOSAL_ID, HEIGHT_PROPOSAL_ID, CIRCLE_PROPOSAL_ID],
+            "unlabelled_proposal_ids": [CIRCLE_PROPOSAL_ID],
+            # O caminho de hoje para o balão órfão, e o custo dele: a medida vira NOTA presa
+            # a uma forma escolhida à mão — texto na prancha, nunca restrição do solver.
+            "note_associations": {ORPHAN_BALLOON_READING_ID: HEIGHT_PROPOSAL_ID},
+            "note": "Traçado aceito em lote pelo profissional identificado.",
+            "title": "CAMPO SINTETICO",
+        },
+    )
+    assert requested.status_code == 202
+    assert worker.run_once() == 1
+    body = client.get(
+        f"/v1/jobs/{job_id}/trace-solves/{requested.json()['trace_solve_id']}",
+        headers=_headers("balao-poll"),
+    ).json()
+    assert body["status"] == "COMPLETED"
+    assert body["solve_status"] == "solved_unapproved", body["blockers"]
+
+    # O que o critério 1 pede: a cota-balão é RESTRIÇÃO do solver, com vão ancorado em
+    # metros — não mais anotação presa na folha.
+    ancoras = {report["reading_id"]: report for report in body["applied_spans"]}
+    assert BALLOON_READING_ID in ancoras
+    assert ancoras[BALLOON_READING_ID]["axis"] == "x"
+    assert ancoras[BALLOON_READING_ID]["value_m"] == pytest.approx(float(BALLOON_M))
+    assert ancoras[BALLOON_READING_ID]["proposal_id"] == WIDTH_PROPOSAL_ID
+    # O balão órfão não virou restrição nenhuma: continua fora do solver, como hoje.
+    assert ORPHAN_BALLOON_READING_ID not in ancoras
+    assert ORPHAN_BALLOON_READING_ID not in body["unapplied_reading_ids"]
+    # Resíduo: a cota-balão e a cota de perto prometem o mesmo vão e o mesmo número, então
+    # ninguém disputa nada e nenhum resíduo reprova.
+    assert body["contested_spans"] == []
+    assert body["residual_summary"]["failed_count"] == 0
+
+    scene = client.get(f"/v1/jobs/{job_id}/scene", headers=_headers("balao-cena")).json()
+    assert scene["element_labels"] == {"EL-001": "B"}
+    identificadas = {
+        entity["id"]: entity["element_ref"]
+        for entity in scene["entities"]
+        if entity["element_ref"] is not None
+    }
+    assert set(identificadas.values()) == {"EL-001"}
+    # O balão órfão chegou à cena como NOTA: texto preso a uma forma, sem `element_ref` e
+    # sem restringir geometria nenhuma — o custo que a F-051 existe para tirar do caminho
+    # de quem TEM elemento declarado, e que continua de pé para quem não tem.
+    assert body["note_count"] == 1
+    nota = next(
+        entity
+        for entity in scene["entities"]
+        if entity["kind"] == "text"
+        and ORPHAN_BALLOON_READING_ID in entity["provenance"]["source_ids"]
+    )
+    assert nota["element_ref"] is None
+    assert nota["id"] not in identificadas
 
 
 def test_traced_scene_carries_the_scope_criterion_to_the_audited_package(

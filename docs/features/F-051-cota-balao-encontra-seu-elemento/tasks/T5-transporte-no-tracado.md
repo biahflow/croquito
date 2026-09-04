@@ -1,6 +1,6 @@
 # F-051 · T5 — O traçado transporta a identidade
 
-Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Pendente**  
+Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**  
 `feature_id: F-051` · `task_id: T5` · `depends_on: T2`
 
 ## Objetivo

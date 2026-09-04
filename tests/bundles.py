@@ -45,10 +45,18 @@ CIRCLE_PROPOSAL_ID = "vp_3333333333333333"
 ELEVATION_READING_ID = "rd_4444444444444444"
 ELEVATION_PROPOSAL_ID = "vp_4444444444444444"
 
+#: As duas cotas-balão da F-051: medida escrita LONGE do que ela mede, ligada ao referente
+#: pela letra. A primeira casa com o elemento "B" declarado; a segunda cita um "E" que
+#: ninguém declarou, e por isso continua no caminho de hoje (critério de aceite 2).
+BALLOON_READING_ID = "rd_5555555555555555"
+ORPHAN_BALLOON_READING_ID = "rd_6666666666666666"
+
 WIDTH_M = "25.90"
 HEIGHT_M = "21.75"
 CIRCLE_DIAMETER_M = "6.00"
 ELEVATION_M = "3.80"
+BALLOON_M = "25.90"
+ORPHAN_BALLOON_M = "4.40"
 
 
 def _write_json(path: Path, payload: BaseModel) -> Path:
@@ -70,6 +78,7 @@ def _reading(
     decided: bool,
     raw_text: str | None = None,
     ocr_corroborated: bool | None = None,
+    entity_label: str | None = None,
 ) -> DimensionReading:
     decision = (
         HumanDecision(
@@ -97,6 +106,7 @@ def _reading(
         kind=kind,
         written_decimals=2,
         target_hint=hint,
+        target_entity_label=entity_label,
         extractor="local-fixture",
         extractor_version="v1",
         ocr_corroborated=ocr_corroborated,
@@ -106,7 +116,12 @@ def _reading(
 
 
 def build_packet(
-    *, dataset_id: str, digest: str, decided: bool = False, elevation: bool = False
+    *,
+    dataset_id: str,
+    digest: str,
+    decided: bool = False,
+    elevation: bool = False,
+    balloons: bool = False,
 ) -> ReviewPacket:
     """Pacote sintético do bundle. `elevation` acrescenta uma quarta leitura (F-029/T6).
 
@@ -114,6 +129,13 @@ def build_packet(
     o tier de anotação existe para resolver: ela não é citada pelo pedido do solver, e o
     braço de OCR rodou sem encontrá-la — testemunha única, exatamente o caso das 8
     elevações da rodada real V4 que motivaram o ADR-0044.
+
+    `balloons` acrescenta as duas cotas-balão da F-051, escritas LONGE do que medem (`left`
+    100 e 120, contra propostas que vivem entre 0 e 30 px) e sem candidata de proximidade
+    nenhuma: `C=25,90 m`, que aponta o elemento "B", e `h=4,40 m`, que aponta um "E" que
+    ninguém declara. A letra não está no texto da cota: ela chega no rótulo ESTRUTURADO
+    (`target_entity_label`, F-051 T1), que é o campo por onde o casamento por identidade
+    procura o referente — e é essa separação que a feature existe para explorar.
     """
     return ReviewPacket(
         dataset_id=dataset_id,
@@ -168,6 +190,36 @@ def build_packet(
                 if elevation
                 else []
             ),
+            *(
+                [
+                    _reading(
+                        BALLOON_READING_ID,
+                        dataset_id=dataset_id,
+                        digest=digest,
+                        value=BALLOON_M,
+                        kind="width",
+                        hint="(B) fecho da área",
+                        left=100,
+                        decided=decided,
+                        raw_text=f"C={BALLOON_M.replace('.', ',')} m",
+                        entity_label="B",
+                    ),
+                    _reading(
+                        ORPHAN_BALLOON_READING_ID,
+                        dataset_id=dataset_id,
+                        digest=digest,
+                        value=ORPHAN_BALLOON_M,
+                        kind="height",
+                        hint="(E) altura do balão órfão",
+                        left=120,
+                        decided=decided,
+                        raw_text=f"h={ORPHAN_BALLOON_M.replace('.', ',')} m",
+                        entity_label="E",
+                    ),
+                ]
+                if balloons
+                else []
+            ),
         ],
         safety_notes=["Fixture local.", "Revisão humana obrigatória."],
     )
@@ -179,6 +231,7 @@ def build_associations(
     digest: str,
     drop_circle: bool = False,
     elevation: bool = False,
+    balloons: bool = False,
     association_confidences: dict[str, float] | None = None,
 ) -> AssociationSet:
     """Candidatos do bundle sintético; `association_confidences` é opt-in por leitura.
@@ -236,13 +289,19 @@ def build_associations(
         confidence = confidences.get(str(candidate["reading_id"]))
         if confidence is not None:
             candidate["association_confidence"] = confidence
+    # As cotas-balão nascem SEM candidata: é a definição do caso — o funil de proximidade
+    # não alcança o referente do outro lado da folha. Elas entram na lista das não
+    # associadas, que é onde o associador as deixa.
+    unassociated = [CIRCLE_READING_ID] if drop_circle else []
+    if balloons:
+        unassociated = [*unassociated, BALLOON_READING_ID, ORPHAN_BALLOON_READING_ID]
     return AssociationSet.model_validate(
         {
             "dataset_id": dataset_id,
             "page_number": 1,
             "image_sha256": digest,
             "candidates": candidates,
-            "unassociated_reading_ids": [CIRCLE_READING_ID] if drop_circle else [],
+            "unassociated_reading_ids": unassociated,
             "safety_notes": ["pixels", "não confirma", "não exporta"],
         }
     )
@@ -352,6 +411,7 @@ def write_seed_bundle(
     manifest_source_sha256: str | None = None,
     association_confidences: dict[str, float] | None = None,
     elevation: bool = False,
+    balloons: bool = False,
 ) -> dict[str, Path]:
     """Writes the six files `seed-review` requires, with every digest bound to disk."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -364,7 +424,11 @@ def write_seed_bundle(
         "packet": _write_json(
             directory / "review-packet.json",
             build_packet(
-                dataset_id=dataset_id, digest=digest, decided=decided, elevation=elevation
+                dataset_id=dataset_id,
+                digest=digest,
+                decided=decided,
+                elevation=elevation,
+                balloons=balloons,
             ),
         ),
         "associations": _write_json(
@@ -374,6 +438,7 @@ def write_seed_bundle(
                 digest=digest,
                 drop_circle=drop_circle_candidate,
                 elevation=elevation,
+                balloons=balloons,
                 association_confidences=association_confidences,
             ),
         ),
