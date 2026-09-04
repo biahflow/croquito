@@ -18,9 +18,11 @@ com um contrato de leitura só), e o gate que podia **cancelar a F-044** foi cum
 forneceu três orçamentos reais e a hipótese de repetição se confirmou, com 80% dos rótulos
 reaparecendo entre praças e 96,1% dos repetidos com pacote de códigos idêntico ou contido. O
 ganho medido, de 54 a 120 linhas por praça, é cerca de cinco vezes a estimativa que originou
-a prioridade `MEDIUM` dela, que **fica marcada para revisão do dono**. Os pacotes de design da
-F-042 e da F-043 ganharam **revisão 2** depois que o documento real e a implementação
-refutaram premissas do desenho, e as duas aguardam aprovação. Registrado antes:
+a prioridade `MEDIUM` dela — revista pelo dono em 2026-08-28: **elevada a `HIGH`**. Os
+pacotes de design da F-042 e da F-043 ganharam **revisão 2** depois que o documento real e a
+implementação refutaram premissas do desenho, e as duas revisões foram **aprovadas na mesma
+data (2026-08-28)** — este parágrafo dizia "aguardam aprovação" por dessincronia, corrigida
+em 2026-09-04. Registrado antes:
 
 > **F-042, F-043 e F-044 registradas** `READY_FOR_PLANNING`, de
 uma pergunta de ROI do dono do produto medida contra a planilha orçamentária real do Campo do
