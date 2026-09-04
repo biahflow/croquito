@@ -11,6 +11,8 @@
 # acorda este workflow e o `deploy-hml` no mesmo segundo, para o mesmo commit. A
 # duplicação continua existindo e passa a ser aceita: os dois rodam em paralelo, então não
 # atrasam ninguém, e quem barra a publicação continua sendo o portão de dentro do deploy.
+# (Desde 2026-09-04 o gatilho de push do `deploy-hml` está desligado — HML derrubado por
+# custo; enquanto durar, este workflow é o único que acorda no merge.)
 #
 # O que este workflow cobre e o deploy não: merge que toca só `docs/`, `tests/` ou `infra/`.
 # O `deploy-hml` tem filtro de `paths` e nem acorda nesses casos — sem este gatilho, uma
