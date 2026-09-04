@@ -50,11 +50,6 @@
         },
         {
           "kind": "text",
-          "ref": "A7",
-          "value": "GRUPO"
-        },
-        {
-          "kind": "text",
           "ref": "B7",
           "value": "ITEM"
         },
@@ -90,222 +85,130 @@
         },
         {
           "kind": "text",
-          "ref": "A8",
-          "value": "01"
-        },
-        {
-          "kind": "text",
           "ref": "B8",
-          "value": "01.1"
-        },
-        {
-          "kind": "text",
-          "ref": "C8",
-          "value": "SIN.PLACA.001"
-        },
-        {
-          "kind": "text",
-          "ref": "D8",
-          "value": "PLACA DE OBRA SINTETICA"
-        },
-        {
-          "kind": "text",
-          "ref": "E8",
-          "value": "m2"
-        },
-        {
-          "kind": "number",
-          "ref": "F8",
-          "value": "0.00"
-        },
-        {
-          "kind": "number",
-          "ref": "G8",
-          "value": "612.50"
-        },
-        {
-          "formula": "=TRUNC(F8*G8,2)",
-          "kind": "formula",
-          "ref": "H8",
-          "value": "0.00"
-        },
-        {
-          "kind": "text",
-          "ref": "A9",
           "value": "01"
         },
         {
           "kind": "text",
           "ref": "B9",
-          "value": "01.2"
+          "value": "01.1"
         },
         {
           "kind": "text",
           "ref": "C9",
-          "value": "EMOP.AD.001"
+          "value": "SIN.PLACA.001"
         },
         {
           "kind": "text",
           "ref": "D9",
-          "value": "PAVIMENTACAO SINTETICA EMOP TIPO 1"
+          "value": "PLACA DE OBRA SINTETICA"
         },
         {
           "kind": "text",
           "ref": "E9",
-          "value": "M2"
+          "value": "m2"
         },
         {
           "kind": "number",
           "ref": "F9",
-          "value": "18.40"
+          "value": "0.00"
         },
         {
           "kind": "number",
           "ref": "G9",
-          "value": "154.31"
+          "value": "612.50"
         },
         {
           "formula": "=TRUNC(F9*G9,2)",
           "kind": "formula",
           "ref": "H9",
-          "value": "2839.30"
-        },
-        {
-          "kind": "text",
-          "ref": "A10",
-          "value": "01"
+          "value": "0.00"
         },
         {
           "kind": "text",
           "ref": "B10",
-          "value": "01.3"
+          "value": "01.2"
         },
         {
           "kind": "text",
           "ref": "C10",
-          "value": "SIN.TAPUME.001"
+          "value": "EMOP.AD.001"
         },
         {
           "kind": "text",
           "ref": "D10",
-          "value": "TAPUME SINTETICO DE CANTEIRO"
+          "value": "PAVIMENTACAO SINTETICA EMOP TIPO 1"
         },
         {
           "kind": "text",
           "ref": "E10",
-          "value": "m"
+          "value": "M2"
         },
         {
           "kind": "number",
           "ref": "F10",
-          "value": "0.00"
+          "value": "18.40"
         },
         {
           "kind": "number",
-          "ref": "H10",
-          "value": "0.00"
+          "ref": "G10",
+          "value": "154.31"
         },
         {
-          "kind": "text",
-          "ref": "A11",
-          "value": "02"
+          "formula": "=TRUNC(F10*G10,2)",
+          "kind": "formula",
+          "ref": "H10",
+          "value": "2839.30"
         },
         {
           "kind": "text",
           "ref": "B11",
-          "value": "02.1"
+          "value": "01.3"
         },
         {
           "kind": "text",
           "ref": "C11",
-          "value": "CE02100010(/)"
+          "value": "SIN.TAPUME.001"
         },
         {
           "kind": "text",
           "ref": "D11",
-          "value": "ALAMBRADO SINTETICO TELA GALVANIZADA"
+          "value": "TAPUME SINTETICO DE CANTEIRO"
         },
         {
           "kind": "text",
           "ref": "E11",
-          "value": "m2"
+          "value": "m"
         },
         {
           "kind": "number",
           "ref": "F11",
-          "value": "58.50"
+          "value": "0.00"
         },
         {
           "kind": "number",
-          "ref": "G11",
-          "value": "160.43"
-        },
-        {
-          "formula": "=TRUNC(F11*G11,2)",
-          "kind": "formula",
           "ref": "H11",
-          "value": "9385.15"
-        },
-        {
-          "kind": "text",
-          "ref": "A12",
-          "value": "02"
+          "value": "0.00"
         },
         {
           "kind": "text",
           "ref": "B12",
-          "value": "02.2"
-        },
-        {
-          "kind": "text",
-          "ref": "C12",
-          "value": "SIN.BANCO.001"
-        },
-        {
-          "kind": "text",
-          "ref": "D12",
-          "value": "BANCO SINTETICO DE CONCRETO"
-        },
-        {
-          "kind": "text",
-          "ref": "E12",
-          "value": "UN"
-        },
-        {
-          "kind": "number",
-          "ref": "F12",
-          "value": "0.00"
-        },
-        {
-          "kind": "number",
-          "ref": "G12",
-          "value": "880.00"
-        },
-        {
-          "formula": "=TRUNC(F12*G12,2)",
-          "kind": "formula",
-          "ref": "H12",
-          "value": "0.00"
-        },
-        {
-          "kind": "text",
-          "ref": "A13",
           "value": "02"
         },
         {
           "kind": "text",
           "ref": "B13",
-          "value": "02.3"
+          "value": "02.1"
         },
         {
           "kind": "text",
           "ref": "C13",
-          "value": "AD04050060(/)"
+          "value": "CE02100010(/)"
         },
         {
           "kind": "text",
           "ref": "D13",
-          "value": "PISO INTERTRAVADO SINTETICO 10CM"
+          "value": "ALAMBRADO SINTETICO TELA GALVANIZADA"
         },
         {
           "kind": "text",
@@ -315,217 +218,274 @@
         {
           "kind": "number",
           "ref": "F13",
-          "value": "61.20"
+          "value": "58.50"
         },
         {
           "kind": "number",
           "ref": "G13",
-          "value": "164.00"
+          "value": "160.43"
         },
         {
           "formula": "=TRUNC(F13*G13,2)",
           "kind": "formula",
           "ref": "H13",
-          "value": "10036.80"
-        },
-        {
-          "kind": "text",
-          "ref": "A14",
-          "value": "04"
+          "value": "9385.15"
         },
         {
           "kind": "text",
           "ref": "B14",
-          "value": "04.1"
+          "value": "02.2"
         },
         {
           "kind": "text",
           "ref": "C14",
-          "value": "COMP.GRAMADO.001"
+          "value": "SIN.BANCO.001"
         },
         {
           "kind": "text",
           "ref": "D14",
-          "value": "EXECUCAO DE GRAMADO SINTETICO EM PLACAS"
+          "value": "BANCO SINTETICO DE CONCRETO"
         },
         {
           "kind": "text",
           "ref": "E14",
-          "value": "m2"
+          "value": "UN"
         },
         {
           "kind": "number",
           "ref": "F14",
-          "value": "1234.50"
+          "value": "0.00"
         },
         {
           "kind": "number",
           "ref": "G14",
-          "value": "35.93"
+          "value": "880.00"
         },
         {
           "formula": "=TRUNC(F14*G14,2)",
           "kind": "formula",
           "ref": "H14",
-          "value": "44355.58"
-        },
-        {
-          "kind": "text",
-          "ref": "A15",
-          "value": "04"
+          "value": "0.00"
         },
         {
           "kind": "text",
           "ref": "B15",
-          "value": "04.2"
+          "value": "02.3"
         },
         {
           "kind": "text",
           "ref": "C15",
-          "value": "SIN.MUDA.001"
+          "value": "AD04050060(/)"
         },
         {
           "kind": "text",
           "ref": "D15",
-          "value": "MUDA SINTETICA DE ARVORE"
+          "value": "PISO INTERTRAVADO SINTETICO 10CM"
         },
         {
           "kind": "text",
           "ref": "E15",
-          "value": "UN"
+          "value": "m2"
         },
         {
           "kind": "number",
           "ref": "F15",
-          "value": "0.00"
+          "value": "61.20"
         },
         {
           "kind": "number",
-          "ref": "H15",
-          "value": "0.00"
+          "ref": "G15",
+          "value": "164.00"
         },
         {
-          "kind": "text",
-          "ref": "A16",
-          "value": "04"
+          "formula": "=TRUNC(F15*G15,2)",
+          "kind": "formula",
+          "ref": "H15",
+          "value": "10036.80"
         },
         {
           "kind": "text",
           "ref": "B16",
-          "value": "04.3"
-        },
-        {
-          "kind": "text",
-          "ref": "C16",
-          "value": "EMOP.CE.001"
-        },
-        {
-          "kind": "text",
-          "ref": "D16",
-          "value": "MOBILIARIO SINTETICO EMOP"
-        },
-        {
-          "kind": "text",
-          "ref": "E16",
-          "value": "UN"
-        },
-        {
-          "kind": "number",
-          "ref": "F16",
-          "value": "4.00"
-        },
-        {
-          "kind": "number",
-          "ref": "G16",
-          "value": "1225.00"
-        },
-        {
-          "formula": "=TRUNC(F16*G16,2)",
-          "kind": "formula",
-          "ref": "H16",
-          "value": "4900.00"
-        },
-        {
-          "kind": "text",
-          "ref": "A17",
           "value": "04"
         },
         {
           "kind": "text",
           "ref": "B17",
-          "value": "04.4"
+          "value": "04.1"
         },
         {
           "kind": "text",
           "ref": "C17",
-          "value": "SIN.LIXEIRA.001"
+          "value": "COMP.GRAMADO.001"
         },
         {
           "kind": "text",
           "ref": "D17",
-          "value": "LIXEIRA SINTETICA DUPLA"
+          "value": "EXECUCAO DE GRAMADO SINTETICO EM PLACAS"
         },
         {
           "kind": "text",
           "ref": "E17",
-          "value": "UN"
+          "value": "m2"
         },
         {
           "kind": "number",
           "ref": "F17",
-          "value": "0.00"
+          "value": "1234.50"
         },
         {
           "kind": "number",
           "ref": "G17",
-          "value": "445.30"
+          "value": "35.93"
         },
         {
           "formula": "=TRUNC(F17*G17,2)",
           "kind": "formula",
           "ref": "H17",
+          "value": "44355.58"
+        },
+        {
+          "kind": "text",
+          "ref": "B18",
+          "value": "04.2"
+        },
+        {
+          "kind": "text",
+          "ref": "C18",
+          "value": "SIN.MUDA.001"
+        },
+        {
+          "kind": "text",
+          "ref": "D18",
+          "value": "MUDA SINTETICA DE ARVORE"
+        },
+        {
+          "kind": "text",
+          "ref": "E18",
+          "value": "UN"
+        },
+        {
+          "kind": "number",
+          "ref": "F18",
+          "value": "0.00"
+        },
+        {
+          "kind": "number",
+          "ref": "H18",
           "value": "0.00"
         },
         {
           "kind": "text",
+          "ref": "B19",
+          "value": "04.3"
+        },
+        {
+          "kind": "text",
+          "ref": "C19",
+          "value": "EMOP.CE.001"
+        },
+        {
+          "kind": "text",
           "ref": "D19",
-          "value": "TOTAL SEM BDI"
+          "value": "MOBILIARIO SINTETICO EMOP"
+        },
+        {
+          "kind": "text",
+          "ref": "E19",
+          "value": "UN"
         },
         {
           "kind": "number",
+          "ref": "F19",
+          "value": "4.00"
+        },
+        {
+          "kind": "number",
+          "ref": "G19",
+          "value": "1225.00"
+        },
+        {
+          "formula": "=TRUNC(F19*G19,2)",
+          "kind": "formula",
           "ref": "H19",
-          "value": "57221.26"
+          "value": "4900.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B20",
+          "value": "04.4"
+        },
+        {
+          "kind": "text",
+          "ref": "C20",
+          "value": "SIN.LIXEIRA.001"
         },
         {
           "kind": "text",
           "ref": "D20",
+          "value": "LIXEIRA SINTETICA DUPLA"
+        },
+        {
+          "kind": "text",
+          "ref": "E20",
+          "value": "UN"
+        },
+        {
+          "kind": "number",
+          "ref": "F20",
+          "value": "0.00"
+        },
+        {
+          "kind": "number",
+          "ref": "G20",
+          "value": "445.30"
+        },
+        {
+          "formula": "=TRUNC(F20*G20,2)",
+          "kind": "formula",
+          "ref": "H20",
+          "value": "0.00"
+        },
+        {
+          "kind": "text",
+          "ref": "D22",
+          "value": "TOTAL SEM BDI"
+        },
+        {
+          "kind": "number",
+          "ref": "H22",
+          "value": "57221.26"
+        },
+        {
+          "kind": "text",
+          "ref": "D23",
           "value": "BDI (25.00%)"
         },
         {
-          "formula": "=H21-H19",
+          "formula": "=H24-H22",
           "kind": "formula",
-          "ref": "H20",
+          "ref": "H23",
           "value": "14295.57"
         },
         {
           "kind": "text",
-          "ref": "D21",
+          "ref": "D24",
           "value": "TOTAL GERAL"
         },
         {
-          "formula": "=SUM(H8:H17)",
+          "formula": "=SUM(H8:H20)",
           "kind": "formula",
-          "ref": "H21",
+          "ref": "H24",
           "value": "71516.83"
         },
         {
           "kind": "text",
-          "ref": "B23",
+          "ref": "B26",
           "value": "ITENS SEM PREÇO NA CASCATA"
         },
         {
           "kind": "text",
-          "ref": "B24",
+          "ref": "B27",
           "value": "ti_d16efef092c62fc9"
         }
       ],
