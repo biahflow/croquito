@@ -4,9 +4,9 @@
 
 `READY_FOR_PLANNING`
 
-> Condicionado aos dois gates humanos da seção Human Gates — aceite do
-> [ADR-0063](../../adr/0063-identidade-de-elemento-nasce-na-revisao.md) e Design Approval
-> Package —, que precedem o planejamento por esta feature ser `INTERFACE_CHANGE`.
+> **ADR-0063 aceito em 2026-09-04** (Daniel Campos, pelo chat) — gate 1 cumprido.
+> Condicionado agora só ao Design Approval Package (gate 2), que precede o planejamento
+> por esta feature ser `INTERFACE_CHANGE`.
 >
 > Nasce em 2026-09-04 da issue
 > [#139](https://github.com/biahflow/croquito/issues/139), aberta pela primeira revisão
@@ -109,8 +109,8 @@ fechando o elo croqui→cena→quantitativo.
 
 ## Dependencies
 
-- [ADR-0063](../../adr/0063-identidade-de-elemento-nasce-na-revisao.md) — **Proposed**,
-  aceite humano pendente (gate 1).
+- [ADR-0063](../../adr/0063-identidade-de-elemento-nasce-na-revisao.md) — **Accepted em
+  2026-09-04** (gate 1 cumprido).
 - [ADR-0058](../../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)
   — Accepted; esta feature estende o ato para a revisão sem mudar o princípio.
 - F-047 (DONE) — o ato de identidade na cena, a proposta assistida (T6) e o quantitativo
@@ -137,7 +137,7 @@ fechando o elo croqui→cena→quantitativo.
 
 ## Human Gates
 
-1. **Aceite do ADR-0063** — pendente.
+1. ~~**Aceite do ADR-0063**~~ — **cumprido em 2026-09-04** (Daniel Campos, pelo chat).
 2. **Design Approval Package** da tela (declarar identidade sobre propostas + candidatas
    por identidade no seletor) — pendente; precede o planejamento (`INTERFACE_CHANGE`).
 3. Aceite final contra o caso real do Toca (critério 1).
