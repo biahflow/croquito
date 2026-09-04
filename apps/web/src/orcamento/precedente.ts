@@ -23,7 +23,8 @@
  * - **sem precedente, ou com fonte de preço diferente, o bloco NÃO EXISTE** — as funções
  *   devolvem `null`, e não um precedente vazio que a tela teria de desabilitar;
  * - **o aceite é do pacote inteiro do rótulo, em uma revisão só, com a lista à vista**
- *   (`abrirConfirmacao` → `pedidoDeConfirmacao`, um pedido com os N códigos);
+ *   (`abrirConfirmacao` → `pedidoDeConfirmacao`, um pedido com os N códigos, CITANDO a fonte
+ *   de preço para a qual todos eles convergem);
  * - **aceitar o precedente não fecha o pacote**: o pedido que sai daqui é sempre
  *   `confirm`, e o fechamento continua sendo ato próprio, de outra rota.
  *
@@ -112,6 +113,11 @@ export function precedenteDoItem(
  * é ela que o cabeçalho do bloco nomeia. `null` é estado honesto: um precedente que
  * atravessasse duas tabelas não pode ser rotulado com o nome de uma delas, e a fonte de
  * cada código continua sendo o `catalog_sha256` que ele carrega.
+ *
+ * Ela é também a condição do ACEITE EM LOTE: a rota exige que os N códigos citem UMA fonte
+ * (`catalog_sha256`), e um pacote que atravessa duas tabelas não tem essa fonte para citar.
+ * Sem convergência o ato não é oferecido — oferecê-lo seria um botão que o servidor sempre
+ * recusaria, que é o defeito que a evidência de navegador de 2026-09-04 encontrou.
  */
 export function fonteDoPrecedente(
   precedente: ItemPrecedent,
@@ -249,18 +255,40 @@ export type ConfirmacaoDoPrecedente = {
    * clique grava, e é ali que a marca precisa aparecer pela segunda vez.
    */
   worksiteCount: number;
+  /**
+   * A fonte de preço que o pedido vai CITAR — o `catalog_sha256` para o qual todos os
+   * códigos do pacote convergem (`fonteDoPrecedente`).
+   *
+   * Ela viaja na confirmação, e não é recalculada na hora de montar o corpo, porque é o que
+   * torna o corpo do lote inexpressável sem fonte: quem não tem fonte convergente não abre
+   * confirmação nenhuma, e quem abriu já carrega a citação que a rota exige.
+   */
+  catalogSha256: string;
   codes: readonly PrecedentCode[];
 };
 
-/** Põe o pacote à vista. Nada é gravado aqui: o ato é o clique seguinte. */
+/**
+ * Põe o pacote à vista. Nada é gravado aqui: o ato é o clique seguinte.
+ *
+ * `null` quando a `fonte` não converge (`fonteDoPrecedente` devolveu `null`): a rota exige
+ * que os N códigos citem UMA fonte, e sem ela não há corpo válido a montar. Abrir a
+ * confirmação assim mesmo produziria a lista do que "vai ser gravado" para um pedido que o
+ * servidor recusa — foi exatamente isso que a evidência de navegador de 2026-09-04 flagrou,
+ * com o campo faltando em vez da fonte divergindo.
+ */
 export function abrirConfirmacao(
   precedente: ItemPrecedent,
   rotulo: string,
-): ConfirmacaoDoPrecedente {
+  fonte: CascadeEntry | null,
+): ConfirmacaoDoPrecedente | null {
+  if (fonte === null) {
+    return null;
+  }
   return {
     itemId: precedente.item_id,
     rotulo,
     worksiteCount: precedente.worksite_count,
+    catalogSha256: fonte.source_sha256,
     codes: [...precedente.codes],
   };
 }
@@ -285,12 +313,18 @@ export function podeConfirmar(confirmacao: ConfirmacaoDoPrecedente): boolean {
 }
 
 /**
- * O rascunho do ÚNICO pedido que o aceite dispara: `confirm` com os N códigos do rótulo,
- * numa revisão só.
+ * O rascunho do ÚNICO pedido que o aceite dispara: `confirm` com os N códigos do rótulo e a
+ * fonte de preço citada, numa revisão só.
  *
  * `action` é sempre `confirm`, e nunca fechamento: aceitar o precedente não declara o
  * pacote completo — o fechamento continua sendo ato separado (F-038), e um atalho que
  * fechasse junto tiraria da orçamentista a decisão de dizer "acabou".
+ *
+ * `catalogSha256` viaja com o lote porque **a rota o exige em toda confirmação**, singular
+ * ou em pacote (`EstimateCodeAssignmentDecisionRequest`: *"todos os códigos citam a MESMA
+ * fonte, que é a que `catalog_sha256` declara"*). O contrato escrito nas tasks T3a/T3b o
+ * omitia, e a tela implementou o contrato: o pedido saía sem o campo e voltava `422` —
+ * nenhum aceite em lote jamais gravou até 2026-09-04.
  */
 export function pedidoDeConfirmacao(
   confirmacao: ConfirmacaoDoPrecedente,
@@ -300,6 +334,7 @@ export function pedidoDeConfirmacao(
     itemId: confirmacao.itemId,
     action: "confirm",
     baseVersion,
+    catalogSha256: confirmacao.catalogSha256,
     codes: confirmacao.codes.map((code) => code.code),
   };
 }

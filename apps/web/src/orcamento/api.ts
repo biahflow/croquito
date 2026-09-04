@@ -671,15 +671,19 @@ export type CodeDecisionDraft = {
   action: "confirm" | "reject";
   baseVersion: number;
   code?: string;
-  /** A fonte citada na confirmação; sem ela o servidor recusa o ato. */
+  /**
+   * A fonte citada na confirmação; sem ela o servidor recusa o ato. Vale para o código
+   * singular E para o pacote — a exigência é da confirmação, não do caminho.
+   */
   catalogSha256?: string;
   /**
    * Os N códigos do aceite de PACOTE (F-044): o precedente é do rótulo, e o rótulo dispara
    * um pacote inteiro, que entra numa revisão só.
    *
-   * Mutuamente exclusivo com `code`/`catalogSha256` — a rota aceita um ou o outro, e cada
-   * código do precedente já carrega a fonte de onde veio. `codeDecisionBody` é quem
-   * garante que os dois nunca saem no mesmo corpo.
+   * Mutuamente exclusivo com `code` — a rota aceita um ou o outro. **Não** com
+   * `catalogSha256`: os N códigos do pacote citam a MESMA fonte, e é ela que o corpo
+   * declara. `codeDecisionBody` é quem garante que `code` e `codes` nunca saem no mesmo
+   * corpo, e que a fonte sai nos dois.
    */
   codes?: readonly string[];
   note?: string;

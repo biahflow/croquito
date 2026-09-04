@@ -42,12 +42,21 @@ GET .../code-suggestions   (tudo que já existia continua igual, na mesma ordem)
 
 POST .../code-assignments/decisions
  body: {"base_version": N, "item_id": "ti_...", "action": "confirm",
-        "codes": ["BP09100050(B)", "ET39050109(/)"]}     // mutuamente exclusivo com "code"
+        "codes": ["BP09100050(B)", "ET39050109(/)"],     // mutuamente exclusivo com "code"
+        "catalog_sha256": "..."}                         // 2026-09-04: SEMPRE, ver abaixo
  → a revisão nova, no formato que a jornada já usa
 ```
 
 Item sem precedente **não aparece** em `precedents`. Código fora do catálogo vigente já vem
 omitido pelo servidor. Decimais atravessam como string.
+
+> **Correção de 2026-09-04.** Este contrato **omitia `catalog_sha256`** no aceite de lote, e a
+> tela o implementou como escrito: todo aceite em lote voltava `422` e nada gravava, até a
+> evidência de navegador expor o caso. A rota sempre exigiu a fonte em **toda** confirmação —
+> os N códigos citam a MESMA fonte —, e o
+> [API Contract](../../../architecture/API_CONTRACT.md) já a acompanhava; era este contrato de
+> task, e a T3a que o espelha, que divergiam. A exclusão mútua é entre `code` e `codes`;
+> `catalog_sha256` viaja nos dois.
 
 ## Scope
 
@@ -81,6 +90,16 @@ omitido pelo servidor. Decimais atravessam como string.
 1. O bloco aparece acima dos blocos por fonte, com a contagem escrita, e **não** reordena nada.
 2. Sem precedente, ou com fonte diferente, o bloco **não existe** — nem vazio, nem desabilitado.
 3. Confirmar o pacote manda **um** pedido com os N códigos, e mostra a lista antes.
+
+   > **2026-09-04 — reprovado pela evidência de navegador, e cumprido depois dela.** O pedido
+   > saía **sem `catalog_sha256`** e voltava `422`: a lista aparecia, o pedido era um, e nada
+   > gravava. A causa é a omissão corrigida no "Contrato de API" acima. Reparo de tela, com a
+   > rota intacta; sem fonte convergente o ato deixou de ser oferecido. **Re-verificado no
+   > navegador na mesma data**: um pedido, `200`, versão 7 → 8, uma revisão nova, três pares
+   > `confirmed` do mesmo elemento, e o pacote continuando em aberto. Ver
+   > [`evidence.md`](../evidence.md), *"O desfecho: o reparo, e a re-verificação que ele
+   > exigiu"*, e [`evidencia/07b-o-aceite-gravando.png`](../evidencia/07b-o-aceite-gravando.png).
+
 4. Aceitar o precedente não fecha o pacote.
 5. Precedente de uma praça traz o aviso por extenso.
 6. A distinção do bloco não é só cor (cabeçalho escrito, borda, texto).

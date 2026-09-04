@@ -8,11 +8,12 @@
  * tabela. Resposta sem envelope legível devolve o que o transporte montou.
  */
 
-import { ApiError } from "../api";
+import { ApiError, CONTRACT_ERRORS_KEY } from "../api";
 import {
   errorMessage,
   fraseCodigosAusentes,
   fraseParametrosFaltantes,
+  fraseRecusaDeContrato,
   MENSAGEM_ORCAMENTO_MUDOU,
 } from "./labels";
 
@@ -273,6 +274,54 @@ export function recusaDaAutoriaDeAcervo(error: unknown): {
     conflito: false,
     bindings: listaDeTexto(error, SITE_SETUP_BINDING_INVALID_CODE, "bindings"),
     mensagem: describeError(error),
+  };
+}
+
+/**
+ * Motivos de uma recusa de CONTRATO — a validação de esquema que o servidor faz antes de a
+ * rota rodar —, na ordem em que ele os mandou.
+ *
+ * Ela não tem código estável nem `problem+json`: o transporte preserva os motivos em
+ * `details` (`CONTRACT_ERRORS_KEY`), e é daí que eles vêm. Recusa com código estável devolve
+ * vazio — ali quem escolhe a frase é a tabela de `labels.ts`, e não o texto do servidor.
+ */
+export function contractRefusalReasons(error: unknown): string[] {
+  if (!(error instanceof ApiError) || error.code !== null) {
+    return [];
+  }
+  const motivos = error.details[CONTRACT_ERRORS_KEY];
+  if (!Array.isArray(motivos)) {
+    return [];
+  }
+  return motivos.filter((motivo): motivo is string => typeof motivo === "string");
+}
+
+/**
+ * Desfecho de uma recusa da DECISÃO DE CÓDIGO — a confirmação de um código e o aceite do
+ * pacote do precedente (F-044), que são a mesma rota e o mesmo ato.
+ *
+ * A diferença para `recusaDeMutacao` é uma só, e é o segundo achado da evidência de
+ * navegador de 2026-09-04: a recusa de CONTRATO chegava como "Falha na API (422)." — sem o
+ * motivo que o servidor havia escrito. Ela é a recusa mais provável deste ato justamente
+ * porque o corpo tem três formas (código singular, pacote, rejeição), e o servidor confere a
+ * combinação delas.
+ *
+ * O resto continua idêntico: o `409` tem banner próprio, e a recusa com código estável
+ * continua saindo pela tabela de `labels.ts` — nomear o motivo aqui só acrescenta onde antes
+ * não havia nada.
+ */
+export function recusaDaDecisaoDeCodigo(error: unknown): {
+  conflito: boolean;
+  mensagem: string;
+} {
+  if (isRevisionConflict(error)) {
+    return { conflito: true, mensagem: MENSAGEM_ORCAMENTO_MUDOU };
+  }
+  const motivos = contractRefusalReasons(error);
+  return {
+    conflito: false,
+    mensagem:
+      motivos.length > 0 ? fraseRecusaDeContrato(motivos) : describeError(error),
   };
 }
 

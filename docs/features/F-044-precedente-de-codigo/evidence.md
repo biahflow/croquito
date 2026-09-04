@@ -250,9 +250,11 @@ Validação: `npm --workspace @croquito/web run test -- src/orcamento/precedente
 - **Se o código minoritário deveria poder sair do pacote antes de confirmar.** A revisão 2
   decide marcar, não decide desmarcar — retirar um código do aceite mudaria a decisão 4 e
   precisa da evidência de que a marca sozinha não bastou.
-- **O aceite em lote não grava** — achado da evidência de navegador de 2026-09-04, descrito na
-  seção abaixo. O critério de aceite 3 da T3b (*"confirmar o pacote manda um pedido com os N
-  códigos"*) está cumprido pela metade: o pedido sai, e o servidor o recusa com `422`.
+- ~~**O aceite em lote não grava**~~ — achado da evidência de navegador de 2026-09-04, descrito
+  na seção abaixo. **Reparado no mesmo dia**: a arbitragem foi pelo contrato da rota (a tela
+  passou a citar `catalog_sha256`), e a re-verificação de navegador gravou os três pares numa
+  revisão só. O critério 3 da T3b está cumprido por inteiro. Ver *"O desfecho: o reparo, e a
+  re-verificação que ele exigiu"*.
 
 ## Evidência de navegador (T3b e T3c)
 
@@ -339,6 +341,117 @@ estão exercidos pelas imagens acima.
 Um segundo ponto, menor e da mesma cena: a recusa chega ao usuário como **“Falha na API
 (422).”** — a mensagem genérica, sem o motivo nomeado que o servidor devolveu. A rota já
 manda a razão em `problem+json`; quem lê a tela não a recebe.
+
+### O desfecho: o reparo, e a re-verificação que ele exigiu
+
+**Data**: 2026-09-04, depois da captura acima. O registro do defeito fica como está — é ele
+que explica por que a suíte inteira passava sobre um ato que nunca gravou.
+
+**A arbitragem**: o contrato da **rota** é o que vale. Ela sempre disse que *"todos os
+códigos citam a MESMA fonte, que é a que `catalog_sha256` declara"*, e o
+[API Contract](../../architecture/API_CONTRACT.md) já a acompanhava (*"Entrada: `base_version`,
+`item_id`, `action`, `code` **ou** `codes`, `catalog_sha256` e `note`"*). Quem divergia eram o
+contrato escrito nas tasks T3a/T3b e a tela que o implementou fielmente. **A rota não mudou.**
+
+O reparo é de tela, e são duas metades:
+
+1. **O corpo do lote cita a fonte.** `catalog_sha256` entra no corpo do aceite em lote pelo
+   mesmo caminho do singular — a exigência é da CONFIRMAÇÃO, não do formato do corpo. A fonte
+   é a que `fonteDoPrecedente` já calculava para o cabeçalho do bloco, e ela agora **viaja na
+   confirmação** (`ConfirmacaoDoPrecedente.catalogSha256`): uma leitura, dois usos, para que a
+   tabela mostrada e a tabela gravada não possam divergir.
+
+   A consequência de tipo é a tranca: `abrirConfirmacao` passou a receber a fonte e a devolver
+   `null` sem ela, então **não existe confirmação sem citação**. E o bloco de precedente cujo
+   pacote atravessa duas tabelas perde o botão de aceitar — **ausente, não desabilitado** —
+   com a saída escrita (*"Confirme-os um a um pelos blocos da cascata, abaixo"*). Oferecer um
+   ato que o servidor recusaria sempre era o defeito com outra causa.
+
+   Esse caso **não tem imagem**, e a razão é a boa: ele é defensivo e o servidor não o produz —
+   a API monta o precedente sobre o catálogo **cabeça** da cascata e carimba o mesmo digest em
+   todo código (`shortlist_precedents`), de modo que a convergência é garantida do outro lado
+   da fronteira. Quem o cobre é o teste do bloco desenhado, e o que ele afirma é o que a
+   evidência não pôde: o bloco fica, o botão sai e o motivo vai escrito.
+
+2. **A recusa nomeia o motivo.** O segundo achado tinha uma causa que a leitura de então não
+   nomeou: a API responde em **dois envelopes**. As invariantes de domínio saem em
+   `application/problem+json` com código estável, e a tela já as traduzia por tabela; a
+   validação de **esquema** do Pydantic sai no envelope nativo do FastAPI, com `detail` como
+   LISTA e sem código nenhum — e era dela que sobrava só "Falha na API (422).". O transporte
+   passa a preservar os `msg` daquela lista (`CONTRACT_ERRORS_KEY`, em `apps/web/src/api.ts`),
+   e a decisão de código passa a nomeá-los (`recusaDaDecisaoDeCodigo`). O `input` do envelope
+   — que é o corpo do cliente — **não** volta para a tela, e a `message` do transporte não
+   mudou: nenhuma outra jornada teve a copy alterada por este reparo.
+
+#### A re-verificação, no mesmo banco e na mesma bancada
+
+Mesma bancada, mesmo tenant sintético, e a **API servida da worktree do reparo** (8011) com a
+SPA dela (5174) — o reparo é só de tela, mas nada foi servido do checkout principal.
+
+A rodada das capturas de manhã continuou intacta (o `422` não gravou nada), e a primeira
+re-verificação foi feita contra ela mesma. Rodadas novas foram semeadas em seguida pelo mesmo
+`semear.py`, por duas razões declaradas: o aviso de sucesso é banner de **5 s** no topo e a
+captura precisava subir até ele dentro da janela; e as imagens finais foram refeitas contra a
+revisão **exatamente como commitada**, depois de a classe do bloco sem fonte única ganhar nome
+próprio na folha. Todas as rodadas deram o mesmo resultado, e o ambiente foi desfeito ao fim —
+o usuário sintético removido, o cliente do Keycloak devolvido às duas URIs do realm e o *user
+profile* ao padrão, como na captura de manhã.
+
+| Arquivo | O que a imagem prova |
+| --- | --- |
+| [`evidencia/07b-o-aceite-gravando.png`](evidencia/07b-o-aceite-gravando.png) | O mesmo clique da 07, agora **gravando**: o banner verde *"3 códigos confirmados pelo precedente, numa revisão só"*, os três pares `ti_…f04402 × ZA20200100(/) / ZA20200200(B) / ZA20200300(/)` com o selo "código confirmado" e a fonte nomeada, a rodada na **versão 8** e o `ALAMBRADO` **continuando** em "Itens sem decisão de código" com o selo de precedente — aceitar não fechou o pacote (decisão 5). É a 08 outra vez, e desta vez **feita pelo navegador**. |
+| [`evidencia/07c-a-recusa-com-o-motivo.png`](evidencia/07c-a-recusa-com-o-motivo.png) | A segunda metade, exercida contra o servidor real: *"A decisão não foi gravada: o servidor recusou o formato do pedido. Motivo: Value error, confirmação de código exige a fonte de preço em `catalog_sha256`."* — onde antes se lia "Falha na API (422).". A lista de confirmação continua à vista e nada foi gravado. |
+
+Como a 07c foi produzida, declarado: o aceite em lote **não produz mais** essa recusa sozinho
+— é o que a primeira metade consertou. A cena remove `catalog_sha256` do corpo **no fio**
+(`page.route`), de modo que o que chega à API é byte a byte o corpo que a tela mandava até
+esta data. A adulteração é do transporte da bancada, não da tela nem da rota, e o JSON da cena
+guarda os dois corpos, o original e o do fio.
+
+O que o navegador mandou e o que o servidor respondeu:
+
+```
+POST /v1/estimate-rounds/{id}/code-assignments/decisions
+{"base_version":7,"item_id":"ti_0000000000f04402","action":"confirm",
+ "codes":["ZA20200100(/)","ZA20200200(B)","ZA20200300(/)"],
+ "catalog_sha256":"e2710eff…0503"}
+
+200
+```
+
+E o que o **banco** diz, que é o que decide — lido fora da tela, direto em
+`estimate_round_revisions`:
+
+```
+pedidos do navegador  : 1
+versão da rodada      : 7 → 8          (um passo)
+revisões novas        : 1              (uma só, e é a que carrega code_assignments_json)
+pares gravados        : ZA20200100(/) confirmed
+                        ZA20200200(B) confirmed
+                        ZA20200300(/) confirmed   — todos do mesmo item, mesma fonte
+avisos na tela        : nenhum
+```
+
+**Consequência para o critério 3 da T3b**: cumprido por inteiro. O pedido é **um**, a lista
+aparece antes, e o servidor grava — as três metades. Os critérios 1, 2, 4, 5, 6 e 7 continuam
+exercidos pelas imagens 01–06, que o reparo não tocou.
+
+#### O que o reparo deixou declarado, e não resolveu
+
+1. **A frase da recusa carrega o prefixo do Pydantic** — "Value error, " antes do texto que o
+   repositório escreveu. Ele é ruído do framework, não conteúdo, e apará-lo seria a tela
+   editando a mensagem do servidor por uma regra sobre o formato de um framework de terceiro.
+   Ficou como está, à vista: a copy desta jornada já é gate do dono do produto, e esta é uma
+   decisão de texto como as outras.
+2. **A confirmação de um código só (o ato singular) divide o mesmo envelope de recusa**, e
+   ganhou o motivo nomeado junto — é a mesma rota, o mesmo painel e a mesma classe de recusa,
+   e deixar um dos dois botões mudo seria incoerência de tela. Nenhum outro ato da jornada foi
+   tocado.
+3. **O clique de verdade continua sendo provado só aqui.** A suíte testa componente por SSR
+   estático, sem harness de eventos (é a convenção do repositório, e trocá-la seria
+   dependência nova): o teste novo exercita a composição exata da tela — payload da API →
+   `blocosDaShortlist` → `fonteDoPrecedente` → `abrirConfirmacao` → `pedidoDeConfirmacao` →
+   pedido assertado —, e quem prova a ligação com o evento do navegador é esta evidência.
 
 ### Divergências entre a tela e o pacote aprovado
 

@@ -875,12 +875,16 @@ p {
   color: var(--precedente-ink);
 }
 
-/* Precedente de uma praça só, e pacote em que algum código veio de menos praças que o
-   rótulo. O âmbar é o mesmo de `.preview-cena-aviso` (`apps/web/src/styles.css`), citado
-   como procedência pelo pacote de design; a frase inteira vai escrita nos dois casos,
-   porque é ela que carrega o aviso. */
+/* Precedente de uma praça só; pacote em que algum código veio de menos praças que o
+   rótulo; e pacote sem fonte de preço única, onde o aceite de uma vez nem é oferecido. O
+   âmbar é o mesmo de `.preview-cena-aviso` (`apps/web/src/styles.css`), citado como
+   procedência pelo pacote de design; a frase inteira vai escrita nos três casos, porque é
+   ela que carrega o aviso — e no terceiro ela carrega também a saída, já que ali o botão
+   está AUSENTE e a cor sozinha não diria por quê. Nenhuma cor nova: é o mesmo âmbar, com
+   um seletor que diz o que ele significa neste caso. */
 .aviso-precedente-fraco,
-.aviso-precedente-parcial {
+.aviso-precedente-parcial,
+.aviso-precedente-sem-fonte {
   margin: 8px 0 0;
   padding: 9px 11px;
   font-size: 0.8rem;
