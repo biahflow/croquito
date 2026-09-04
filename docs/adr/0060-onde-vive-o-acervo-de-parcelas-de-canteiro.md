@@ -113,7 +113,8 @@ e não sabe onde o acervo mora.
 
 ## Emenda 1 (2026-09-04): a proveniência carrega a identidade, não só a versão
 
-Status da emenda: Proposed — aguardando aceite humano.
+Status da emenda: **Accepted** — aceita por ato humano em 2026-09-04 (Daniel Campos; decisão
+prévia pelo chat e merge do PR #152).
 
 A decisão 3 mandou a rodada registrar "a **versão** do acervo aplicado" na proveniência da
 contribuição, e a execução a seguiu ao pé da letra: `SiteSetupOrigin` guarda `kit_version`

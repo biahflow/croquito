@@ -601,9 +601,9 @@ class PublishSiteSetupKitRequest(ApiModel):
 
     O corpo tem dois campos, e é deliberado que não tenha mais: `version` e `source_label` são
     lidos de DENTRO do documento, nunca informados ao lado. Rótulo que se digita ao lado do
-    conteúdo é rótulo que pode discordar dele — e um acervo publicado com a versão errada
-    passaria a ser confundido, na matriz, com as parcelas de outra aplicação (o merge do apply
-    é por `kit_version`).
+    conteúdo é rótulo que pode discordar dele — e a versão da linha é o que a proveniência de
+    cada parcela materializada cita junto com a identidade do acervo (`SiteSetupOrigin`), além
+    de ser metade da chave de imutabilidade `(tenant_id, name, kit_version)`.
 
     `document` chega como objeto CRU, e não como `SiteSetupKit` tipado, pelo mesmo motivo de
     `BuildEstimateRequest.calc_matrix`: um modelo do domínio embutido faria o Pydantic recusar
@@ -8133,7 +8133,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             tenant_id=None,
             name=payload.name,
             # Versão e rótulo de origem vêm de DENTRO do documento: o que se digita ao lado
-            # do conteúdo pode discordar dele, e a versão é a chave do merge do apply.
+            # do conteúdo pode discordar dele, e é a versão da linha que a proveniência de
+            # cada parcela aplicada cita, ao lado do `id` desta mesma linha.
             kit_version=kit.version,
             source_label=kit.source_label,
             document_json=document,
@@ -18446,11 +18447,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         - lê a `calc_matrix_json` da revisão corrente, que pode ser `NULL` (regime legado); aí
           a matriz nasce só das contribuições geradas;
-        - **remove** toda contribuição cuja `kit_origin.kit_version` seja igual à do acervo
-          aplicado — são as da aplicação anterior do mesmo acervo, e mantê-las duplicaria cada
-          parcela a cada reaplicação;
-        - **preserva intactas** todas as demais: a autorada à mão (`kit_origin` nulo) e a de
-          OUTRO acervo. É isso que torna reaplicar idempotente sem apagar trabalho manual;
+        - **remove** toda contribuição cuja `kit_origin` seja o par `(kit_id, kit_version)` do
+          acervo aplicado — são as da aplicação anterior do mesmo acervo, e mantê-las
+          duplicaria cada parcela a cada reaplicação. A chave é o PAR, e nunca a versão
+          sozinha (ADR-0060, Emenda 1): com as duas origens do acervo, duas linhagens
+          chamarem sua primeira versão de `1.0.0` é o caso esperado, e desduplicar por versão
+          faria a aplicação de um acervo apagar as parcelas do outro;
+        - **preserva intactas** todas as demais: a autorada à mão (`kit_origin` nulo), a de
+          OUTRO acervo e a gravada antes da emenda (`kit_id` nulo, "não observado"). É isso
+          que torna reaplicar idempotente sem apagar trabalho manual;
         - insere as novas e grava a `CalcMatrix` resultante **validada** — nenhuma invariante
           de `calc_matrix.py` é contornada, inclusive a que proíbe parcela `STANDALONE` com
           elemento de origem.
@@ -18482,15 +18487,24 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
         )
+        # A identidade que vai para a proveniência é a da LINHA encontrada, não a que o corpo
+        # pediu: são a mesma por construção do lookup (`SiteSetupKitRecord.id == str(kit_id)`),
+        # e ler do registro é o que mantém a proveniência amarrada ao acervo realmente
+        # aplicado, mesmo que o lookup mude de critério.
+        applied_kit_id = UUID(kit_record.id)
         produced = apply_site_setup_kit(
             kit,
             parameters,
+            kit_id=applied_kit_id,
             excluded_parcel_ids=payload.excluded_parcel_ids,
             available_codes=_estimate_available_codes(record),
         )
         try:
             merged, replaced = site_setup_kits.merge_site_setup_contributions(
-                estimate_rounds.matrix_of(revision), produced, kit_version=kit.version
+                estimate_rounds.matrix_of(revision),
+                produced,
+                kit_id=applied_kit_id,
+                kit_version=kit.version,
             )
         except ValidationError as error:
             raise _valuation_model_problem(error) from error

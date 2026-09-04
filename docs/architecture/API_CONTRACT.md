@@ -2824,10 +2824,15 @@ pré-visualização valem aqui, mais `409 REVISION_CONFLICT`.
 
 - a matriz da revisão corrente é lida (pode ser `NULL` — regime legado; aí ela nasce só das
   contribuições geradas);
-- toda contribuição cuja `kit_origin.kit_version` seja igual à do acervo aplicado é
-  **removida** — são as da aplicação anterior **do mesmo acervo**;
-- todas as demais são **preservadas intactas**: as autoradas à mão (`kit_origin` nulo) e as de
-  **outros** acervos;
+- toda contribuição cuja `kit_origin` seja o par `(kit_id, kit_version)` do acervo aplicado é
+  **removida** — são as da aplicação anterior **do mesmo acervo**. A chave é o par, e nunca a
+  versão sozinha ([ADR-0060](../adr/0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md),
+  Emenda 1): com as duas origens do acervo, duas linhagens chamarem sua primeira versão de
+  `1.0.0` é o caso esperado, e desduplicar por versão faria a aplicação de um acervo apagar as
+  parcelas do outro;
+- todas as demais são **preservadas intactas**: as autoradas à mão (`kit_origin` nulo), as de
+  **outros** acervos e as gravadas antes da emenda (`kit_origin.kit_id` nulo, "não observado",
+  que nunca casa com a identidade de um acervo);
 - as novas entram no serviço que já existe quando o código já está na matriz, e abrem serviço
   novo no fim quando não está;
 - a matriz resultante é gravada **validada** — nenhuma invariante de `calc_matrix.py` é

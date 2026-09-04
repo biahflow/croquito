@@ -9,12 +9,18 @@ operandos vindos de parâmetro).
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
 from croquito_valuation.assignment import CodeAssignmentSet
-from croquito_valuation.calc_matrix import CalcContribution, CalcMatrix, resolve_calc_matrix
+from croquito_valuation.calc_matrix import (
+    CalcContribution,
+    CalcMatrix,
+    ServiceContributions,
+    resolve_calc_matrix,
+)
 from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
 from croquito_valuation.models import CalcOperand, CalcRecipe, ContributionBasis, SiteSetupOrigin
 from croquito_valuation.site_setup import (
@@ -27,6 +33,10 @@ from croquito_valuation.site_setup import (
 )
 
 _KIT_VERSION = "sco-site-setup-v1-test"
+_KIT_ID = UUID("01930000-0000-7000-8000-000000000001")
+_OTHER_KIT_ID = UUID("01930000-0000-7000-8000-000000000002")
+"""OUTRO acervo, que por coincidência declara a MESMA `_KIT_VERSION` — o caso que a Emenda 1
+do ADR-0060 existe para distinguir, e que com as duas origens do acervo é o esperado."""
 
 _BANHEIRO = "SE01100050(/)"
 _CONTAINER = "SE01110050(/)"
@@ -159,7 +169,7 @@ def test_constant_and_parameter_operands_materialize_the_quantities_from_the_fea
 
 
 def test_two_parcels_of_the_same_code_become_two_contributions_of_one_service() -> None:
-    services = apply_site_setup_kit(_kit(), _PARAMETERS)
+    services = apply_site_setup_kit(_kit(), _PARAMETERS, kit_id=_KIT_ID)
 
     vigia = next(service for service in services if service.code == _VIGIA)
     assert len(vigia.contributions) == 2
@@ -167,13 +177,15 @@ def test_two_parcels_of_the_same_code_become_two_contributions_of_one_service() 
 
 
 def test_contributions_are_standalone_without_source_item_and_carry_kit_origin() -> None:
-    services = apply_site_setup_kit(_kit(), _PARAMETERS)
+    """A proveniência sai com IDENTIDADE e versão desde a Emenda 1 do ADR-0060."""
+    services = apply_site_setup_kit(_kit(), _PARAMETERS, kit_id=_KIT_ID)
 
     for service in services:
         for contribution in service.contributions:
             assert contribution.basis is ContributionBasis.STANDALONE
             assert contribution.source_item_id is None
             assert contribution.kit_origin is not None
+            assert contribution.kit_origin.kit_id == _KIT_ID
             assert contribution.kit_origin.kit_version == _KIT_VERSION
 
 
@@ -184,7 +196,7 @@ def test_contributions_are_standalone_without_source_item_and_carry_kit_origin()
 
 def test_missing_parameters_are_refused_naming_all_of_them_and_nothing_is_materialized() -> None:
     with pytest.raises(ValuationValidationError) as raised:
-        apply_site_setup_kit(_kit(), {"prazo_meses": Decimal("2")})
+        apply_site_setup_kit(_kit(), {"prazo_meses": Decimal("2")}, kit_id=_KIT_ID)
 
     assert raised.value.code == "SITE_SETUP_PARAMETER_MISSING"
     assert raised.value.details["parameters"] == ["semi_perimetro", "altura_alambrado"]
@@ -194,6 +206,7 @@ def test_missing_parameter_cited_only_by_an_excluded_parcel_is_not_refused() -> 
     services = apply_site_setup_kit(
         _kit(),
         {"prazo_meses": Decimal("2")},
+        kit_id=_KIT_ID,
         excluded_parcel_ids=[_ID_ANDAIME],
     )
 
@@ -215,6 +228,7 @@ def test_code_absent_from_available_codes_is_refused_naming_the_code() -> None:
         apply_site_setup_kit(
             _kit(),
             _PARAMETERS,
+            kit_id=_KIT_ID,
             available_codes=[_BANHEIRO, _CONTAINER, _VIGIA, _PLACA],
         )
 
@@ -262,7 +276,7 @@ def test_apply_refuses_the_same_state_the_preview_merely_marks() -> None:
     preview_site_setup_kit(_kit(), parameters)  # não levanta
 
     with pytest.raises(ValuationValidationError) as raised:
-        apply_site_setup_kit(_kit(), parameters)
+        apply_site_setup_kit(_kit(), parameters, kit_id=_KIT_ID)
 
     assert raised.value.code == "SITE_SETUP_PARAMETER_MISSING"
     assert raised.value.details["parameters"] == ["semi_perimetro", "altura_alambrado"]
@@ -349,7 +363,9 @@ def test_preview_still_refuses_an_exclusion_id_the_kit_does_not_have() -> None:
 
 def test_unknown_excluded_parcel_id_is_refused() -> None:
     with pytest.raises(ValuationValidationError) as raised:
-        apply_site_setup_kit(_kit(), _PARAMETERS, excluded_parcel_ids=["ss_ffffffffffffffff"])
+        apply_site_setup_kit(
+            _kit(), _PARAMETERS, kit_id=_KIT_ID, excluded_parcel_ids=["ss_ffffffffffffffff"]
+        )
 
     assert raised.value.code == "SITE_SETUP_UNKNOWN_PARCEL"
     assert raised.value.details["ids"] == ["ss_ffffffffffffffff"]
@@ -377,8 +393,8 @@ def test_excluding_one_parcel_does_not_change_the_others() -> None:
 def test_applying_twice_with_the_same_parameters_is_idempotent() -> None:
     kit = _kit()
 
-    first = apply_site_setup_kit(kit, _PARAMETERS)
-    second = apply_site_setup_kit(kit, _PARAMETERS)
+    first = apply_site_setup_kit(kit, _PARAMETERS, kit_id=_KIT_ID)
+    second = apply_site_setup_kit(kit, _PARAMETERS, kit_id=_KIT_ID)
 
     assert first == second
 
@@ -439,10 +455,104 @@ def test_kit_origin_on_a_non_standalone_contribution_is_refused() -> None:
             basis=ContributionBasis.FULL,
             recipe=CalcRecipe.LENGTH_TIMES_WIDTH,
             operands=[CalcOperand(name="AREA", value=Decimal("10"))],
-            kit_origin=SiteSetupOrigin(kit_version=_KIT_VERSION, parcel_id=_ID_BANHEIRO),
+            kit_origin=SiteSetupOrigin(
+                kit_id=_KIT_ID, kit_version=_KIT_VERSION, parcel_id=_ID_BANHEIRO
+            ),
         )
 
     assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_KIT_ORIGIN_NOT_STANDALONE"]
+
+
+def test_two_different_kits_with_the_same_version_produce_distinguishable_provenance() -> None:
+    """O caso que a Emenda 1 do ADR-0060 existe para resolver, no motor do domínio.
+
+    Duas linhagens independentes chamarem sua primeira versão de `1.0.0` é o esperado, não o
+    acidente: aplicar dois acervos DIFERENTES que declaram a mesma `version` produz parcelas
+    com a MESMA versão e identidades distintas, e é essa distinção que o merge do apply usa
+    (`merge_site_setup_contributions`) para não confundir um acervo com o outro.
+    """
+    primeiro = apply_site_setup_kit(_kit(), _PARAMETERS, kit_id=_KIT_ID)
+    segundo = apply_site_setup_kit(_kit(), _PARAMETERS, kit_id=_OTHER_KIT_ID)
+
+    origens_do_primeiro = [
+        contribution.kit_origin for service in primeiro for contribution in service.contributions
+    ]
+    origens_do_segundo = [
+        contribution.kit_origin for service in segundo for contribution in service.contributions
+    ]
+    assert all(origem is not None for origem in origens_do_primeiro + origens_do_segundo)
+    assert {origem.kit_version for origem in origens_do_primeiro if origem is not None} == {
+        _KIT_VERSION
+    }
+    assert {origem.kit_version for origem in origens_do_segundo if origem is not None} == {
+        _KIT_VERSION
+    }
+    assert {origem.kit_id for origem in origens_do_primeiro if origem is not None} == {_KIT_ID}
+    assert {origem.kit_id for origem in origens_do_segundo if origem is not None} == {_OTHER_KIT_ID}
+    # Mesma versão, mesmas parcelas, mesma aritmética: só a identidade separa as duas.
+    assert origens_do_primeiro != origens_do_segundo
+
+
+def test_provenance_written_before_the_amendment_still_validates_with_a_null_kit_id() -> None:
+    """`kit_id` ausente é "não observado", e não recusa: nenhuma rodada gravada é migrada."""
+    antiga = SiteSetupOrigin.model_validate(
+        {"kit_version": _KIT_VERSION, "parcel_id": _ID_BANHEIRO}
+    )
+
+    assert antiga.kit_id is None
+    assert antiga.kit_version == _KIT_VERSION
+    # Explícito e ausente são a mesma proveniência: as duas dizem "não observado".
+    assert antiga == SiteSetupOrigin(kit_id=None, kit_version=_KIT_VERSION, parcel_id=_ID_BANHEIRO)
+
+
+def test_a_fabricated_kit_id_is_refused_instead_of_becoming_provenance() -> None:
+    """Identidade que não identifica acervo nenhum — `""` inclusive — recusa na leitura."""
+    for fabricado in ("", "acervo-1"):
+        with pytest.raises(ValidationError):
+            SiteSetupOrigin.model_validate(
+                {
+                    "kit_id": fabricado,
+                    "kit_version": _KIT_VERSION,
+                    "parcel_id": _ID_BANHEIRO,
+                }
+            )
+
+
+def test_the_round_document_round_trips_with_and_without_the_kit_id() -> None:
+    """A matriz gravada na rodada volta idêntica pelos dois regimes de proveniência.
+
+    É o `calc_matrix_json` da revisão: serializado com `model_dump(mode="json")` e relido com
+    `model_validate`, exatamente como a rota grava e como `matrix_of` o revalida na leitura.
+    Uma matriz que misture as duas proveniências é o estado de uma rodada que aplicou acervo
+    antes e depois da emenda, e ela precisa atravessar o round-trip sem perder nem inventar
+    identidade.
+    """
+    com_identidade = apply_site_setup_kit(_kit(), _PARAMETERS, kit_id=_KIT_ID)[0].contributions[0]
+    sem_identidade = CalcContribution(
+        label="PARCELA ANTERIOR A EMENDA",
+        basis=ContributionBasis.STANDALONE,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[CalcOperand(name="QTD", value=Decimal("1.00"))],
+        kit_origin=SiteSetupOrigin(kit_version=_KIT_VERSION, parcel_id=_ID_BANHEIRO),
+    )
+    matriz = CalcMatrix(
+        services=[
+            ServiceContributions(code=_BANHEIRO, contributions=[com_identidade, sem_identidade])
+        ]
+    )
+
+    documento = matriz.model_dump(mode="json")
+    relida = CalcMatrix.model_validate(documento)
+
+    assert relida == matriz
+    # O JSON diz a mesma coisa que o modelo: identidade de um lado, ausência do outro.
+    origens = [
+        contribution["kit_origin"] for contribution in documento["services"][0]["contributions"]
+    ]
+    assert origens[0]["kit_id"] == str(_KIT_ID)
+    assert origens[1]["kit_id"] is None
+    # E o documento serializado de novo é byte a byte o mesmo: o round-trip é estável.
+    assert relida.model_dump(mode="json") == documento
 
 
 # --------------------------------------------------------------------------------------
@@ -451,7 +561,7 @@ def test_kit_origin_on_a_non_standalone_contribution_is_refused() -> None:
 
 
 def test_apply_output_enters_a_valid_calc_matrix_and_resolves_without_error() -> None:
-    services = apply_site_setup_kit(_kit(), _PARAMETERS)
+    services = apply_site_setup_kit(_kit(), _PARAMETERS, kit_id=_KIT_ID)
     matrix = CalcMatrix(services=services)
 
     resolved = resolve_calc_matrix([], _empty_assignment_set(), calc_matrix=matrix)

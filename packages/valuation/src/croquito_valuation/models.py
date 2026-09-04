@@ -280,7 +280,7 @@ class CalcOperand(ValuationContractModel):
 
 class SiteSetupOrigin(ValuationContractModel):
     """Proveniência de uma `CalcContribution` nascida de um acervo de parcelas de canteiro
-    (F-042): qual acervo, em que versão, e qual parcela dele.
+    (F-042): **qual** acervo, em que versão, e qual parcela dele.
 
     Vive aqui, e não em `site_setup.py` (onde moram `SiteSetupKit`/`SiteSetupParcel` e
     `apply_site_setup_kit`), para quebrar um ciclo de import: `site_setup.py` monta
@@ -289,6 +289,25 @@ class SiteSetupOrigin(ValuationContractModel):
     volta para tipar `CalcContribution.kit_origin`, fechando o ciclo. `models.py` é
     importado por ambos e não importa nenhum dos dois — é o lugar sem aresta de volta.
     """
+
+    kit_id: UUID | None = None
+    """A IDENTIDADE do acervo aplicado, e não só o rótulo de versão dele (ADR-0060, Emenda 1).
+
+    Até 2026-09-04 a proveniência guardava só `kit_version`, e o merge do apply desduplicava
+    por ela: dois acervos DIFERENTES que declarassem a mesma versão eram indistinguíveis na
+    matriz. Com as duas origens do ADR-0060 (plataforma e tenant), duas linhagens
+    independentes chamarem sua primeira versão de `1.0.0` não é acidente — é o caso esperado.
+
+    `None` é **"não observado"**: proveniência gravada antes da emenda, quando a identidade
+    não era registrada. Aplicação nova não a produz — `apply_site_setup_kit` exige `kit_id` de
+    propósito —, e nenhuma rodada existente é migrada nem reinterpretada. Como nenhum acervo
+    real chegou a ser aplicado até a emenda, o caso é teórico; o contrato o declara em vez de
+    fingir que o passado registrou o que não registrou.
+
+    `UUID` porque é a convenção de identidade do repositório (`croquito_core.ids.new_uuid7`) e
+    é o que as rotas do acervo já recebem e devolvem (`ApplySiteSetupKitRequest.kit_id`,
+    `SiteSetupKitResponse.kit_id`). Identidade fabricada — `""` inclusive — recusa aqui, em vez
+    de virar proveniência que aponta para acervo nenhum."""
 
     kit_version: str = Field(min_length=1, max_length=40)
     parcel_id: str = Field(pattern=SITE_SETUP_PARCEL_ID_PATTERN)

@@ -21,6 +21,13 @@ motivo de import documentado lá) e **falha fechada**: parâmetro citado e não 
 código fora do catálogo disponível, recusa por extenso nomeando o que falta, em vez de
 pular a parcela em silêncio.
 
+A proveniência carrega **identidade e versão** (`kit_id` e `kit_version`), e é por isso que
+`apply_site_setup_kit` exige `kit_id` de quem chama: o `SiteSetupKit` é o documento do acervo
+e não sabe quem ele é. Até a Emenda 1 do ADR-0060 (2026-09-04) só a versão era registrada, e
+dois acervos diferentes que declarassem a mesma versão eram indistinguíveis na matriz — com
+as duas origens do ADR (plataforma e tenant), duas linhagens chamarem sua primeira versão de
+`1.0.0` é o caso esperado, não o acidente.
+
 **A assimetria entre prever e aplicar é deliberada, e é a feature: a pré-visualização
 MARCA, a aplicação RECUSA.**
 
@@ -51,6 +58,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
+from uuid import UUID
 
 from pydantic import Field, model_validator
 
@@ -229,6 +237,7 @@ def _resolve_selected_parcels(
     kit: SiteSetupKit,
     parameters: Mapping[str, Decimal],
     *,
+    kit_id: UUID,
     excluded_parcel_ids: Collection[str],
     available_codes: Collection[str] | None,
 ) -> list[tuple[SiteSetupParcel, CalcContribution]]:
@@ -271,13 +280,17 @@ def _resolve_selected_parcels(
             )
 
     return [
-        (parcel, _contribution_of(parcel, parameters, kit_version=kit.version))
+        (parcel, _contribution_of(parcel, parameters, kit_id=kit_id, kit_version=kit.version))
         for parcel in included
     ]
 
 
 def _contribution_of(
-    parcel: SiteSetupParcel, parameters: Mapping[str, Decimal], *, kit_version: str
+    parcel: SiteSetupParcel,
+    parameters: Mapping[str, Decimal],
+    *,
+    kit_id: UUID | None,
+    kit_version: str,
 ) -> CalcContribution:
     """A `CalcContribution` de uma parcela cujos parâmetros JÁ estão todos declarados.
 
@@ -285,6 +298,10 @@ def _contribution_of(
     pré-visualização a usa só para chegar ao subtotal pelo mesmo caminho aritmético. Chamá-la
     com parâmetro faltando é erro de programa (`KeyError` em `_resolve_operand`), e é por isso
     que a prévia confere `missing_parameters` antes.
+
+    `kit_id` é `UUID | None` só porque a prévia passa `None`: a proveniência que ela constrói
+    é descartada na mesma expressão em que nasce (só o `subtotal` é lido), e não chega a
+    nenhuma matriz. Na APLICAÇÃO ele é sempre o id do acervo — `apply_site_setup_kit` o exige.
     """
     return CalcContribution(
         source_item_id=None,
@@ -294,7 +311,7 @@ def _contribution_of(
         operands=[_resolve_operand(operand, parameters) for operand in parcel.operands],
         deductions=[_resolve_operand(operand, parameters) for operand in parcel.deductions],
         note=parcel.note,
-        kit_origin=SiteSetupOrigin(kit_version=kit_version, parcel_id=parcel.id),
+        kit_origin=SiteSetupOrigin(kit_id=kit_id, kit_version=kit_version, parcel_id=parcel.id),
     )
 
 
@@ -302,6 +319,7 @@ def apply_site_setup_kit(
     kit: SiteSetupKit,
     parameters: Mapping[str, Decimal],
     *,
+    kit_id: UUID,
     excluded_parcel_ids: Collection[str] = (),
     available_codes: Collection[str] | None = None,
 ) -> list[ServiceContributions]:
@@ -311,10 +329,17 @@ def apply_site_setup_kit(
     `code`, na ordem de primeira aparição da parcela no acervo — mesma convenção de
     `assembleCalcMatrix` (`apps/web/src/orcamento/matrix.ts`). Duas parcelas do mesmo
     código entram como duas contribuições do mesmo `ServiceContributions`.
+
+    `kit_id` é OBRIGATÓRIO, e continua sem quebrar a pureza: quem chama informa a identidade
+    do acervo que aplicou, e esta função segue sem saber onde ele mora (ADR-0060 decisão 3).
+    Ela é obrigatória porque `SiteSetupOrigin.kit_id` é opcional para **ler** proveniência
+    anterior à Emenda 1, nunca para **gravar** parcela nova sem identidade: sem ela, uma
+    reaplicação não reconheceria as parcelas que ela mesma materializou e as duplicaria.
     """
     resolved = _resolve_selected_parcels(
         kit,
         parameters,
+        kit_id=kit_id,
         excluded_parcel_ids=excluded_parcel_ids,
         available_codes=available_codes,
     )
@@ -419,8 +444,12 @@ def preview_site_setup_kit(
         )
         quantity: Decimal | None = None
         if not missing:
+            # `kit_id=None` aqui não é proveniência "não observada": a contribuição construída
+            # não sai desta expressão — só o `subtotal` dela é lido — e a prévia não grava
+            # matriz nenhuma. Pedir a identidade do acervo para calcular um número obrigaria
+            # toda leitura a carregá-la sem que ela chegasse a lugar algum.
             quantity = materialize_contribution(
-                _contribution_of(parcel, parameters, kit_version=kit.version),
+                _contribution_of(parcel, parameters, kit_id=None, kit_version=kit.version),
                 upstream_quantity=None,
             ).subtotal
         rows.append(

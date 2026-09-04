@@ -28,6 +28,7 @@ import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
+from uuid import UUID
 
 from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
@@ -262,6 +263,7 @@ def merge_site_setup_contributions(
     existing: CalcMatrix | None,
     produced: Sequence[ServiceContributions],
     *,
+    kit_id: UUID,
     kit_version: str,
 ) -> tuple[CalcMatrix, int]:
     """A matriz resultante de aplicar o acervo, e quantas parcelas dele foram substituídas.
@@ -269,13 +271,13 @@ def merge_site_setup_contributions(
     É o coração do apply, e a regra é uma só: **reaplicar substitui apenas as parcelas
     daquele acervo**.
 
-    - toda contribuição cuja `kit_origin.kit_version` seja igual à do acervo aplicado sai —
+    - toda contribuição cuja `kit_origin` seja `(kit_id, kit_version)` do acervo aplicado sai —
       são as da aplicação ANTERIOR do mesmo acervo, e mantê-las duplicaria cada parcela a cada
       reaplicação;
-    - toda outra contribuição sobrevive INTACTA: a autorada à mão (`kit_origin` nulo) e a de
-      OUTRO acervo. Apagar a primeira jogaria fora o trabalho que a feature existe para
-      preservar; apagar a segunda faria dois acervos serem mutuamente exclusivos sem que
-      ninguém tivesse decidido isso;
+    - toda outra contribuição sobrevive INTACTA: a autorada à mão (`kit_origin` nulo), a de
+      OUTRO acervo e a gravada antes da Emenda 1 (`kit_id` nulo). Apagar a primeira jogaria
+      fora o trabalho que a feature existe para preservar; apagar a segunda faria dois acervos
+      serem mutuamente exclusivos sem que ninguém tivesse decidido isso;
     - as parcelas novas entram no serviço que já existe, quando o código já está na matriz, e
       abrem serviço novo no fim quando não está. A ordem dos serviços que já existiam não muda.
 
@@ -283,11 +285,19 @@ def merge_site_setup_contributions(
     exige pelo menos uma parcela, e um serviço vazio na matriz seria uma linha de boletim sem
     memória de cálculo.
 
-    A chave do merge é a `kit_version`, e não o `kit_id`, porque é ela que a proveniência de
-    cada parcela materializada carrega (`SiteSetupOrigin`, `models.py`) — o motor do domínio é
-    quem define isso, e ele não é alterado nesta task. A consequência conhecida está declarada:
-    dois acervos DIFERENTES que declarem a mesma `version` são indistinguíveis na matriz, e
-    aplicar um substituiria as parcelas do outro.
+    **A chave é o PAR `(kit_id, kit_version)`, nunca a versão sozinha** (ADR-0060, Emenda 1).
+    Até 2026-09-04 ela era só a versão, e a consequência estava declarada como risco desde a
+    F-042: dois acervos DIFERENTES que declarassem a mesma versão eram indistinguíveis na
+    matriz, e aplicar um substituiria as parcelas do outro — com as duas origens do ADR-0060,
+    duas linhagens chamarem sua primeira versão de `1.0.0` é o caso esperado. O `kit_id` já
+    basta para identificar a versão (a linha é imutável e cada versão é uma linha), e conferir
+    as duas é o que impede uma proveniência incoerente — mesmo id, versão outra — de ser
+    tratada como a mesma aplicação.
+
+    Proveniência com `kit_id` nulo é a anterior à emenda ("não observado") e **nunca casa**:
+    `None != UUID`, então ela sobrevive como qualquer parcela de outro acervo. É o
+    comportamento certo — presumi-la "do mesmo acervo" porque a versão bate é exatamente a
+    confusão que a emenda foi escrita para acabar.
     """
     kept: list[tuple[str, list[CalcContribution]]] = []
     replaced = 0
@@ -296,7 +306,10 @@ def merge_site_setup_contributions(
             survivors: list[CalcContribution] = []
             for contribution in service.contributions:
                 origin = contribution.kit_origin
-                if origin is not None and origin.kit_version == kit_version:
+                if origin is not None and (origin.kit_id, origin.kit_version) == (
+                    kit_id,
+                    kit_version,
+                ):
                     replaced += 1
                     continue
                 survivors.append(contribution)
