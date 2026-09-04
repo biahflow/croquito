@@ -428,6 +428,13 @@ A tela distingue por texto e por forma as entidades **sem** identidade — etiqu
 que diz "sem identidade" por escrito — das entidades **com** identidade, etiquetadas com o
 `element_ref`.
 
+Parte das entidades pode chegar a esta tela **já identificada**, sem que ninguém tenha
+declarado nada aqui: a identidade declarada uma etapa antes, sobre as propostas da revisão de
+leitura, é transportada pelo traçado
+([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md), decisão 2). É o mesmo
+ato humano, exercido antes — não uma inferência do sistema —, e o ato desta tela continua
+valendo para o que a revisão não identificou, no mesmo contador de `element_ref`.
+
 O agrupamento proposto pelo sistema aparece **rotulado como proposta** (`proposta ·
 unresolved`, traço tracejado) e nunca como identidade, e diz por qual sinal foi gerado —
 mesma procedência de detecção, ou o mesmo rótulo mais próximo. Confirmar uma proposta é o

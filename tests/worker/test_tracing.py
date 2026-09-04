@@ -54,6 +54,7 @@ from croquito_worker.tracing import (
     KeepApartPair,
     TraceAcceptance,
     TraceDetailGroup,
+    TraceElementDeclaration,
     TraceSolveResult,
     approve_trace,
     solve_trace,
@@ -3661,3 +3662,244 @@ def test_vao_entre_elementos_registra_as_duas_propostas_na_ancora() -> None:
         CAMPO_PROPOSAL,
     }
     assert report.end_m - report.start_m == pytest.approx(6.60, abs=0.01)
+
+
+# --- Transporte da identidade declarada na revisão (F-051 T5, ADR-0063 decisão 2) -------
+#
+# A letra do balão vira `element_ref` da entidade sem redigitação: quem declarou "estas
+# propostas são o elemento B" na revisão de leitura não declara de novo depois do solver.
+# O traçado não cunha, não infere e não nomeia — transporta.
+
+
+def _solve_com_identidade(
+    declarations: Sequence[TraceElementDeclaration],
+    *,
+    acceptance: TraceAcceptance | None = None,
+) -> TraceSolveResult:
+    return solve_trace(
+        _packet(),
+        _proposals(),
+        acceptance or _acceptance(),
+        confirmed_associations=_associations(),
+        element_declarations=declarations,
+        image_width=600,
+        image_height=700,
+        title="CAMPO GUAXINDIBA SINTETICO",
+    )
+
+
+def test_identidade_declarada_na_revisao_nasce_na_entidade_tracada() -> None:
+    """As duas propostas do elemento "B" viram entidades já com o ref e o rótulo."""
+    result = _solve_com_identidade(
+        [
+            TraceElementDeclaration(
+                element_ref="EL-001",
+                label="B",
+                proposal_ids=[PATAMAR_CENTRO_PROPOSAL, PATAMAR_DIR_PROPOSAL],
+            )
+        ]
+    )
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.scene is not None
+
+    centro = _entity_of(result.scene, PATAMAR_CENTRO_PROPOSAL)
+    direita = _entity_of(result.scene, PATAMAR_DIR_PROPOSAL)
+    assert centro.element_ref == "EL-001"
+    assert direita.element_ref == "EL-001"
+    # O rótulo mora UMA vez, por ref, e não copiado em cada traço.
+    assert result.scene.element_labels == {"EL-001": "B"}
+    # Camada preservada: as duas propostas do elemento já concordavam.
+    assert centro.layer is LayerName.PATAMAR
+    assert direita.layer is LayerName.PATAMAR
+    # E nada mais na cena herdou identidade nenhuma.
+    assert _entity_of(result.scene, CAMPO_PROPOSAL).element_ref is None
+    assert not any(
+        entity.element_ref is not None
+        for entity in result.scene.entities
+        if entity.kind in {EntityKind.TEXT, EntityKind.DIMENSION}
+    )
+
+
+def test_identidade_revogada_nao_volta_para_a_cena() -> None:
+    """Revogar é ato humano: a entrada fica no histórico da revisão e NÃO transporta."""
+    result = _solve_com_identidade(
+        [
+            TraceElementDeclaration(
+                element_ref="EL-001",
+                label="B",
+                proposal_ids=[PATAMAR_CENTRO_PROPOSAL],
+                status="revoked",
+            )
+        ]
+    )
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.scene is not None
+    assert _entity_of(result.scene, PATAMAR_CENTRO_PROPOSAL).element_ref is None
+    assert result.scene.element_labels == {}
+
+
+def test_identidade_sem_rotulo_transporta_o_ref_e_nenhum_nome() -> None:
+    """Declaração sem rótulo é válida: o elo existe, o nome não — e não vira entrada vazia."""
+    result = _solve_com_identidade(
+        [TraceElementDeclaration(element_ref="EL-007", proposal_ids=[PATAMAR_ESQ_PROPOSAL])]
+    )
+    assert result.scene is not None
+    assert _entity_of(result.scene, PATAMAR_ESQ_PROPOSAL).element_ref == "EL-007"
+    assert result.scene.element_labels == {}
+
+
+def test_elemento_com_camadas_divergentes_e_desenhado_em_aproximado_com_aviso() -> None:
+    """Camada única por ref é invariante da cena; o traçado a mantém sem promover pixel.
+
+    O campo cotado sairia em `CAMPO` e o portão sem cota em `APROXIMADO` — a cena recusaria
+    a mistura (`ELEMENT_REF_LAYER_MISMATCH`). Quem declarou o elemento na revisão não tinha
+    como saber disso: a camada só se decide depois do solver. Então o elemento inteiro é
+    desenhado em `APROXIMADO` (nunca o contrário, que promoveria traçado de pixel a camada
+    semântica), e a mudança sai declarada como aviso na cena.
+    """
+    result = _solve_com_identidade(
+        [
+            TraceElementDeclaration(
+                element_ref="EL-001",
+                label="Fecho norte",
+                proposal_ids=[CAMPO_PROPOSAL, PORTAO_PROPOSAL],
+            )
+        ]
+    )
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.scene is not None
+
+    campo = _entity_of(result.scene, CAMPO_PROPOSAL)
+    portao = _entity_of(result.scene, PORTAO_PROPOSAL)
+    assert campo.layer is LayerName.APROXIMADO
+    assert portao.layer is LayerName.APROXIMADO
+    assert campo.element_ref == portao.element_ref == "EL-001"
+    # A precisão não é rebaixada junto: a camada diz onde desenhar, a precisão diz o que a
+    # cota determinou — e o campo continua determinado pelas duas cotas confirmadas.
+    assert campo.precision is Precision.EXACT
+    assert portao.precision is Precision.APPROXIMATE
+
+    avisos = [issue for issue in result.scene.issues if issue.code == "ELEMENT_LAYER_HARMONISED"]
+    assert len(avisos) == 1
+    assert avisos[0].severity is IssueSeverity.WARNING
+    assert avisos[0].status is IssueStatus.OPEN
+    assert "EL-001" in avisos[0].message
+    assert set(avisos[0].entity_ids) == {campo.id, portao.id}
+    # Aviso não bloqueia exportação: só issue CRÍTICA aberta fecha o portão.
+    assert "OPEN_CRITICAL_ISSUE:ELEMENT_LAYER_HARMONISED" not in result.scene.export_errors()
+
+
+def test_identidade_de_proposta_fora_do_aceite_nao_deixa_rotulo_orfao() -> None:
+    """Proposta declarada e depois não aceita não vira entidade — e o nome dela não fica.
+
+    `SceneRevision` recusa rótulo de `element_ref` que nenhuma entidade usa
+    (`ELEMENT_LABEL_UNKNOWN_REF`): montar a cena com ele derrubaria o traçado inteiro.
+    """
+    sem_circulo = _acceptance().model_copy(
+        update={
+            "proposal_ids": [
+                CAMPO_PROPOSAL,
+                PATAMAR_ESQ_PROPOSAL,
+                PATAMAR_CENTRO_PROPOSAL,
+                PATAMAR_DIR_PROPOSAL,
+                PORTAO_PROPOSAL,
+            ]
+        }
+    )
+    result = _solve_com_identidade(
+        [
+            TraceElementDeclaration(
+                element_ref="EL-001",
+                label="Círculo declarado e não aceito",
+                proposal_ids=[CIRCULO_PROPOSAL],
+            )
+        ],
+        acceptance=sem_circulo,
+    )
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.scene is not None
+    assert result.scene.element_labels == {}
+    assert all(entity.element_ref is None for entity in result.scene.entities)
+
+
+def test_proposta_declarada_em_dois_elementos_bloqueia_o_tracado() -> None:
+    """Mover proposta entre elementos são dois atos; a API recusa e o traçado não adivinha.
+
+    Se a revisão chegar assim mesmo, eleger um dos dois refs em silêncio daria identidade
+    errada a geometria real — e identidade errada é quantidade errada mais adiante.
+    """
+    result = _solve_com_identidade(
+        [
+            TraceElementDeclaration(element_ref="EL-001", proposal_ids=[PATAMAR_ESQ_PROPOSAL]),
+            TraceElementDeclaration(element_ref="EL-002", proposal_ids=[PATAMAR_ESQ_PROPOSAL]),
+        ]
+    )
+    assert result.status == "conflict"
+    assert f"TRACE_ELEMENT_DECLARATION_CONFLICT:{PATAMAR_ESQ_PROPOSAL}" in result.blockers
+
+
+def test_cena_sem_identidade_declarada_sai_como_sempre_saiu() -> None:
+    """Sem declaração ativa, a cena é byte a byte a de antes desta tarefa.
+
+    Os dois campos que o transporte pode escrever — `Entity.element_ref` e
+    `SceneRevision.element_labels` — já existiam no contrato desde a F-047 e são serializados
+    desde então. Com eles nos defaults, o dump é exatamente o de antes; e a comparação abaixo
+    prova que declaração revogada não perturba NADA (nem geometria, nem issue, nem ordem de
+    entidade), não só a identidade.
+    """
+    hoje = _solve()
+    assert hoje.scene is not None
+    assert all(entity.element_ref is None for entity in hoje.scene.entities)
+    assert hoje.scene.element_labels == {}
+
+    inerte = _solve_com_identidade(
+        [
+            TraceElementDeclaration(
+                element_ref="EL-001",
+                label="B",
+                proposal_ids=[PATAMAR_CENTRO_PROPOSAL],
+                status="revoked",
+            )
+        ]
+    )
+    assert inerte.scene is not None
+    assert _scene_without_clock_ids(inerte.scene) == _scene_without_clock_ids(hoje.scene)
+
+
+def test_identidade_transportada_exporta_e_agrupa_o_quantitativo(tmp_path: Path) -> None:
+    """Cena aprovada com identidade transportada passa no portão e agrupa por `element_ref`."""
+    result = _solve_com_identidade(
+        [
+            TraceElementDeclaration(
+                element_ref="EL-001",
+                label="B",
+                proposal_ids=[PATAMAR_CENTRO_PROPOSAL, PATAMAR_DIR_PROPOSAL],
+            )
+        ]
+    )
+    assert result.scene is not None
+    approval = SceneApproval(
+        approval_id="ap_" + "5" * 16,
+        source_scene_id=result.scene.id,
+        reviewer_id="eng-teste",
+        reviewer_role="engineer",
+        decided_at=datetime(2026, 9, 4, 13, 0, tzinfo=UTC),
+        source_evidence_checked=True,
+        geometry_checked=True,
+        limitations_acknowledged=True,
+        statement="Traçado conferido contra o croqui sintético de fixture.",
+    )
+    approved = approve_trace(result, approval)
+    # O portão de exportação não reclama da identidade transportada.
+    assert approved.scene.export_errors() == []
+    assert approved.scene.element_labels == {"EL-001": "B"}
+
+    export = export_scene_package(approved.scene, tmp_path, package_stem="tracado-identidade")
+    assert export.audit.status == "approved"
+
+    linhas = (tmp_path / "quantitativos.csv").read_text(encoding="utf-8").splitlines()
+    cabecalho = linhas[0].split(",")
+    assert "element_ref" in cabecalho
+    refs = [linha.split(",")[cabecalho.index("element_ref")] for linha in linhas[1:]]
+    # Os dois patamares do elemento "B" contam UMA linha, e ninguém mais herdou o ref.
+    assert refs.count("EL-001") == 1

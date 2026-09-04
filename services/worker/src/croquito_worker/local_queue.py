@@ -116,6 +116,7 @@ from croquito_worker.tracing import (
     ContestedSpan,
     DerivedDimensionRequest,
     TraceAcceptance,
+    element_declarations_from_review,
     solve_trace,
 )
 from croquito_worker.valuation.round_extraction import (
@@ -2021,6 +2022,14 @@ class LocalQueueWorker:
             # A cadeia declarada é ato humano sobre cotas, e o traçado não decide cota
             # nenhuma: viaja verbatim. A conferência é refeita na leitura, contra o pacote.
             "declared_chains_json": _json_column(base_review["declared_chains_json"]),
+            # Identidade de elemento é ato humano da revisão anterior e viaja verbatim pelo
+            # mesmo motivo: o traçado TRANSPORTA a identidade para a cena, não a consome.
+            # Perdê-la aqui faria o próximo traçado — que parte desta revisão — nascer sem as
+            # identidades que já estão desenhadas na cena, e a re-resolução apagaria em
+            # silêncio o que uma pessoa declarou. `or []` porque a coluna é NOT NULL e uma
+            # linha anterior à migration `0031` pode chegar com `NULL` de banco.
+            "element_declarations_json": _json_column(base_review["element_declarations_json"])
+            or [],
             "field_witnesses_json": _json_column(base_review["field_witnesses_json"]),
             "field_observations_json": _json_column(base_review["field_observations_json"]),
             "calibration_json": _json_column(base_review["calibration_json"]),
@@ -2045,7 +2054,8 @@ class LocalQueueWorker:
                 "INSERT INTO review_revisions "
                 "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
                 "associations_json, proposals_json, selected_associations_json, "
-                "declared_chains_json, field_witnesses_json, field_observations_json, "
+                "declared_chains_json, element_declarations_json, "
+                "field_witnesses_json, field_observations_json, "
                 "calibration_json, proposal_decisions_json, trace_acceptance_json, "
                 "evidence_refs_json, solver_request_json, solver_blockers_json, "
                 "required_blocker_codes_json, required_criteria_texts_json, "
@@ -2055,6 +2065,7 @@ class LocalQueueWorker:
                 f"{expressions['proposals_json']}, "
                 f"{expressions['selected_associations_json']}, "
                 f"{expressions['declared_chains_json']}, "
+                f"{expressions['element_declarations_json']}, "
                 f"{expressions['field_witnesses_json']}, "
                 f"{expressions['field_observations_json']}, "
                 f"{expressions['calibration_json']}, "
@@ -2115,6 +2126,7 @@ class LocalQueueWorker:
                     text(
                         "SELECT id, version, packet_json, associations_json, proposals_json, "
                         "selected_associations_json, declared_chains_json, "
+                        "element_declarations_json, "
                         "field_witnesses_json, field_observations_json, calibration_json, "
                         "proposal_decisions_json, "
                         "evidence_refs_json, solver_request_json, solver_blockers_json, "
@@ -2189,6 +2201,11 @@ class LocalQueueWorker:
                 ScopeCriterion(code=code, text=criteria_texts.get(code))
                 for code in _json_column(base_review["required_blocker_codes_json"]) or []
             ]
+            # ADR-0063, decisão 2: as identidades declaradas vêm da MESMA linha de revisão que
+            # deu o snapshot de propostas — a que a rota pinou em `base_review_revision_id` e
+            # que a conferência de versão acima acabou de confirmar corrente. Ler as
+            # declarações de outro lugar (a revisão mais nova, por exemplo) casaria ref com
+            # proposta de outro snapshot, que é o defeito nomeado no contrato da tarefa.
             result = solve_trace(
                 packet,
                 proposal_set.proposals,
@@ -2198,6 +2215,9 @@ class LocalQueueWorker:
                 note_associations=_json_column(record["note_associations_json"]) or {},
                 derived_dimension_requests=derived_requests,
                 dimension_texts=_json_column(record["dimension_texts_json"]) or {},
+                element_declarations=element_declarations_from_review(
+                    _json_column(base_review["element_declarations_json"]) or []
+                ),
                 image_width=proposal_set.image_width_px,
                 image_height=proposal_set.image_height_px,
                 feature_id=str(record["feature_id"]),

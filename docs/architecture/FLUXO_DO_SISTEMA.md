@@ -196,6 +196,24 @@ leitura procura o referente; e revogar **não desfaz associação já confirmada
 associação é a retificação de decisão que a revisão já tem. A identidade revogada continua no
 histórico, e o ref revogado nunca é reaproveitado.
 
+E o **traçado transporta essa identidade** (decisão 2): a entidade criada a partir de uma
+proposta declarada **nasce** com o `element_ref`, e o rótulo entra em
+`SceneRevision.element_labels` — a letra do balão vira identidade da cena sem ninguém
+redigitar nada depois do solver. O worker lê as declarações da MESMA revisão que deu o
+snapshot de propostas (a que a rota pinou em `base_review_revision_id`), e a revisão que o
+traçado cria as leva adiante, para que o re-solve seguinte não nasça sem a identidade que já
+está desenhada. Só a declaração **ativa** viaja; a revogada fica no histórico. O ato pós-cena
+continua valendo para o que a revisão não identificou, no mesmo contador.
+
+Uma consequência do transporte tem nome próprio: a cena exige **camada única por
+`element_ref`**, mas em qual camada cada proposta cai só se decide no traçado, depois de o
+solver dizer quais distâncias ficaram determinadas — quem declarou o elemento na revisão não
+tinha como saber. Quando as propostas de um mesmo elemento caem em camadas diferentes, o
+elemento inteiro é desenhado em `APROXIMADO` (nunca o contrário, que promoveria traçado de
+pixel a camada semântica) e a cena carrega a `Issue` de aviso `ELEMENT_LAYER_HARMONISED`. É
+aviso, não recusa: o desenho continua exportável, e quem revisa decide se prefere declarar um
+elemento por camada.
+
 ## 6. Cadeia de medição e orçamento
 
 Vive em `packages/valuation`, que não depende do worker nem do scene graph. A referência
@@ -296,6 +314,7 @@ não defeito.
 | Auditoria do DXF | `dxf.py` | o auditor reprova o arquivo gerado ao reabri-lo — o ZIP não é publicado |
 | `ELEMENT_REF_NOT_ASSIGNABLE` / `ELEMENT_REF_LAYER_MISMATCH` / `ELEMENT_ALREADY_DECLARED` / `ELEMENT_NOT_DECLARED` / `ELEMENT_LABEL_INVALID` | rotas de identidade de elemento (`croquito_api/main.py`), invariante em `croquito_core.models.SceneRevision` | o cliente tentou **escolher** o `element_ref` (a cunhagem é do servidor), o grupo mistura camadas, a entidade (ou a proposta, na revisão) já pertence a outro elemento (mudar exige revogar antes, nunca reescrever por cima), o ref a revogar ou renomear não existe ativo na revisão corrente, ou o rótulo legível veio vazio/só de espaço (para ficar sem nome, omite-se o campo) |
 | `ELEMENT_LABEL_ALREADY_USED` | rotas de identidade de elemento **da revisão** (`croquito_api/main.py`) | o rótulo já nomeia outra identidade ativa do job. Só na revisão: é por ele que o hint da cota-balão procura o referente, e nome ambíguo não tem referente. Na cena, dois elementos podem ter o mesmo rótulo, porque lá quem casa é o `element_ref` |
+| `TRACE_ELEMENT_DECLARATION_CONFLICT` | transporte da identidade no traçado (`tracing.py`) | a mesma proposta chegou declarada em dois elementos ativos. A API recusa isso no ato; se a revisão chegar assim mesmo, eleger um dos dois refs em silêncio daria identidade errada a geometria real — e identidade errada é quantidade errada mais adiante |
 | `CALIBRATION_INVALID` | `proposal_calibration.py` | âncoras degeneradas ou erro acima da tolerância |
 | `QUANTITY_SOURCE_UNRESOLVED` / `QUANTITY_SOURCE_ITEM_ALREADY_QUANTIFIED` / `QUANTITY_SOURCE_DUPLICATE_ELEMENT_REF` | `valuation/quantity_source.py` | a cena não tem quantidade para aquele item (sem identidade num dos lados, precisão `approximate`/`unresolved`, unidade que não bate ou grandeza ausente), o item já traz o número da legenda — a cena **não** sobrescreve a legenda — ou o `quantitativos.csv` repete uma identidade, caso em que nem "pegar a primeira" é aceitável |
 | `SCENE_LINK_REQUIRED` / `SCENE_LINK_SCENE_NOT_APPROVED` / `SCENE_LINK_EXPORT_REQUIRED` / `SCENE_PACKAGE_REQUIRED` | rotas do elo com o croqui (`croquito_api/valuation_rounds.py`) | a rodada não declarou croqui nenhum; o croqui citado não tem cena aprovada; ele tem cena aprovada mas nenhum pacote publicado; ou o pacote citado não está utilizável agora (objeto ausente, ilegível, sem `quantitativos.csv`, ou export que voltou à fila) |
