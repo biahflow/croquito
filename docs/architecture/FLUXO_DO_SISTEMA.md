@@ -194,7 +194,10 @@ revisão cunha `EL-002` quando a cena já cunhou `EL-001` (e vice-versa). Aqui o
 é **único entre as identidades ativas do job** (decisão 2), porque é por ele que o hint da
 leitura procura o referente; e revogar **não desfaz associação já confirmada** — corrigir
 associação é a retificação de decisão que a revisão já tem. A identidade revogada continua no
-histórico, e o ref revogado nunca é reaproveitado.
+histórico, e o ref revogado nunca é reaproveitado. A leitura dessa lista é rota própria —
+`GET /v1/jobs/{job_id}/review/elements`, com as revogadas incluídas —, e não um campo novo em
+`GET /v1/jobs/{job_id}/review`: aquela resposta ficou byte a byte a mesma, e a tela que abre
+do zero precisava de algum lugar de onde ler o que já foi declarado.
 
 Declarada a identidade, o **funil de associação ganha uma segunda origem de candidata**
 (decisão 3): a leitura cujo `target_entity_label` casa com o rótulo de um elemento declarado

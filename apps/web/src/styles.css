@@ -3814,3 +3814,54 @@ footer {
   background: var(--surface-sunken);
   color: var(--muted);
 }
+
+/* ---------------------------------------------------------------------------
+ * Identidade de elemento na REVISÃO (F-051 T6).
+ *
+ * O painel da revisão reusa a folha do painel da cena inteira — é o mesmo idioma, uma
+ * etapa antes —, e o que entra aqui é só o que a etapa de revisão acrescenta.
+ *
+ * O chip do hint é TRACEJADO e traz a palavra "hint do modelo" escrita: ele é sugestão de
+ * máquina, e a etiqueta ◇ da identidade declarada é fato humano. Se os dois se parecessem,
+ * a leitura mais cara da tela — "isto foi afirmado por alguém?" — dependeria de cor.
+ * --------------------------------------------------------------------------- */
+.hint-modelo {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px dashed var(--muted);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.hint-modelo strong {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Identidade revogada não sai do histórico: ela fica esmaecida, com a borda esquerda de
+   recusa e a palavra "revogada" ao lado — nunca só a cor mais fraca. */
+.lista-elementos > li.elemento-revogado {
+  border-left: 3px solid #a33d32;
+  background: var(--surface-sunken);
+}
+
+.selo-revogado {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid #e0b7b1;
+  border-radius: 999px;
+  background: #fbf0ee;
+  color: #7a2c22;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* O campo do `element_ref` na declaração da revisão é somente-leitura e nasce vazio: quem
+   cunha o número é o servidor, no ato. O fundo afundado diz que ali não se digita. */
+.identidade-revisao input[readonly] {
+  background: var(--surface-sunken);
+  color: var(--ink-secondary);
+}

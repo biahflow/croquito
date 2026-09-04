@@ -8,15 +8,19 @@ import type {
   DimensionChain,
   FieldWitness,
   Review,
+  ReviewElementDeclaration,
   ReviewReading,
 } from "./api";
+import { agruparCandidatas } from "./reviewElementIdentity";
 import {
   AppAlert,
   AutoDecisionBadge,
   blockerReadingIds,
+  CandidatasDaAssociacao,
   ChainCloseHint,
   ChainsSection,
   CroquiApp,
+  HintDoModeloChip,
   DecisionAuthorLine,
   exceptionCounts,
   ExceptionsBand,
@@ -1354,5 +1358,144 @@ describe("PreviewDaCena", () => {
 
     expect(html).toContain("Ver não é corrigir");
     expect(html).not.toContain("Corrigir forma");
+  });
+});
+
+/**
+ * O seletor de associação com as candidatas por identidade (F-051 T6), nos estados 05, 07
+ * e 09 do Design Approval Package: o grupo por identidade ACIMA do de proximidade, nenhum
+ * grupo vazio, e a lista plana de sempre quando não há identidade nenhuma.
+ */
+describe("CandidatasDaAssociacao", () => {
+  const nomeDaProposta = (proposalId: string) => `① ${proposalId}`;
+
+  const identidade = (proposalId: string) => ({
+    proposal_id: proposalId,
+    relation: "element_identity",
+  });
+  const perto = (proposalId: string) => ({
+    proposal_id: proposalId,
+    relation: "nearest_geometry",
+  });
+
+  function declaracao(
+    overrides: Partial<ReviewElementDeclaration> = {},
+  ): ReviewElementDeclaration {
+    return {
+      element_ref: "EL-002",
+      label: "B — fecho da área de lazer",
+      proposal_ids: ["vp_1111111111111111", "vp_2222222222222222"],
+      status: "active",
+      declared_by_role: "engineer",
+      declared_at: "2026-09-04T20:05:00Z",
+      revoked_by_role: null,
+      revoked_at: null,
+      ...overrides,
+    };
+  }
+
+  function render(
+    candidatas: readonly { proposal_id: string; relation: string }[],
+    declaracoes: ReviewElementDeclaration[],
+  ): string {
+    return renderToStaticMarkup(
+      <select>
+        <CandidatasDaAssociacao
+          agrupadas={agruparCandidatas(candidatas, declaracoes)}
+          nomeDaProposta={nomeDaProposta}
+        />
+      </select>,
+    );
+  }
+
+  it("sem identidade declarada, a lista é a de hoje: plana, sem grupo nenhum", () => {
+    const html = render([perto("vp_9999999999999999")], []);
+
+    expect(html).not.toContain("<optgroup");
+    expect(html).toContain("① vp_9999999999999999 · geometria mais próxima");
+  });
+
+  it("com identidade, o grupo dela vem ACIMA do de proximidade, rotulado por escrito", () => {
+    const html = render(
+      [perto("vp_9999999999999999"), identidade("vp_1111111111111111")],
+      [declaracao()],
+    );
+
+    const porIdentidade = html.indexOf(
+      '<optgroup label="Pela identidade — ◇ EL-002 · B — fecho da área de lazer"',
+    );
+    const porProximidade = html.indexOf('<optgroup label="Pela proximidade"');
+
+    // O primeiro grupo do seletor é o da identidade, e o da proximidade vem depois dele.
+    expect(porIdentidade).toBe(html.indexOf("<optgroup"));
+    expect(porIdentidade).toBeLessThan(porProximidade);
+    expect(html).toContain("① vp_1111111111111111 · identidade declarada do elemento");
+  });
+
+  it("nenhum grupo vazio: só identidade não desenha o grupo da proximidade", () => {
+    const html = render([identidade("vp_1111111111111111")], [declaracao()]);
+
+    expect(html).toContain("Pela identidade — ◇ EL-002");
+    expect(html).not.toContain("Pela proximidade");
+  });
+
+  it("a tela não mostra score nem distância — ela não ordena nem decide por eles", () => {
+    // A candidata como a API a entrega, com os sinais de confiança da F-029 dentro dela.
+    const daApi: Review["associations"]["candidates"] = [
+      {
+        reading_id: "rd_1111111111111111",
+        proposal_id: "vp_1111111111111111",
+        proposal_kind: "line",
+        relation: "element_identity",
+        association_confidence: 0,
+        orientation_alignment: null,
+      },
+      {
+        reading_id: "rd_1111111111111111",
+        proposal_id: "vp_9999999999999999",
+        proposal_kind: "line",
+        relation: "nearest_geometry",
+        association_confidence: 0.87,
+        orientation_alignment: 0.99,
+      },
+    ];
+    const html = render(daApi, [declaracao()]);
+
+    expect(html).not.toContain("0.87");
+    expect(html).not.toContain("0,87");
+    expect(html).not.toMatch(/\bpx\b/);
+  });
+});
+
+/**
+ * O chip do hint do modelo (F-051 T6, estado 02 do pacote): tracejado E com a origem
+ * escrita, porque sugestão nunca se veste de identidade.
+ */
+describe("HintDoModeloChip", () => {
+  const leitura = (overrides: Partial<ReviewReading> = {}): ReviewReading => ({
+    id: "rd_1111111111111111",
+    raw_text: "(B) → C= 56m",
+    kind: "length",
+    status: "proposed",
+    ...overrides,
+  });
+
+  it("escreve a origem do hint ao lado do valor lido", () => {
+    const html = renderToStaticMarkup(
+      <HintDoModeloChip reading={leitura({ target_entity_label: "B" })} />,
+    );
+
+    expect(html).toContain('class="hint-modelo"');
+    expect(html).toContain("elemento (hint do modelo)");
+    expect(html).toContain("<strong>B</strong>");
+  });
+
+  it("leitura sem hint não ganha chip — ausência é ausência, não chip vazio", () => {
+    expect(renderToStaticMarkup(<HintDoModeloChip reading={leitura()} />)).toBe("");
+    expect(
+      renderToStaticMarkup(
+        <HintDoModeloChip reading={leitura({ target_entity_label: null })} />,
+      ),
+    ).toBe("");
   });
 });

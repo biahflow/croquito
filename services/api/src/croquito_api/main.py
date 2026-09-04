@@ -1081,6 +1081,24 @@ class ReviewElementIdentityResponse(ApiModel):
     declarations: list[ReviewElementDeclarationResponse]
 
 
+class ReviewElementDeclarationListResponse(ApiModel):
+    """As identidades declaradas na revisão corrente, para quem carrega a tela do zero.
+
+    A T2 preservou `GET /v1/jobs/{job_id}/review` byte a byte, e por isso a lista inteira só
+    saía nas respostas dos três atos — quem abre a revisão numa aba nova não teria por onde
+    ler o que já foi declarado. Esta rota é essa leitura, e nada mais: mesma forma de
+    `declarations` dos atos, incluindo as REVOGADAS, porque o histórico é parte do que a
+    tela precisa mostrar.
+
+    `review_version` é a versão sobre a qual a lista foi lida — informativo, como o
+    `review_version` da listagem de sugestões: quem for declarar cita o `base_version` que a
+    rota do ato já exige.
+    """
+
+    review_version: int
+    declarations: list[ReviewElementDeclarationResponse]
+
+
 class ElementProposalResponse(ApiModel):
     """Uma proposta candidata de agrupamento (F-047 T6, ADR-0058 decisão 2).
 
@@ -11480,6 +11498,50 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             acted_at=acted_at,
             review_version=next_review.version,
             declarations=[_review_element_declaration_response(item) for item in declarations],
+        )
+
+    @application.get(
+        "/v1/jobs/{job_id}/review/elements",
+        response_model=ReviewElementDeclarationListResponse,
+        tags=["review"],
+    )
+    async def list_review_element_declarations(
+        job_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ReviewElementDeclarationListResponse:
+        """As identidades declaradas na revisão corrente — a leitura que faltava (F-051 T6).
+
+        A revogada vem junto, com `status="revoked"`: a lista é o registro do que foi
+        afirmado, não só o que está valendo agora.
+
+        Leitura: qualquer principal autenticado do tenant, no molde da rota de sugestões. O
+        papel profissional continua sendo exigido só para DECLARAR, RENOMEAR ou REVOGAR.
+
+        Sem snapshot de propostas a resposta é a lista vazia, e não uma recusa: declarar
+        exige o snapshot, ler o que foi declarado não exige nada — e uma revisão sem
+        snapshot não tem declaração para esconder.
+        """
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        return ReviewElementDeclarationListResponse(
+            review_version=current.version,
+            declarations=[
+                _review_element_declaration_response(item)
+                for item in _review_element_declarations(current)
+            ],
         )
 
     @application.post(

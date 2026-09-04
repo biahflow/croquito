@@ -234,6 +234,44 @@ folha, a linha da lista mostra "⚠ sem 2ª testemunha" e o painel de decisão m
 frase completa (F-010) — a corroboração nunca bloqueia nem rebaixa status, só informa;
 confirmação e ausência do braço de OCR seguem silenciosas para não virar ruído.
 
+#### A cota-balão e o elemento dela (F-051)
+
+Quando o técnico escreve a medida longe do elemento e a liga a ele por uma letra no balão,
+a proximidade em pixels não alcança o referente por construção. A etapa de decisões ganha,
+por isso, três coisas — e só elas
+([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md)).
+
+A **leitura selecionada mostra o hint do modelo** num chip tracejado que nomeia a origem por
+escrito — "elemento (hint do modelo): B". Ele é sugestão de máquina, e a etiqueta ◇ da
+identidade declarada é outra coisa: a diferença é traço **e** palavra, nunca cor. O hint é
+corrigível pelo caminho de sempre — é campo da própria decisão (e da correção declarada),
+gravado com autor e instante junto dela, nunca um ato à parte.
+
+Um **painel de identidade da revisão** declara que um conjunto de propostas de geometria
+**é** um elemento, com o `element_ref` cunhado pelo servidor no ato (campo somente-leitura,
+que a tela não preenche por adivinhação) e um rótulo legível ao lado. O sistema **sugere** a
+partir dos rótulos que o modelo leu, com o selo `⚙ proposta · unresolved` tracejado e o aviso
+fixo de que sugestão não é identidade; "declarar a partir da proposta" só semeia a seleção do
+ato — não existe segundo caminho de escrita. Descartar exige motivo escrito, e a sugestão
+descartada não volta. "Zero sugestões" e "não foi possível ler as sugestões" são textos
+**diferentes**: ausência e silêncio não são a mesma coisa. Renomear e revogar são atos
+declarados; a identidade revogada continua na lista, marcada com a palavra "revogada" e o
+carimbo de quem revogou, e revogar **não desfaz** associação já confirmada — corrigir
+associação é a retificação de decisão que a revisão já tem.
+
+Declarada a identidade, o **seletor de associação** — o mesmo de sempre — ganha um grupo
+rotulado por escrito, "Pela identidade — ◇ EL-00N · rótulo", **acima** do grupo "Pela
+proximidade", com um `field-hint` dizendo qual hint casou com qual elemento. As duas origens
+aparecem lado a lado, nunca uma no lugar da outra, e sem score nem distância: a tela não
+ordena, não filtra e não decide por eles. Quando nenhum elemento declarado casa com o hint, a
+tela diz isso por escrito e não há candidata nova — o casamento é exato (igualdade ignorando
+caixa e espaço, ou o hint como palavra inteira do rótulo), nunca aproximado em silêncio.
+Nenhum grupo vazio aparece.
+
+Sem identidade declarada e sem hint, a etapa de decisões é a de hoje: seletor com a lista
+plana de sempre, nenhum chip, nenhum campo a mais, e o painel dizendo por escrito que não tem
+o que sugerir. A F-051 é aditiva — quem não usa cota-balão não vê a feature.
+
 #### Corrigir uma decisão já registrada
 
 Leitura decidida deixa de mostrar os botões de decisão e passa a mostrar o registro:

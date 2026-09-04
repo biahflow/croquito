@@ -8325,6 +8325,29 @@
         "title": "ReviewDecisionCommand",
         "type": "object"
       },
+      "ReviewElementDeclarationListResponse": {
+        "additionalProperties": false,
+        "description": "As identidades declaradas na revisão corrente, para quem carrega a tela do zero.\n\nA T2 preservou `GET /v1/jobs/{job_id}/review` byte a byte, e por isso a lista inteira só\nsaía nas respostas dos três atos — quem abre a revisão numa aba nova não teria por onde\nler o que já foi declarado. Esta rota é essa leitura, e nada mais: mesma forma de\n`declarations` dos atos, incluindo as REVOGADAS, porque o histórico é parte do que a\ntela precisa mostrar.\n\n`review_version` é a versão sobre a qual a lista foi lida — informativo, como o\n`review_version` da listagem de sugestões: quem for declarar cita o `base_version` que a\nrota do ato já exige.",
+        "properties": {
+          "declarations": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewElementDeclarationResponse"
+            },
+            "title": "Declarations",
+            "type": "array"
+          },
+          "review_version": {
+            "title": "Review Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "review_version",
+          "declarations"
+        ],
+        "title": "ReviewElementDeclarationListResponse",
+        "type": "object"
+      },
       "ReviewElementDeclarationResponse": {
         "additionalProperties": false,
         "description": "Uma identidade declarada na revisão, como ela ficou depois dos atos.\n\nDevolve só o PAPEL profissional de quem declarou e de quem revogou, nunca o subject — a\nmesma regra do ato de identidade da cena. A entrada revogada continua na lista, com\n`status=\"revoked\"`: o ref sai de circulação e o histórico não perde o que foi afirmado.",
@@ -15991,6 +16014,53 @@
       }
     },
     "/v1/jobs/{job_id}/review/elements": {
+      "get": {
+        "description": "As identidades declaradas na revisão corrente — a leitura que faltava (F-051 T6).\n\nA revogada vem junto, com `status=\"revoked\"`: a lista é o registro do que foi\nafirmado, não só o que está valendo agora.\n\nLeitura: qualquer principal autenticado do tenant, no molde da rota de sugestões. O\npapel profissional continua sendo exigido só para DECLARAR, RENOMEAR ou REVOGAR.\n\nSem snapshot de propostas a resposta é a lista vazia, e não uma recusa: declarar\nexige o snapshot, ler o que foi declarado não exige nada — e uma revisão sem\nsnapshot não tem declaração para esconder.",
+        "operationId": "list_review_element_declarations_v1_jobs__job_id__review_elements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewElementDeclarationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Review Element Declarations",
+        "tags": [
+          "review"
+        ]
+      },
       "post": {
         "description": "Declara que um conjunto de PROPOSTAS é um elemento, cunhando o ref no ato.\n\nO mesmo ato do ADR-0058 uma etapa antes (ADR-0063, decisão 1): é humano, nunca\ninferência — a rota não olha rótulo do modelo, proximidade nem camada para escolher o\ngrupo. Quem escolhe é quem assina; a sugestão assistida só semeia a seleção.",
         "operationId": "declare_review_element_v1_jobs__job_id__review_elements_post",
