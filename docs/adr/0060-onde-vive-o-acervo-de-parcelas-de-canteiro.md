@@ -110,3 +110,32 @@ cumprindo o terceiro Human Gate da
 rotas do acervo podem ser construídas. O motor de
 domínio (modelo, aplicação, pré-visualização) não depende dele: `apply_site_setup_kit` é puro
 e não sabe onde o acervo mora.
+
+## Emenda 1 (2026-09-04): a proveniência carrega a identidade, não só a versão
+
+Status da emenda: Proposed — aguardando aceite humano.
+
+A decisão 3 mandou a rodada registrar "a **versão** do acervo aplicado" na proveniência da
+contribuição, e a execução a seguiu ao pé da letra: `SiteSetupOrigin` guarda `kit_version`
+e o merge do apply desduplica **por versão**. O plano da F-042 declarou a consequência como
+risco desde 2026-08-28: **dois acervos diferentes que declarem a mesma versão são
+indistinguíveis na matriz** — e com as duas origens da decisão (plataforma e tenant), duas
+linhagens independentes chamarem sua primeira versão de `v1` não é acidente, é o caso
+esperado.
+
+O dono decidiu corrigir em 2026-09-04, antes que o primeiro acervo real exista (o Human
+Gate 4 da F-042 ainda não foi exercido — não há dado gravado a migrar).
+
+1. **`SiteSetupOrigin` passa a carregar `kit_id`** ao lado de `kit_version`: a identidade
+   do acervo aplicado, não só o rótulo de versão dele. `kit_id` é o identificador imutável
+   do registro publicado/autorado — o mesmo que as rotas já devolvem.
+2. **O merge do apply desduplica por `(kit_id, kit_version)`**, nunca mais por versão
+   sozinha. Reaplicar o mesmo acervo continua idempotente; aplicar OUTRO acervo que por
+   coincidência chama sua versão igual deixa de colidir.
+3. **Proveniência antiga não é reescrita.** `kit_id` nasce opcional no contrato
+   (`None` = "não observado", gravado antes desta emenda); nenhuma rodada existente é
+   migrada nem reinterpretada. Como não existe acervo real aplicado até hoje, o caso
+   `None` é teórico — mas o contrato o declara em vez de fingir que o passado registrou o
+   que não registrou.
+4. **Nada mais muda**: as duas origens, o contrato de leitura único e a promoção por ato
+   humano seguem como decididos. A emenda conserta a chave da proveniência, não o desenho.
