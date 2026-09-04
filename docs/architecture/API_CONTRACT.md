@@ -991,6 +991,43 @@ parcela de si mesmo ou leitura ainda não confirmada), `404 CHAIN_NOT_FOUND` (re
 de cadeia inexistente), `409 REVISION_CONFLICT`, `403 FORBIDDEN`, `404 NOT_FOUND` e
 `409 JOB_NOT_READY`.
 
+### `GET /v1/jobs/{job_id}/review/elements`
+
+As identidades declaradas na revisão corrente (F-051 T6). A rota existe porque
+`GET /v1/jobs/{job_id}/review` foi preservada byte a byte pela T2: sem esta leitura, quem
+abre a revisão numa aba nova não teria por onde ver o que já foi declarado — a lista inteira
+só saía nas respostas dos três atos.
+
+Saída, com a MESMA forma de `declarations` dos atos:
+
+```json
+{
+  "review_version": 4,
+  "declarations": [
+    {
+      "element_ref": "EL-002",
+      "label": "B",
+      "proposal_ids": ["vp_1111111111111111", "vp_2222222222222222"],
+      "status": "active",
+      "declared_by_role": "engineer",
+      "declared_at": "2026-09-04T21:00:00Z",
+      "revoked_by_role": null,
+      "revoked_at": null
+    }
+  ]
+}
+```
+
+- A identidade **revogada vem junto**, com `"status": "revoked"` e o carimbo de quem
+  revogou: a lista é o registro do que foi afirmado, não só o que está valendo agora.
+- `review_version` é informativo, como na listagem de sugestões: quem for declarar cita o
+  `base_version` que a rota do ato já exige.
+- Leitura: qualquer principal autenticado do tenant. O papel profissional continua sendo
+  exigido só para declarar, renomear ou revogar.
+- Revisão inexistente responde `409 JOB_NOT_READY`. Revisão **sem** snapshot de propostas
+  responde a lista vazia, e não uma recusa: declarar exige o snapshot, ler o que foi
+  declarado não exige nada.
+
 ### `POST /v1/jobs/{job_id}/review/elements`
 
 Declara que um conjunto de **propostas de geometria** é um elemento, cunhando o
@@ -1072,7 +1109,9 @@ Saída: o ato, a versão da revisão nova e a lista inteira de identidades depoi
   única coisa que o ato recalcula, e eles são reconstruídos do zero a cada vez (aplicar o
   mesmo ato duas vezes dá o mesmo conjunto). Sem declaração nenhuma, `associations_json` sai
   byte a byte igual e `GET /v1/jobs/{job_id}/review` responde exatamente como antes desta
-  feature — a lista de identidades sai pelas três rotas de ato, não pela leitura da revisão.
+  feature — a lista de identidades sai pelas três rotas de ato e por
+  [`GET /v1/jobs/{job_id}/review/elements`](#get-v1jobsjob_idreviewelements), nunca pela
+  leitura da revisão.
 
 ### `POST /v1/jobs/{job_id}/review/elements/labels`
 

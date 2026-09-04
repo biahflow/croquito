@@ -496,6 +496,14 @@ export type ReviewDecision = {
   unit?: "m" | "mm";
   kind?: string;
   written_decimals?: number;
+  /**
+   * Corrige o rótulo do elemento que o modelo leu no balão (F-051 T1/T6). Semântica
+   * ADITIVA, como `target_hint`: ausente não altera o valor vigente, presente corrige — e
+   * a correção recunha as candidatas por identidade da revisão que ESTE ato cria, nunca
+   * da que ele está decidindo. Corrigir o hint não é ato novo: é campo da decisão que a
+   * revisão já tem, gravado com autor e instante como o resto dela.
+   */
+  target_entity_label?: string;
 };
 
 /**
@@ -515,6 +523,8 @@ export type ReviewRectification = {
   unit?: "m" | "mm";
   kind?: string;
   written_decimals?: number;
+  /** O mesmo campo aditivo da decisão (F-051 T1/T6): corrigir o hint pelo ato de sempre. */
+  target_entity_label?: string;
 };
 
 /**
@@ -1224,6 +1234,18 @@ export type ReviewElementIdentityAct = {
 };
 
 /**
+ * A leitura das identidades declaradas na revisão corrente (F-051 T6).
+ *
+ * Existe porque `GET /v1/jobs/{id}/review` foi preservada byte a byte pela T2: sem esta
+ * rota, quem abre a revisão numa aba nova não teria por onde ver o que já foi declarado.
+ * `declarations` tem a MESMA forma da lista devolvida pelos três atos, revogadas incluídas.
+ */
+export type ReviewElementDeclarationList = {
+  review_version: number;
+  declarations: ReviewElementDeclaration[];
+};
+
+/**
  * Uma sugestão assistida de identidade na REVISÃO, a partir do rótulo do modelo (F-051 T3).
  *
  * O gêmeo, uma etapa antes, de `ElementProposal`: nasce `unresolved` e nunca escreve nada —
@@ -1393,6 +1415,23 @@ export async function rejectElementProposal(
       },
       body: JSON.stringify(rejection),
     },
+  );
+}
+
+/**
+ * As identidades declaradas na revisão corrente (F-051 T6).
+ *
+ * A leitura da revisão (`getReview`) não as carrega — a T2 a preservou byte a byte —, então
+ * é esta rota que alimenta a tela quando ela abre do zero. Falhar aqui não impede declarar:
+ * a tela diz por escrito que não conseguiu ler, como o painel da cena faz com as propostas.
+ */
+export async function listReviewElementDeclarations(
+  accessToken: string,
+  jobId: string,
+): Promise<ReviewElementDeclarationList> {
+  return apiJson<ReviewElementDeclarationList>(
+    `/v1/jobs/${jobId}/review/elements`,
+    accessToken,
   );
 }
 

@@ -44,6 +44,16 @@ import {
 } from "./scenePreview";
 import { cenaTemIdentidade } from "./elementIdentity";
 import { ElementIdentityPanel } from "./elementIdentityPanel";
+import {
+  agruparCandidatas,
+  dicaDeHintSemCasamento,
+  dicaDoCasamento,
+  hintDoModelo,
+  identidadesAtivas,
+  ROTULO_DO_HINT,
+  type CandidatasAgrupadas,
+} from "./reviewElementIdentity";
+import { ReviewElementIdentityPanel } from "./reviewElementIdentityPanel";
 
 import {
   annotateDimension,
@@ -63,6 +73,7 @@ import {
   getTraceSolve,
   listChatSessions,
   listProjects,
+  listReviewElementDeclarations,
   mutateReviewWitnesses,
   postReviewChains,
   requestExport,
@@ -79,6 +90,7 @@ import {
   type Review,
   type ReviewChainCommand,
   type ReviewDecision,
+  type ReviewElementDeclaration,
   type ReviewReading,
   type ProjectSummary,
   type Job,
@@ -250,6 +262,13 @@ const MEASUREMENT_KINDS = [
  * O valor nunca é enviado — não colide com o padrão `vp_...`.
  */
 const ANNOTATION_OPTION = "annotation:no-element";
+
+/**
+ * Teto do rótulo de elemento corrigido na decisão, o mesmo do contrato
+ * (`target_entity_label`, `max_length=120`). Declarado aqui para o campo recusar antes de
+ * a requisição sair, e não para substituir o servidor — quem valida continua sendo ele.
+ */
+const HINT_DE_ELEMENTO_MAX_LENGTH = 120;
 
 /**
  * Com que opção o formulário de decisão NASCE ao abrir uma leitura.
@@ -1347,6 +1366,70 @@ export function DecisionAuthorLine({ reading }: { reading: ReviewReading }) {
 }
 
 /**
+ * O chip do hint do modelo na leitura selecionada (F-051 T6, DAP estado 02).
+ *
+ * Tracejado e com a origem escrita — "hint do modelo" — porque sugestão nunca se veste de
+ * identidade: a etiqueta ◇ da identidade declarada é outra coisa, e a diferença precisa
+ * sobreviver a quem não distingue cor. `null` quando o modelo não leu rótulo nenhum:
+ * ausência é ausência, e um chip vazio seria ruído em toda leitura sem balão.
+ */
+export function HintDoModeloChip({ reading }: { reading: ReviewReading }) {
+  const hint = hintDoModelo(reading);
+  if (hint === null) {
+    return null;
+  }
+  return (
+    <span className="hint-modelo">
+      {ROTULO_DO_HINT}: <strong>{hint}</strong>
+    </span>
+  );
+}
+
+/**
+ * As opções do seletor de associação — o grupo por identidade ACIMA do de proximidade
+ * (F-051 T6, DAP decisão 4 e estados 05/07/09).
+ *
+ * Duas regras que valem juntas e explicam a forma do código:
+ *
+ * - **nenhum grupo vazio.** Sem candidata por identidade, a lista sai PLANA, exatamente
+ *   como era antes desta feature — nem o grupo "Pela identidade" nem o "Pela proximidade"
+ *   aparecem para envolver o que já estava ali;
+ * - **sem score e sem distância.** A distinção entre as duas origens é o rótulo do grupo e
+ *   a relação por extenso, nunca um número: a tela não ordena, não filtra e não decide por
+ *   confiança, e mostrá-la aqui a transformaria em critério aos olhos de quem lê.
+ */
+export function CandidatasDaAssociacao({
+  agrupadas,
+  nomeDaProposta,
+}: {
+  agrupadas: CandidatasAgrupadas;
+  nomeDaProposta: (proposalId: string) => string;
+}) {
+  const opcao = (candidate: { proposal_id: string; relation: string }) => (
+    <option key={candidate.proposal_id} value={candidate.proposal_id}>
+      {nomeDaProposta(candidate.proposal_id)} · {relationLabel(candidate.relation)}
+    </option>
+  );
+  if (agrupadas.grupos.length === 0) {
+    return <>{agrupadas.proximidade.map(opcao)}</>;
+  }
+  return (
+    <>
+      {agrupadas.grupos.map((grupo) => (
+        <optgroup key={grupo.chave} label={grupo.rotuloDoGrupo}>
+          {grupo.candidatas.map(opcao)}
+        </optgroup>
+      ))}
+      {agrupadas.proximidade.length === 0 ? null : (
+        <optgroup label="Pela proximidade">
+          {agrupadas.proximidade.map(opcao)}
+        </optgroup>
+      )}
+    </>
+  );
+}
+
+/**
  * Jornada da revisão do croqui. A sessão OIDC é da casca (`App.tsx`) e chega por prop:
  * `readSession()` consome o authorization code do redirect, que é de uso único, então
  * ela tem um dono só. A casca também é quem decide não montar esta jornada sem sessão.
@@ -1746,6 +1829,10 @@ export function CroquiApp({
   const [correctionValue, setCorrectionValue] = useState("");
   const [correctionUnit, setCorrectionUnit] = useState<"m" | "mm">("m");
   const [correctionKind, setCorrectionKind] = useState("");
+  // Correção do rótulo de elemento que o modelo leu no balão (F-051). Vazio não altera
+  // nada: o campo é aditivo no comando, e corrigir o hint é parte da MESMA decisão — não
+  // existe ato próprio de "corrigir hint" para não haver dois caminhos de escrita.
+  const [hintCorrection, setHintCorrection] = useState("");
   // Correção de decisão registrada em curso. Enquanto for null, leitura decidida só
   // mostra o registro: o formulário não reabre sozinho.
   const [rectifyingReadingId, setRectifyingReadingId] = useState<string | null>(
@@ -1935,6 +2022,68 @@ export function CroquiApp({
       ) ?? [],
     [review, selectedReadingId],
   );
+  // As identidades declaradas na revisão (F-051 T6). Elas NÃO vêm em `GET .../review` — a
+  // T2 preservou aquela resposta byte a byte —, então a tela as lê pela rota própria. Ficam
+  // aqui, e não dentro do painel, porque o seletor de associação também precisa delas para
+  // dizer de qual elemento cada candidata por identidade veio.
+  const [elementDeclarations, setElementDeclarations] = useState<
+    ReviewElementDeclaration[]
+  >([]);
+  const [elementDeclarationsFailed, setElementDeclarationsFailed] = useState(false);
+  const reviewVersion = review?.version ?? null;
+  useEffect(() => {
+    if (!session?.access_token || jobId === "" || reviewVersion === null) {
+      setElementDeclarations([]);
+      setElementDeclarationsFailed(false);
+      return;
+    }
+    let cancelado = false;
+    void listReviewElementDeclarations(session.access_token, jobId)
+      .then((lista) => {
+        if (cancelado) {
+          return;
+        }
+        setElementDeclarations(lista.declarations);
+        setElementDeclarationsFailed(false);
+      })
+      .catch(() => {
+        if (cancelado) {
+          return;
+        }
+        // Falhar aqui não esconde candidata nenhuma: elas já vêm persistidas na revisão.
+        // O que se perde é o NOME do elemento no rótulo do grupo, e o painel diz isso.
+        setElementDeclarations([]);
+        setElementDeclarationsFailed(true);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [session?.access_token, jobId, reviewVersion]);
+  // As candidatas da leitura separadas em grupos por identidade e no resto, por
+  // proximidade. Sem candidata por identidade, `grupos` volta vazio e o seletor sai plano
+  // como sempre foi — nenhum grupo vazio aparece.
+  const candidatasAgrupadas: CandidatasAgrupadas = useMemo(
+    () => agruparCandidatas(candidates, elementDeclarations),
+    [candidates, elementDeclarations],
+  );
+  const hintDaLeituraSelecionada =
+    selectedReading === null ? null : hintDoModelo(selectedReading);
+  // As duas frases sob o seletor são excludentes por construção: uma explica o casamento
+  // que houve, a outra diz que não houve nenhum. Nunca aparecem juntas.
+  const dicaDaIdentidade = dicaDoCasamento(
+    hintDaLeituraSelecionada,
+    candidatasAgrupadas.grupos,
+  );
+  const dicaDoHintSemElemento = dicaDeHintSemCasamento(
+    hintDaLeituraSelecionada,
+    elementDeclarations,
+    candidatasAgrupadas.grupos,
+  );
+  // O campo de corrigir o hint só aparece onde tem função: leitura com hint, ou job que
+  // já declarou alguma identidade.
+  const ofereceCorrigirHint =
+    hintDaLeituraSelecionada !== null ||
+    identidadesAtivas(elementDeclarations).length > 0;
   const confirmedCount =
     review?.packet.readings.filter((reading) => reading.status === "confirmed")
       .length ?? 0;
@@ -2601,6 +2750,9 @@ export function CroquiApp({
     setCorrectionValue("");
     setCorrectionUnit("m");
     setCorrectionKind("");
+    // O hint corrigido é da leitura que estava aberta: levá-lo para a próxima escreveria
+    // na cota seguinte a letra do balão da anterior.
+    setHintCorrection("");
     setDecisionJustification("");
     // Trocar de leitura fecha a correção em curso: o formulário aberto pertence à
     // leitura que o revisor estava corrigindo, não à próxima.
@@ -2946,6 +3098,8 @@ export function CroquiApp({
         unit: written ? correctionUnit : undefined,
         kind:
           action === "correct" && correctionKind ? correctionKind : undefined,
+        // Campo aditivo: em branco não vai, e o hint vigente fica como está.
+        target_entity_label: hintCorrection.trim() || undefined,
       };
       const next = await submitReviewDecisions(
         session.access_token,
@@ -2957,6 +3111,7 @@ export function CroquiApp({
       setReview(next);
       setConflict(false);
       setDecisionJustification("");
+      setHintCorrection("");
       const pending = next.packet.readings.find((reading) =>
         ["proposed", "ambiguous"].includes(reading.status),
       );
@@ -3243,6 +3398,9 @@ export function CroquiApp({
     setCorrectionValue(prefill.value);
     setCorrectionUnit(prefill.unit);
     setCorrectionKind(prefill.kind);
+    // O hint corrigido nasce vazio, como a justificativa: corrigir é ato novo, e
+    // pré-preencher o valor vigente faria a tela reenviá-lo como se fosse correção.
+    setHintCorrection("");
     setDecisionJustification(prefill.justification);
     setMessage(null);
     setRectifyingReadingId(reading.id);
@@ -3290,6 +3448,7 @@ export function CroquiApp({
       written,
       unit: correctionUnit,
       kind: correctionKind,
+      entityLabel: hintCorrection,
     });
     if (!command) {
       return;
@@ -3308,6 +3467,7 @@ export function CroquiApp({
       setConflict(false);
       setRectifyingReadingId(null);
       setDecisionJustification("");
+      setHintCorrection("");
       setToast("Correção registrada. A decisão anterior segue no histórico.");
     } catch (error) {
       const text =
@@ -4865,6 +5025,25 @@ export function CroquiApp({
                   onRetract={(chainId) => void retractChain(chainId)}
                   onSelectReading={setSelectedReadingId}
                 />
+                {/* A identidade da revisão é do JOB, não da leitura selecionada: ela fica
+                    fora do formulário de decisão, ao lado da lista, como o painel da cena
+                    fica ao lado do preview. */}
+                <ReviewElementIdentityPanel
+                  accessToken={session.access_token}
+                  jobId={jobId}
+                  baseVersion={review.version}
+                  declaracoes={elementDeclarations}
+                  declaracoesFalharam={elementDeclarationsFailed}
+                  propostas={proposals}
+                  nomeDaProposta={proposalName}
+                  onActed={() => {
+                    // O ato criou revisão nova: a versão que esta tela tem ficou velha, e
+                    // as candidatas por identidade que ele recunhou só chegam com ela.
+                    setConflict(false);
+                    void loadReview(session.access_token);
+                  }}
+                  onConflict={() => setConflict(true)}
+                />
                 {selectedReading ? (
                   <FieldWitnessesSection
                     reading={selectedReading}
@@ -4913,6 +5092,7 @@ export function CroquiApp({
                       <strong title={selectedReading.id}>
                         {readingLabel(selectedReading)}
                       </strong>
+                      <HintDoModeloChip reading={selectedReading} />
                       <CopyIdButton
                         key={selectedReading.id}
                         value={selectedReading.id}
@@ -4945,6 +5125,7 @@ export function CroquiApp({
                       <strong title={selectedReading.id}>
                         {readingLabel(selectedReading)}
                       </strong>
+                      <HintDoModeloChip reading={selectedReading} />
                       <CopyIdButton
                         key={selectedReading.id}
                         value={selectedReading.id}
@@ -4991,16 +5172,21 @@ export function CroquiApp({
                         <option value={ANNOTATION_OPTION}>
                           Anotação da folha — não mede um elemento
                         </option>
-                        {candidates.map((candidate) => (
-                          <option
-                            key={candidate.proposal_id}
-                            value={candidate.proposal_id}
-                          >
-                            {proposalName(candidate.proposal_id)} ·{" "}
-                            {relationLabel(candidate.relation)}
-                          </option>
-                        ))}
+                        <CandidatasDaAssociacao
+                          agrupadas={candidatasAgrupadas}
+                          nomeDaProposta={proposalName}
+                        />
                       </select>
+                      {/* Por que a candidata por identidade está ali: o mesmo idioma dos
+                          hints que a tela já tem, sem score e sem distância. */}
+                      {dicaDaIdentidade ? (
+                        <small className="field-hint">{dicaDaIdentidade}</small>
+                      ) : null}
+                      {/* Hint que não casa com elemento declarado nenhum: a fronteira é
+                          dita por escrito, e a etapa segue sendo a de hoje. */}
+                      {dicaDoHintSemElemento ? (
+                        <small className="field-hint">{dicaDoHintSemElemento}</small>
+                      ) : null}
                       {/* Dica lida do sinal do pipeline ou do próprio texto da cota. A
                           opção nasce marcada, e nada mais: confirmar continua exigindo
                           justificativa escrita, e trocar a seleção desfaz a sugestão. */}
@@ -5085,6 +5271,32 @@ export function CroquiApp({
                         </small>
                       ) : null}
                     </label>
+                    {/* Corrigir o hint do modelo (F-051) é campo DESTA decisão, não ato
+                        novo: em branco não altera nada, preenchido corrige — e a correção
+                        recunha as candidatas por identidade na revisão que este ato cria,
+                        nunca na que ele está decidindo.
+
+                        Só aparece onde tem função (`ofereceCorrigirHint`): sem hint e sem
+                        identidade declarada, a etapa é a de hoje, e um campo a mais em
+                        toda decisão seria a feature cobrando de quem não a usa. */}
+                    {ofereceCorrigirHint ? (
+                      <label>
+                        Elemento do balão — corrigir o hint do modelo (opcional)
+                        <input
+                          value={hintCorrection}
+                          onChange={(event) => setHintCorrection(event.target.value)}
+                          maxLength={HINT_DE_ELEMENTO_MAX_LENGTH}
+                          placeholder={
+                            hintDaLeituraSelecionada ?? "ex.: B (a letra do balão)"
+                          }
+                        />
+                        <small className="field-hint">
+                          {hintDaLeituraSelecionada === null
+                            ? "O modelo não leu rótulo de elemento nesta cota. Escrever a letra do balão aqui liga a cota ao elemento declarado com esse rótulo."
+                            : `O modelo leu “${hintDaLeituraSelecionada}”. Em branco, o hint fica como está; escrever outro valor o corrige, com autor e instante, junto desta decisão.`}
+                        </small>
+                      </label>
+                    ) : null}
                     <label>
                       {rectifyingReadingId === selectedReading.id
                         ? `Justificativa da correção (${decisionJustification.trim().length}/${JUSTIFICATION_MAX_LENGTH})`

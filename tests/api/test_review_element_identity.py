@@ -721,3 +721,126 @@ def test_job_sem_revisao_de_leitura_recusa_como_job_not_ready(tmp_path: Path) ->
 
     assert response.status_code == 409
     assert response.json()["code"] == "JOB_NOT_READY"
+
+
+def _list_declarations(
+    client: TestClient, job_id: Any, *, tenant_id: str = TENANT, roles: str = "engineer"
+) -> Any:
+    return client.get(f"/v1/jobs/{job_id}/review/elements", headers=_headers(tenant_id, roles))
+
+
+def test_leitura_das_declaracoes_devolve_a_lista_da_revisao_corrente(tmp_path: Path) -> None:
+    """F-051 T6: quem carrega a tela do zero lê aqui o que os atos já tinham devolvido."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    vazia = _list_declarations(client, job_id)
+    assert vazia.status_code == 200
+    assert vazia.json() == {"review_version": 1, "declarations": []}
+
+    declarada = _declare(
+        client,
+        job_id,
+        proposal_ids=[PROPOSAL_A, PROPOSAL_B],
+        base_version=1,
+        key="d1",
+        label="B",
+    )
+    assert declarada.status_code == 200
+
+    lida = _list_declarations(client, job_id)
+
+    assert lida.status_code == 200
+    assert lida.json()["review_version"] == declarada.json()["review_version"]
+    # Mesma forma do ato, campo a campo: a tela lê uma coisa só, escrita num lugar só.
+    assert lida.json()["declarations"] == declarada.json()["declarations"]
+    corpo = lida.json()["declarations"][0]
+    assert corpo["element_ref"] == "EL-001"
+    assert corpo["label"] == "B"
+    assert corpo["status"] == "active"
+    assert corpo["declared_by_role"] == "engineer"
+    # Papel, nunca o subject de quem agiu.
+    assert "declared_by" not in corpo
+    assert "revisor" not in lida.text
+
+
+def test_leitura_das_declaracoes_mostra_a_revogada_como_historico(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    assert (
+        _declare(client, job_id, proposal_ids=[PROPOSAL_A], base_version=1, key="d1", label="B")
+    ).status_code == 200
+    revogada = _revoke(client, job_id, element_ref="EL-001", base_version=2, key="r1")
+    assert revogada.status_code == 200
+
+    lida = _list_declarations(client, job_id)
+
+    assert lida.status_code == 200
+    declarations = lida.json()["declarations"]
+    assert [item["element_ref"] for item in declarations] == ["EL-001"]
+    assert declarations[0]["status"] == "revoked"
+    assert declarations[0]["label"] == "B"
+    assert declarations[0]["revoked_by_role"] == "engineer"
+    assert declarations[0]["revoked_at"] is not None
+
+
+def test_leitura_das_declaracoes_nao_exige_papel_profissional(tmp_path: Path) -> None:
+    """Ler é para qualquer principal do tenant; o papel é exigido para declarar."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    assert (
+        _declare(client, job_id, proposal_ids=[PROPOSAL_A], base_version=1, key="d1", label="B")
+    ).status_code == 200
+
+    lida = _list_declarations(client, job_id, roles="cad_operator")
+
+    assert lida.status_code == 200
+    assert lida.json()["declarations"][0]["element_ref"] == "EL-001"
+
+
+def test_leitura_das_declaracoes_isola_tenant_e_revisao_ausente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    de_outro_tenant = _list_declarations(client, job_id, tenant_id="tenant-b")
+    assert de_outro_tenant.status_code == 404
+    assert de_outro_tenant.json()["code"] == "NOT_FOUND"
+
+    with _database(client).sessions.begin() as session:
+        session.execute(delete(ReviewRevisionRecord))
+    sem_revisao = _list_declarations(client, job_id)
+
+    assert sem_revisao.status_code == 409
+    assert sem_revisao.json()["code"] == "JOB_NOT_READY"
+
+
+def test_leitura_das_declaracoes_sem_snapshot_de_propostas_responde_lista_vazia(
+    tmp_path: Path,
+) -> None:
+    """Ler o que foi declarado não depende do snapshot; só declarar depende."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    with _database(client).sessions.begin() as session:
+        record = session.scalar(
+            select(ReviewRevisionRecord).where(ReviewRevisionRecord.job_id == str(job_id))
+        )
+        assert record is not None
+        record.proposals_json = None
+
+    lida = _list_declarations(client, job_id)
+
+    assert lida.status_code == 200
+    assert lida.json() == {"review_version": 1, "declarations": []}
+
+
+def test_a_rota_de_leitura_nao_altera_a_revisao(tmp_path: Path) -> None:
+    """Critério de controle: ler é ler — nenhuma revisão nova, nenhum ato registrado."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    antes = client.get(f"/v1/jobs/{job_id}/review", headers=_headers(TENANT)).json()
+
+    assert _list_declarations(client, job_id).status_code == 200
+
+    depois = client.get(f"/v1/jobs/{job_id}/review", headers=_headers(TENANT)).json()
+    assert depois["version"] == antes["version"]
+    assert depois == antes

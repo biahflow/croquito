@@ -1,6 +1,6 @@
 # F-051 · T6 — A tela da revisão
 
-Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Pendente**  
+Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**  
 `feature_id: F-051` · `task_id: T6` · `depends_on: T2, T3, T4`
 
 ## Objetivo

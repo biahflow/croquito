@@ -84,7 +84,10 @@ integração declarados. Desvios após o congelamento entram como `PLAN_DEVIATIO
   atos. Impacto: quem carrega a tela do zero não tem por onde ler as identidades
   declaradas. Resolução: a **T6 ganha como escopo explícito a superfície de leitura**
   (rota `GET` própria ou campo aditivo na resposta existente — decisão lá, honrando o
-  teste de controle da T2).
+  teste de controle da T2). **Decidido na T6 (2026-09-04): rota `GET` própria**,
+  `GET /v1/jobs/{job_id}/review/elements`, com a mesma forma de `declarations` dos três
+  atos e as revogadas incluídas. O campo aditivo foi recusado porque mudaria a resposta que
+  o critério 6 da T2 congelou byte a byte; a rota nova não toca nela.
 
 ## Achados de planejamento
 

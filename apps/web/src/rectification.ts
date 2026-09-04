@@ -106,6 +106,12 @@ export type RectificationForm = {
   written: { value_si: string; written_decimals: number } | null;
   unit: "m" | "mm";
   kind: string;
+  /**
+   * Correção do rótulo de elemento que o modelo leu no balão (F-051). Aditivo: em branco
+   * não viaja, e o hint vigente da leitura fica como está — corrigir o hint é parte desta
+   * mesma correção declarada, nunca um ato à parte.
+   */
+  entityLabel?: string;
 };
 
 /**
@@ -136,5 +142,6 @@ export function buildRectification(
     written_decimals: form.written?.written_decimals,
     unit: form.written ? form.unit : undefined,
     kind: form.kind || undefined,
+    target_entity_label: form.entityLabel?.trim() || undefined,
   };
 }
