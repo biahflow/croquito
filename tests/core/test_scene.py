@@ -488,7 +488,20 @@ def test_scene_without_element_ref_produces_the_same_export_package_as_before(
         auditoria = json.loads(archive.read("auditoria.json"))
         auditoria.pop("generated_at")
         auditoria.pop("dxf_sha256")
-        assert auditoria == _AUDIT_BEFORE_F047_T1
+        # Extents do DXF incluem caixas de TEXTO, e métrica de fonte varia por plataforma
+        # (issue #163, segunda dependência — ~2 mm medidos entre macOS e o Ubuntu do
+        # runner, escondidos atrás da âncora do preview enquanto ela existiu). Comparação
+        # exata em tudo, extents com tolerância declarada de 1 cm por componente: pega
+        # regressão real de layout, ignora rasterização.
+        extents = auditoria.pop("extents")
+        esperado = dict(_AUDIT_BEFORE_F047_T1)
+        extents_esperados = esperado.pop("extents")
+        assert auditoria == esperado
+        for eixo in ("min", "max"):
+            for valor, referencia in zip(extents[eixo], extents_esperados[eixo], strict=True):
+                assert abs(valor - referencia) < 0.01, (
+                    f"extents.{eixo} fora da tolerância de plataforma: {valor} vs {referencia}"
+                )
 
     segunda = run_synthetic_pipeline(tmp_path / "segunda")
     with ZipFile(segunda.package_path) as archive:
