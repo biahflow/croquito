@@ -64,9 +64,14 @@ reunida, não só por worktree.
 
 ## Riscos que ficam declarados
 
-- O merge do apply é por `kit_version`: **dois acervos diferentes que declarem a mesma versão
-  são indistinguíveis na matriz**. Corrigir exige `kit_id` em `SiteSetupOrigin`, o que toca o
-  domínio e provavelmente uma emenda ao ADR-0060.
+- ~~O merge do apply é por `kit_version`: **dois acervos diferentes que declarem a mesma
+  versão são indistinguíveis na matriz**.~~ **Fechada em 2026-09-04** pela Emenda 1 do
+  ADR-0060 (aceita pelo dono): `kit_id` entrou em `SiteSetupOrigin`, o merge chaveia por
+  `(kit_id, kit_version)` e a tela devolve a identidade no fio (o build sobrescreve a matriz
+  gravada, então descartá-la duplicaria parcelas na reaplicação). Observação registrada e NÃO
+  resolvida: `_parcel_id` (site_setup_kits.py) deriva o id da parcela sem a identidade do
+  acervo — dois acervos de mesma versão colidem de `parcel_id`; o efeito prático está anulado
+  pela chave nova e pelo filtro da tela, mas o colisor existe no servidor.
 - A pré-visualização mostra os operandos, mas **não as deduções** da parcela. A quantidade já
   as considera, então uma parcela com dedução mostraria uma conta que não fecha com o número.
   Nenhum acervo real conhecido usa dedução; a dívida está declarada.
