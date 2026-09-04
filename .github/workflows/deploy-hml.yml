@@ -20,21 +20,12 @@
 #   mais barata de transformar deploy em incidente.
 name: deploy-hml
 
+# GATILHO DE PUSH TEMPORARIAMENTE DESLIGADO (decisão humana, 2026-09-04): o HML está
+# derrubado por custo desde 2026-09-02, então merge/push na `main` não deve subir nada.
+# Fica só o `workflow_dispatch` para deploy manual quando o ambiente voltar. Para
+# religar, restaure aqui o bloco `push:` com `branches: [main]` e os `paths` que
+# estavam neste arquivo (ver histórico do Git deste trecho).
 on:
-  push:
-    branches: [main]
-    paths:
-      - "services/**"
-      - "packages/**"
-      - "apps/**"
-      - "docker/**"
-      - "keycloak/**"
-      - "deploy/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/deploy-hml.yml"
   workflow_dispatch:
 
 concurrency:
