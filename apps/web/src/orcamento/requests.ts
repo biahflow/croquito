@@ -21,6 +21,7 @@ import { parseDecimalInput } from "./format";
 import type { CalcMatrix } from "./matrix";
 import { ehZeroDecimal } from "./teto";
 import type {
+  AuthorSiteSetupKitDraft,
   CascadeOrderDraft,
   CascadeRemoveDraft,
   CodeClosureDraft,
@@ -391,6 +392,30 @@ export function siteSetupApplyBody(draft: SiteSetupApplyDraft): Record<string, u
   return {
     ...versionBody(draft.baseVersion),
     ...siteSetupPreviewBody(draft),
+  };
+}
+
+/**
+ * Corpo do `POST .../site-setup/kits` (F-042 T6): a autoria do acervo DO TENANT a partir das
+ * parcelas `STANDALONE` já gravadas na rodada.
+ *
+ * `base_version` viaja mesmo a rodada **não** mudando com o ato: o acervo é recortado da
+ * matriz que a orçamentista estava vendo, e sem a guarda uma aplicação de acervo em outra aba
+ * mudaria as parcelas — e, com elas, o índice que cada binding cita — entre a leitura e o
+ * envio. Nenhuma revisão nasce daqui e o contador da rodada não avança.
+ *
+ * `parameter_bindings` diz QUAIS operandos viram parâmetro; todo operando não citado vira
+ * constante. A omissão é a declaração: mandar a chave com string vazia faria o servidor
+ * recusar por um parâmetro que a pessoa apagou, e por isso `bindingsDoCorpo` já as remove.
+ */
+export function authorSiteSetupKitBody(
+  draft: AuthorSiteSetupKitDraft,
+): Record<string, unknown> {
+  return {
+    ...versionBody(draft.baseVersion),
+    name: draft.name,
+    kit_version: draft.kitVersion,
+    parameter_bindings: { ...draft.parameterBindings },
   };
 }
 

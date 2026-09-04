@@ -40,6 +40,7 @@ import type {
   SiteSetupKitListResponse,
   SiteSetupPreviewResponse,
 } from "./acervo";
+import type { SiteSetupKitAuthoredResponse } from "./acervoAutoria";
 import { corpoDoDespacho } from "./gabarito";
 import type {
   CarimboDoGabarito,
@@ -49,6 +50,7 @@ import type {
 import type { CalcMatrix } from "./matrix";
 import type { ItemPrecedent } from "./precedente";
 import {
+  authorSiteSetupKitBody,
   buildEstimateBody,
   cascadeOrderBody,
   cascadeRemoveBody,
@@ -698,6 +700,22 @@ export type SiteSetupApplyDraft = SiteSetupPreviewDraft & {
   baseVersion: number;
 };
 
+/**
+ * O que a AUTORIA de um acervo cita (F-042 T6): o nome, a versão e quais operandos das
+ * parcelas já gravadas viram parâmetro de obra.
+ *
+ * `parameterBindings` é `"<índice da parcela standalone>.<nome do operando>" → parâmetro`.
+ * O índice é a posição da parcela na matriz **gravada** da revisão corrente, e quem o monta é
+ * `parcelasAutoraveis` (`acervoAutoria.ts`) a partir da matriz lida do servidor — nunca do
+ * rascunho da tela, que pode ter parcela ainda não gravada e deslocaria o índice inteiro.
+ */
+export type AuthorSiteSetupKitDraft = {
+  baseVersion: number;
+  name: string;
+  kitVersion: string;
+  parameterBindings: Readonly<Record<string, string>>;
+};
+
 const JSON_HEADERS: Record<string, string> = {
   "Content-Type": "application/json",
 };
@@ -1240,6 +1258,32 @@ export function postSiteSetupApply(
     roundPath(roundId, "/site-setup/apply"),
     accessToken,
     siteSetupApplyBody(draft),
+  );
+}
+
+/**
+ * Grava um acervo DO TENANT a partir das parcelas `STANDALONE` da rodada (F-042 T6).
+ *
+ * É o Human Gate 4 da feature: o primeiro acervo é autorado por gente, a partir de uma praça
+ * já feita. Mutação como as outras — `Idempotency-Key` e `base_version` —, com uma diferença
+ * que vale registrar: **a rodada não muda**. Nenhuma revisão nasce e o contador dela não
+ * avança, porque nada nela mudou; a `base_version` está ali para garantir que a matriz de
+ * onde o acervo foi recortado é a mesma que o servidor vai enumerar.
+ *
+ * Recusas próprias: `422 SITE_SETUP_KIT_EMPTY` (nenhuma parcela de canteiro para recortar),
+ * `422 SITE_SETUP_BINDING_INVALID` com `details.bindings` nomeando os bindings que apontam
+ * para operando inexistente, e `409 SITE_SETUP_KIT_ALREADY_PUBLISHED` para `(nome, versão)`
+ * que este tenant já tem — acervo é imutável, e versão nova é entrada nova.
+ */
+export function postAuthorSiteSetupKit(
+  accessToken: string,
+  roundId: string,
+  draft: AuthorSiteSetupKitDraft,
+): Promise<SiteSetupKitAuthoredResponse> {
+  return post<SiteSetupKitAuthoredResponse>(
+    roundPath(roundId, "/site-setup/kits"),
+    accessToken,
+    authorSiteSetupKitBody(draft),
   );
 }
 

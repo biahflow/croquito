@@ -9,13 +9,19 @@ import {
   isSelfApprovalForbidden,
   isWorkbookAuditFailure,
   orcamentoErrorCode,
+  recusaDaAutoriaDeAcervo,
   recusaDeMutacao,
   recusaDoAcervo,
   siteSetupAbsentCodes,
   siteSetupMissingParameters,
   workbookAuditFindings,
 } from "./errors";
-import { errorMessage, MENSAGEM_ORCAMENTO_MUDOU } from "./labels";
+import {
+  errorMessage,
+  fraseBindingsInvalidos,
+  MENSAGEM_ORCAMENTO_MUDOU,
+  RECUSA_BINDING_INVALIDO,
+} from "./labels";
 
 function apiError(
   code: string,
@@ -295,5 +301,69 @@ describe("recusas do acervo de canteiro", () => {
     expect(recusa.conflito).toBe(true);
     expect(recusa.parametros).toEqual([]);
     expect(recusa.mensagem).toBe(MENSAGEM_ORCAMENTO_MUDOU);
+  });
+});
+
+/**
+ * As recusas da AUTORIA de acervo (F-042 T6). Nenhuma delas grava coisa alguma, e a rodada
+ * não muda em caso nenhum — a autoria nunca escreve na rodada.
+ */
+describe("recusas da autoria de acervo", () => {
+  it("nomeia os bindings que o servidor não achou, para marcar os campos exatos", () => {
+    const recusa = recusaDaAutoriaDeAcervo(
+      apiError("SITE_SETUP_BINDING_INVALID", 422, null, {
+        bindings: ["0.SEMANAS", "9.MESES"],
+      }),
+    );
+
+    expect(recusa.conflito).toBe(false);
+    expect(recusa.bindings).toEqual(["0.SEMANAS", "9.MESES"]);
+    expect(recusa.mensagem).toContain("Nada foi guardado");
+  });
+
+  /**
+   * Nome repetido é `409`, e **não** é o conflito de revisão: tratá-lo como tal ofereceria
+   * "recarregar o orçamento" a quem só precisa declarar outra versão.
+   */
+  it("o acervo já publicado é frase própria, e não o banner do orçamento mudou", () => {
+    const recusa = recusaDaAutoriaDeAcervo(
+      apiError("SITE_SETUP_KIT_ALREADY_PUBLISHED", 409, null, {
+        name: "Canteiro — contrato SMH/Rio",
+        kit_version: "2",
+      }),
+    );
+
+    expect(recusa.conflito).toBe(false);
+    expect(recusa.bindings).toEqual([]);
+    expect(recusa.mensagem).toContain("Acervo é imutável");
+    expect(recusa.mensagem).not.toBe(MENSAGEM_ORCAMENTO_MUDOU);
+  });
+
+  it("a rodada sem parcela de canteiro diz por que não há acervo a recortar", () => {
+    const recusa = recusaDaAutoriaDeAcervo(apiError("SITE_SETUP_KIT_EMPTY"));
+
+    expect(recusa.mensagem).toContain("nenhuma parcela de canteiro gravada");
+    expect(recusa.bindings).toEqual([]);
+  });
+
+  it("o conflito de revisão continua sendo o banner do orçamento", () => {
+    const recusa = recusaDaAutoriaDeAcervo(apiError("REVISION_CONFLICT", 409));
+
+    expect(recusa.conflito).toBe(true);
+    expect(recusa.mensagem).toBe(MENSAGEM_ORCAMENTO_MUDOU);
+  });
+
+  it("envelope sem a lista devolve a frase base, nunca um binding fabricado", () => {
+    const recusa = recusaDaAutoriaDeAcervo(apiError("SITE_SETUP_BINDING_INVALID"));
+
+    expect(recusa.bindings).toEqual([]);
+    expect(fraseBindingsInvalidos(recusa.bindings)).toBe(RECUSA_BINDING_INVALIDO);
+  });
+
+  it("a frase nomeia as declarações recusadas quando a lista veio", () => {
+    const frase = fraseBindingsInvalidos(["0.SEMANAS", "9.MESES"]);
+
+    expect(frase).toContain("0.SEMANAS");
+    expect(frase).toContain("9.MESES");
   });
 });

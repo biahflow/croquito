@@ -49,6 +49,16 @@ export const SITE_SETUP_PARAMETER_MISSING_CODE = "SITE_SETUP_PARAMETER_MISSING";
 export const SITE_SETUP_CODE_ABSENT_CODE = "SITE_SETUP_CODE_ABSENT";
 
 /**
+ * Binding de autoria que aponta para operando que a rodada não tem (F-042 T6).
+ *
+ * `details.bindings` traz as chaves recusadas — `"0.SEMANAS"` —, e é por elas que a tela
+ * marca o campo exato em vez de dizer que "algo está errado". Um binding ignorado congelaria
+ * como constante um número que a orçamentista quis declarar, e o acervo nasceria errado sem
+ * ninguém ver; o servidor recusa nomeando, e a tela repete o nome.
+ */
+export const SITE_SETUP_BINDING_INVALID_CODE = "SITE_SETUP_BINDING_INVALID";
+
+/**
  * O orçamento avançou depois desta leitura. Não é falha: é o sinal de recarregar antes de
  * refazer o ato — outra aba, outra pessoa ou o worker mexeram na rodada.
  */
@@ -238,6 +248,30 @@ export function recusaDoAcervo(error: unknown): {
     conflito: false,
     parametros: [],
     codigos: [],
+    mensagem: describeError(error),
+  };
+}
+
+/**
+ * Desfecho de uma recusa da AUTORIA de acervo (F-042 T6), para a tela dizer o que falta.
+ *
+ * `bindings` volta preenchida só na recusa que os nomeia, e é ela que marca os campos exatos
+ * do formulário — a tela não deduz nenhum. As demais recusas próprias (nome e versão já
+ * publicados, rodada sem parcela de canteiro) não têm lista: elas são uma frase, e o pacote
+ * de design deliberadamente não desenhou estado próprio para elas. O `409` da guarda otimista
+ * continua tendo o banner do orçamento, como em toda mutação da jornada.
+ */
+export function recusaDaAutoriaDeAcervo(error: unknown): {
+  conflito: boolean;
+  bindings: string[];
+  mensagem: string;
+} {
+  if (isRevisionConflict(error)) {
+    return { conflito: true, bindings: [], mensagem: MENSAGEM_ORCAMENTO_MUDOU };
+  }
+  return {
+    conflito: false,
+    bindings: listaDeTexto(error, SITE_SETUP_BINDING_INVALID_CODE, "bindings"),
     mensagem: describeError(error),
   };
 }

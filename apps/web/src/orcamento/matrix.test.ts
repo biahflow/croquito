@@ -465,6 +465,49 @@ describe("disassembleCalcMatrix", () => {
     expect(disassembleCalcMatrix(null)).toEqual([]);
     expect(assembleCalcMatrix(disassembleCalcMatrix(null))).toBeNull();
   });
+
+  /**
+   * Regressão do defeito achado pela evidência de navegador da T6 (2026-09-04).
+   *
+   * O servidor manda `kit_origin: null` para a parcela autorada à mão — `model_dump` do
+   * Pydantic serializa o opcional ausente como `null` em vez de omitir o campo. A guarda
+   * testava só contra `undefined`, entrava no ramo com `null` e lia `.kit_version` dele:
+   * `TypeError` que derrubava o `OrcamentoApp` inteiro, deixando a jornada em BRANCO — sem
+   * mensagem, sem alerta, sem como voltar. Qualquer rodada com uma contribuição autorada à
+   * mão na matriz gravada caía nisso ao abrir.
+   */
+  it("kit_origin nulo no fio é parcela autorada à mão, e não derruba a leitura", () => {
+    const comNulo: CalcMatrix = {
+      schema_version: "1.0.0",
+      services: [
+        {
+          code: "SCO001",
+          contributions: [
+            {
+              source_item_id: null,
+              label: "PLACA DE OBRA",
+              basis: "standalone",
+              recipe: "declared_product",
+              operands: [{ name: "COMP", value: "2.00", unit: "m" }],
+              deductions: [],
+              depends_on_code: null,
+              note: null,
+              kit_origin: null,
+            },
+          ],
+        },
+      ],
+    };
+
+    const drafts = disassembleCalcMatrix(comNulo);
+
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].kitOrigin).toBeUndefined();
+    // E a volta continua saindo igual à matriz lida: `null` não vira proveniência nenhuma.
+    expect(
+      assembleCalcMatrix(drafts)?.services[0].contributions[0].kit_origin,
+    ).toBeUndefined();
+  });
 });
 
 /**

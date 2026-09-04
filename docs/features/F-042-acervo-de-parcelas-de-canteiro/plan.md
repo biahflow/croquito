@@ -30,9 +30,9 @@ execução expôs, e ambas foram autorizadas pelo dono antes de começarem.
 | T3 | [A tela: escolher, declarar, pré-visualizar, aplicar](tasks/T3-tela-do-acervo.md) | **Entregue** |
 | T4 | [A pré-visualização marca o bloqueado em vez de recusar](tasks/T4-previa-tolerante.md) | **Entregue** |
 | T5 | [A tela mostra o bloqueado e recupera o que já está gravado](tasks/T5-hidratacao-e-bloqueio.md) | **Entregue** |
-| T6 | Autoria de acervo na tela (estado 09 do pacote) | Não iniciada |
+| T6 | [Autoria de acervo na tela (estado 09 do pacote)](tasks/T6-autoria-na-tela.md) | **Entregue** (2026-09-04) |
 
-## Os dois defeitos que a execução expôs
+## Os três defeitos que a execução expôs
 
 **O beco sem saída da recusa (T4).** O pacote aprovado prometia "declare, ou remova na
 pré-visualização as parcelas que os citam" — mas a recusa acontecia antes de a pré-visualização
@@ -46,6 +46,15 @@ e manda a matriz inteira no `build`. Enquanto a sessão vive, os dois concordam 
 recarregamento, montar o orçamento apagaria do banco o que o acervo aplicou. A raiz é anterior
 a esta feature (a matriz nunca foi lida de volta desde a F-038), e a correção é a tela
 **hidratar** o rascunho a partir do que está gravado, pela rota nova `GET .../calc-matrix`.
+
+**A tela em branco da hidratação (achado na T6).** A hidratação da T5 testava a proveniência
+com `kit_origin !== undefined`, e o servidor manda `kit_origin: null` para a parcela autorada
+à mão — `model_dump` do Pydantic serializa o opcional ausente como `null`. O `null` entrava no
+ramo e era desreferenciado: `TypeError` que derrubava o `OrcamentoApp` inteiro, **em branco**,
+em qualquer rodada com contribuição autorada à mão na matriz gravada. Nenhum teste pegava
+porque as fixturas montam a matriz com o campo AUSENTE, que é a forma que a tela **produz** —
+não a que ela **recebe**. Achado pela evidência de navegador da T6 e corrigido nela, com
+regressão em `matrix.test.ts`.
 
 ## Integração
 
@@ -63,8 +72,16 @@ reunida, não só por worktree.
   Nenhum acervo real conhecido usa dedução; a dívida está declarada.
 - O acervo real do Campo do Toca é **menor que as 24 parcelas** que a feature supôs — ver
   [`evidence.md`](evidence.md).
+- A autoria recorta o acervo da matriz **gravada**, e o índice de cada binding é a posição da
+  parcela na enumeração do servidor. A tela lê a matriz e a `base_version` na MESMA resposta e
+  grava contra ela, então a rodada que andar no meio devolve `409` em vez de um acervo com
+  índice deslocado. O que fica declarado é a consequência: **parcela de canteiro autorada na
+  sessão e ainda não montada não entra no acervo** — a tela diz isso por extenso, e não a
+  monta sozinha.
 
 ## Human Gates que continuam abertos
 
-1. **Autoria do primeiro acervo**, que é ato da orçamentista. As cinco parcelas que o
-   documento real sustenta estão em [`evidence.md`](evidence.md).
+1. **Autoria do primeiro acervo**, que é ato da orçamentista. Desde a T6 ele tem caminho na
+   tela, exercido de ponta a ponta contra uma praça sintética
+   ([`evidence.md`](evidence.md)); o que falta é o ato dela sobre uma praça real. As cinco
+   parcelas que o documento real sustenta estão em [`evidence.md`](evidence.md).

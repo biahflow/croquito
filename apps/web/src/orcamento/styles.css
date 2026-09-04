@@ -1921,6 +1921,130 @@ p {
   border-radius: 6px;
 }
 
+/*
+ * A autoria do acervo (T6, estado 09 do pacote aprovado): dois painéis lado a lado —
+ * "Salvar como acervo" à esquerda, "Parâmetros que a versão N vai citar" à direita.
+ *
+ * Sem cor nova: os painéis usam `--acervo-line`, que esta mesma folha já introduziu, e a
+ * nota âmbar repete o `#fbe6c2`/`#b47512`/`#3c2708` que `.banner-conflito` e `.teto-faixa`
+ * já vestem. Como no resto do bloco, a cor é redundância: a origem da parcela é a palavra do
+ * selo, o parâmetro novo é a palavra "novo", e o motivo de guardar estar indisponível vai
+ * escrito ao lado do botão.
+ */
+.acervo-autoria {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+
+/* Uma coluna em tela estreita: os dois painéis são leitura contínua, e lado a lado com
+   pouca largura o campo do parâmetro ficaria menor que o nome do operando. */
+@media (max-width: 900px) {
+  .acervo-autoria {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.acervo-autoria-painel {
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--acervo-line);
+  border-radius: 6px;
+}
+
+/* O painel da direita não estica até a altura do da esquerda (que cresce com a lista de
+   parcelas) e acompanha quem rola: é ele que diz o que virou parâmetro, e o aviso da
+   esquerda manda conferi-lo — um painel que fica para trás na rolagem não seria conferido. */
+.acervo-autoria > .acervo-autoria-painel:last-child {
+  align-self: start;
+  position: sticky;
+  top: 12px;
+}
+
+.acervo-autoria-painel h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.acervo-autoria-campos {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+/* O campo que ocupa a linha inteira: o nome do acervo que ganha versão nova. Ele é a
+   IDENTIDADE do que está sendo versionado, e em meia linha sai truncado. */
+.acervo-autoria-campo-largo {
+  grid-column: 1 / -1;
+}
+
+/* `.campo select { max-width: 22rem }` (F-033) é escrita DENTRO do `.jornada-orcamento`
+   aninhado no topo do arquivo, então compila para duas classes de especificidade; um
+   seletor de uma classe só nunca a venceria. A regra repete o prefixo para empatar e ganha
+   por vir depois — o mesmo conserto que a F-043 fez no seletor de gabarito. */
+.jornada-orcamento .acervo-autoria-campos select {
+  width: 100%;
+  max-width: none;
+}
+
+/* A nota que diz que número não vira parâmetro sozinho. É a regra do domínio na tela, e por
+   isso ela é um bloco e não uma dica de rodapé. */
+.acervo-autoria-nota {
+  margin: 10px 0;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  color: #3c2708;
+  background: #fbe6c2;
+  border: 1px solid #b47512;
+  border-left: 5px solid #b47512;
+  border-radius: 6px;
+}
+
+.acervo-autoria-parcelas {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.acervo-autoria-parcelas > li {
+  padding: 8px 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.acervo-autoria-parcela {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.acervo-autoria-operandos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.acervo-autoria-parametros {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.acervo-autoria-parametros li {
+  margin-bottom: 6px;
+}
+
 /* Fecha o `.jornada-orcamento` aberto no topo do arquivo. */
 }
 

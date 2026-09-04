@@ -968,6 +968,173 @@ export function fraseAcervoGravado(
   return `Do que está gravado nesta rodada: ${listarPorExtenso(trechos)}.`;
 }
 
+/**
+ * Copy da AUTORIA de acervo (F-042 T6, estado 09 do pacote aprovado). Como o resto da
+ * jornada, a copy final continua sendo decisão-à-parte: o que está fixado é a direção — o
+ * primeiro acervo é autorado por gente, só canteiro entra, e o que vira parâmetro é
+ * declarado, nunca deduzido do número.
+ */
+export const CANTEIRO_ACAO_AUTORAR = "Guardar como acervo";
+
+export const ACERVO_AUTORIA_TITULO = "Guardar as parcelas desta rodada como acervo";
+
+/** O gate humano da feature, dito na própria tela que o exerce. */
+export const ACERVO_AUTORIA_PRIMEIRO_ACERVO =
+  "O primeiro acervo é autorado por gente, a partir de uma praça já feita. O sistema não " +
+  "infere acervo de planilha antiga nem de rodada passada.";
+
+export const ACERVO_AUTORIA_MODO_ROTULO = "O que salvar";
+export const ACERVO_AUTORIA_MODO_NAO_ESCOLHIDO = "— escolha —";
+export const ACERVO_AUTORIA_MODO_NOVO = "Acervo novo";
+export const ACERVO_AUTORIA_MODO_VERSAO = "Versão nova de um acervo existente";
+export const ACERVO_AUTORIA_NOME_ROTULO = "Nome do acervo";
+export const ACERVO_AUTORIA_ACERVO_BASE_ROTULO = "Qual acervo ganha versão nova";
+export const ACERVO_AUTORIA_VERSAO_ROTULO = "Versão desta entrada";
+
+/** O nome não é digitado quando se versiona: ele é a identidade do acervo escolhido. */
+export const ACERVO_AUTORIA_NOME_DO_ACERVO_BASE =
+  "O nome vem do acervo escolhido: o servidor chaveia por nome e versão, então um nome " +
+  "diferente não seria versão nova — seria acervo novo com cara de versão.";
+
+/** Só acervo do próprio tenant é versionável (ADR-0060). */
+export const ACERVO_AUTORIA_SO_ACERVO_DO_TENANT =
+  "Só os acervos do seu escritório ganham versão nova aqui. Acervo de plataforma é leitura: " +
+  "versionar um deles criaria um homônimo do seu tenant, que é bifurcação e não continuação.";
+
+/**
+ * O aviso do estado 09: o que vira parâmetro é DECLARADO, e o resto fica constante.
+ *
+ * É a mesma regra que o servidor escreve na recusa de binding — `1 × 2` pode ser "uma
+ * unidade por dois meses de obra" ou "duas placas de um metro", e adivinhar produziria um
+ * acervo que nasce errado e só é descoberto na praça seguinte.
+ */
+export const ACERVO_AUTORIA_NUMEROS_VIRAM_PARAMETRO =
+  "Os números viram parâmetros citados só quando você os nomeia: “23 dias × 12 h” fica " +
+  "guardado como “dias de vigia × 12 h”, e o 23 passa a ser declarado a cada praça. " +
+  "Operando deixado em branco fica constante no acervo — o sistema não escolhe por você. " +
+  "Confira ao lado o que virou parâmetro.";
+
+export const ACERVO_AUTORIA_OPERANDO_ROTULO = "vira o parâmetro";
+export const ACERVO_AUTORIA_OPERANDO_CONSTANTE = "em branco: fica constante";
+export const ACERVO_AUTORIA_OPERANDO_TAMBEM_DEDUCAO =
+  "este nome também é dedução desta parcela; declará-lo vale para as duas";
+export const ACERVO_AUTORIA_SELO_NOVO = "novo";
+export const ACERVO_AUTORIA_ACAO_CANCELAR = "Cancelar";
+
+/** O que entra no acervo, contado por origem — a frase do painel esquerdo do estado 09. */
+export function fraseDoQueEntra(resumo: {
+  total: number;
+  doAcervo: number;
+  aMao: number;
+}): string {
+  const cabeca =
+    resumo.total === 1
+      ? "Entra a 1 parcela de canteiro gravada nesta rodada"
+      : `Entram as ${resumo.total} parcelas de canteiro gravadas nesta rodada`;
+  const partes: string[] = [];
+  if (resumo.doAcervo > 0) {
+    partes.push(`${resumo.doAcervo} de acervo`);
+  }
+  if (resumo.aMao > 0) {
+    partes.push(`${resumo.aMao} ${resumo.aMao === 1 ? "autorada" : "autoradas"} à mão`);
+  }
+  const origem = partes.length === 0 ? "" : ` — ${listarPorExtenso(partes)}`;
+  return (
+    `${cabeca}${origem}. As parcelas com origem na prancha não entram: acervo é só do que ` +
+    "não tem origem geométrica."
+  );
+}
+
+/**
+ * O acervo é recortado do que está GRAVADO, e a sessão pode ter autorado parcela que ainda
+ * não foi. Dizê-lo é o que impede a frase acima de mentir sobre o que vai entrar.
+ *
+ * Não é recusa: guardar continua disponível, e o que entra é o que o servidor enxerga.
+ */
+export function fraseParcelasNaoGravadas(
+  gravadas: number,
+  naSessao: number,
+): string | null {
+  const pendentes = naSessao - gravadas;
+  if (pendentes <= 0) {
+    return null;
+  }
+  const rotulo =
+    pendentes === 1
+      ? "1 parcela de canteiro desta sessão ainda não foi gravada"
+      : `${pendentes} parcelas de canteiro desta sessão ainda não foram gravadas`;
+  return (
+    `${rotulo} na rodada, e o acervo é recortado do que está gravado. Monte o orçamento ` +
+    "antes de guardar, ou elas ficam de fora desta versão."
+  );
+}
+
+/** O título do painel da direita, ecoando a versão que está sendo escrita. */
+export function tituloDosParametrosDaAutoria(versao: string): string {
+  const escrita = versao.trim();
+  return escrita.length === 0
+    ? "Parâmetros que este acervo vai citar"
+    : `Parâmetros que a versão ${escrita} vai citar`;
+}
+
+/** Acervo sem parâmetro nenhum é receita legítima, e é dito assim em vez de parecer erro. */
+export const ACERVO_AUTORIA_SEM_PARAMETROS =
+  "Nenhum operando foi declarado como parâmetro: todos ficam constantes nesta versão. É uma " +
+  "receita legítima — a placa de obra de 2,00 × 1,40 não cita parâmetro nenhum —, mas uma " +
+  "parcela que muda de praça em praça precisa do parâmetro para não guardar o número desta.";
+
+/** O botão do ato, ecoando a versão escrita — como o "Salvar versão 2" do pacote. */
+export function botaoSalvarAcervo(versao: string): string {
+  const escrita = versao.trim();
+  return escrita.length === 0 ? "Salvar acervo" : `Salvar versão ${escrita}`;
+}
+
+/**
+ * Por que guardar está indisponível, ao lado do controle — nunca só o botão apagado
+ * (decisão 10 do pacote, que vale para todo ato desta superfície).
+ */
+export function motivoDeAutoriaIndisponivelTexto(
+  motivo: "sem-parcelas" | "sem-modo" | "sem-acervo-base" | "sem-nome" | "sem-versao",
+): string {
+  switch (motivo) {
+    case "sem-parcelas":
+      return (
+        "Esta rodada não tem parcela de canteiro gravada, e o acervo é recortado do que está " +
+        "gravado. Aplique um acervo ou autore uma parcela de canteiro e monte o orçamento."
+      );
+    case "sem-modo":
+      return "Escolha se isto é um acervo novo ou uma versão nova de um acervo existente.";
+    case "sem-acervo-base":
+      return "Escolha qual acervo do seu escritório ganha a versão nova.";
+    case "sem-nome":
+      return "O nome do acervo tem ao menos três caracteres.";
+    case "sem-versao":
+      return "Declare a versão desta entrada: acervo é imutável, e versão nova é entrada nova.";
+  }
+}
+
+/** O desfecho, com o que foi salvo: nome, versão e quantas parcelas o acervo carrega. */
+export function fraseAcervoAutorado(acervo: {
+  nome: string;
+  versao: string;
+  parcelas: number;
+}): string {
+  return (
+    `Acervo “${acervo.nome}”, versão ${acervo.versao}, guardado com ${acervo.parcelas} ` +
+    `${acervo.parcelas === 1 ? "parcela" : "parcelas"} de canteiro. Ele já aparece na lista ` +
+    "de acervos desta rodada. A rodada não mudou: nada foi gravado nela."
+  );
+}
+
+/** A recusa de binding, nomeando as declarações que apontam para operando inexistente. */
+export function fraseBindingsInvalidos(bindings: readonly string[]): string {
+  if (bindings.length === 0) {
+    return RECUSA_BINDING_INVALIDO;
+  }
+  const rotulo = bindings.length === 1 ? "a declaração" : "as declarações";
+  return `${RECUSA_BINDING_INVALIDO} Confira ${rotulo}: ${listarPorExtenso(bindings)}.`;
+}
+
 /** Por que o nome do acervo não aparece na parcela lida do que está gravado. */
 export const CANTEIRO_GRAVADO_DICA =
   "A matriz gravada registra a versão do acervo e a parcela, não o acervo de origem: o " +
@@ -1024,6 +1191,25 @@ export const RECUSA_CODIGO_AUSENTE =
   "Nada foi aplicado. O acervo cita código de serviço que não existe no catálogo desta " +
   "rodada; pular a parcela em silêncio produziria um orçamento com uma linha a menos e " +
   "nenhum sinal. Escolha outro acervo ou publique uma versão nova dele.";
+
+/**
+ * As três recusas da AUTORIA de acervo (F-042 T6). Nenhuma delas grava coisa alguma, e a
+ * rodada não muda em nenhum dos casos — a autoria nunca escreve na rodada.
+ */
+export const RECUSA_BINDING_INVALIDO =
+  "Nada foi guardado. Uma declaração de parâmetro aponta para um operando que esta rodada " +
+  "não tem. Ela não é ignorada em silêncio: um binding ignorado congelaria como constante " +
+  "um número que você quis declarar, e o acervo nasceria errado sem ninguém ver.";
+
+export const RECUSA_ACERVO_JA_PUBLICADO =
+  "Nada foi guardado: já existe um acervo seu com este nome e esta versão. Acervo é " +
+  "imutável — reescrevê-lo mudaria, em silêncio, o que as parcelas já aplicadas dizem ter " +
+  "nascido dele. Declare uma versão nova.";
+
+export const RECUSA_ACERVO_VAZIO =
+  "Nada foi guardado: esta rodada não tem nenhuma parcela de canteiro gravada para virar " +
+  "acervo. As parcelas com origem na prancha não entram, porque um acervo que as " +
+  "carregasse só serviria a esta praça.";
 
 /**
  * A recusa do parâmetro faltante, NOMEANDO todos (decisão 5 do pacote).
@@ -1469,6 +1655,11 @@ const ERROR_MESSAGES: LookupTable = {
   // — a frase aqui é a base, para quando o envelope vier sem a lista.
   SITE_SETUP_PARAMETER_MISSING: RECUSA_PARAMETRO_FALTANTE,
   SITE_SETUP_CODE_ABSENT: RECUSA_CODIGO_AUSENTE,
+  // Autoria do acervo (T6). `SITE_SETUP_BINDING_INVALID` chega com `details.bindings`, e quem
+  // os nomeia é `fraseBindingsInvalidos`; a frase aqui é a base, para o envelope sem a lista.
+  SITE_SETUP_BINDING_INVALID: RECUSA_BINDING_INVALIDO,
+  SITE_SETUP_KIT_ALREADY_PUBLISHED: RECUSA_ACERVO_JA_PUBLICADO,
+  SITE_SETUP_KIT_EMPTY: RECUSA_ACERVO_VAZIO,
   SITE_SETUP_UNKNOWN_PARCEL:
     "A remoção cita uma parcela que não está neste acervo; nada foi aplicado. Recarregue a " +
     "pré-visualização e refaça a escolha.",
