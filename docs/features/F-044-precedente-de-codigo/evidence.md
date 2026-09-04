@@ -250,3 +250,133 @@ Validação: `npm --workspace @croquito/web run test -- src/orcamento/precedente
 - **Se o código minoritário deveria poder sair do pacote antes de confirmar.** A revisão 2
   decide marcar, não decide desmarcar — retirar um código do aceite mudaria a decisão 4 e
   precisa da evidência de que a marca sozinha não bastou.
+- **O aceite em lote não grava** — achado da evidência de navegador de 2026-09-04, descrito na
+  seção abaixo. O critério de aceite 3 da T3b (*"confirmar o pacote manda um pedido com os N
+  códigos"*) está cumprido pela metade: o pedido sai, e o servidor o recusa com `422`.
+
+## Evidência de navegador (T3b e T3c)
+
+Classificação: `BROWSER_REQUIRED` — a F-044 é `INTERFACE_CHANGE`, e o
+[pacote aprovado](mock/README.md) (revisão 1 e revisão 2, aprovadas por ato humano em
+2026-08-28) é a especificação da superfície que a T3b e a T3c construíram.
+
+Capturada em **2026-09-04** contra o stack local — PostgreSQL, floci e Keycloak reais, API em
+`uvicorn` e a SPA em `vite` —, com sessão OIDC real (`orcamentista.f044`, tenant
+`tenant-f044`) e navegação determinística em Chromium via Playwright (1440 px de largura,
+`deviceScaleFactor` 2). Nenhuma tela é mock e nenhum passo dependeu de modelo.
+
+O dado é **sintético e inteiro**: as quatro praças passadas, os rótulos, os códigos e os
+preços foram inventados para esta bancada. Nenhum rótulo, código ou valor do documento real
+do cliente entra aqui — o pacote de design já declarava que os seus também eram ilustrativos.
+O índice nasceu de quatro praças semeadas por `POST /v1/precedents/seed` (fonte B da T2) sob a
+fonte de preço da própria rodada, montadas para produzir os estados do pacote:
+
+| Rótulo do elemento | Praças | Códigos | Estado que ele exercita |
+| --- | --- | --- | --- |
+| `PISO EM CONCRETO (SINTETICO)` | 4 | 2, ambos nas 4 | pacote **unânime** |
+| `ALAMBRADO H=3,00M (SINTETICO)` | 4 | 3, um deles em 1 praça | pacote **não unânime** |
+| `GUARDA CORPO METALICO (SINTETICO)` | 1 | 2 | precedente **fraco** |
+| `BANCO DE MADEIRA PLASTICA (SINTETICO)` | — | — | **rótulo inédito** |
+
+| Arquivo | Estado do pacote | O que a imagem prova |
+| --- | --- | --- |
+| [`evidencia/01-selos-na-lista.png`](evidencia/01-selos-na-lista.png) | selo por elemento (02 e 04 do pacote) | Os quatro elementos com o selo escrito: “precedente em 4 praças”, “precedente em 1 praça” e “rótulo inédito”. O selo de inédito **só existe ao lado de irmãos que têm precedente**, que é a decisão 7 aplicada à lista. |
+| [`evidencia/02-precedente-unanime.png`](evidencia/02-precedente-unanime.png) | 02 — o precedente no topo | “Você já usou isto em 4 praças” por extenso, o bloco **acima** dos blocos por fonte, a fonte nomeada no cabeçalho (`SCO · data-base 2026-09`, `1ª fonte da cascata`), e **nenhum cartão repetindo a contagem** — o pacote é unânime (decisão 8). Abaixo, a cascata inteira, com os mesmos dois códigos aparecendo de novo: é a decisão 3, e a tela a escreve (“o código que já era candidato aparece duas vezes”). |
+| [`evidencia/03-pacote-nao-unanime.png`](evidencia/03-pacote-nao-unanime.png) | 06 — a contagem por código | **Todos** os três cartões escrevem a fração (“em 4 das 4 praças”, “em 1 das 4 praças”), o minoritário leva o selo âmbar, e a linha âmbar antes do botão diz quantos são: *“1 dos 3 códigos deste pacote não veio em todas as praças do rótulo. Ele entra junto se você aceitar o pacote inteiro.”* A cor é redundância: a fração vai escrita nos três. |
+| [`evidencia/04-precedente-fraco.png`](evidencia/04-precedente-fraco.png) | 04 — uma praça só | “Você usou isto em 1 praça” e o aviso âmbar por extenso: *“Decisão de uma praça só. Confira antes de aceitar: se aquela vez foi um engano, aceitar aqui repete o engano com cara de acerto.”* Nenhum cartão traz fração — com uma praça o pacote é unânime por construção, e é só o aviso da decisão 6 que aparece. |
+| [`evidencia/05-sem-precedente.png`](evidencia/05-sem-precedente.png) | 04 — o rótulo inédito | O elemento sem precedente: o bloco **não existe** — nem vazio, nem desabilitado (`.bloco-precedente` conta **0** no DOM). A shortlist é exatamente a de hoje, começando no primeiro cartão da cascata. |
+| [`evidencia/06-lista-de-confirmacao.png`](evidencia/06-lista-de-confirmacao.png) | 03 + 06 — antes de gravar | “Antes de confirmar, o que vai ser gravado”, com os três códigos à vista, **a marca do minoritário repetida** (“em 1 das 4 praças”) porque é ali que o clique grava, e a frase que diz no mesmo fôlego que *“o fechamento do pacote continua sendo ato separado”* (decisões 4 e 5). |
+| [`evidencia/07-o-aceite-recusado.png`](evidencia/07-o-aceite-recusado.png) | 03 — o ato, **recusado** | O clique em “Confirmar os 3 códigos” manda **um** pedido com os três — e o servidor responde `422`. A tela diz “Falha na API (422).” e preserva a lista à vista. Ver o achado abaixo. |
+| [`evidencia/08-o-estado-de-uma-revisao-so.png`](evidencia/08-o-estado-de-uma-revisao-so.png) | 03 — o estado que o aceite produz | Os três pares do mesmo elemento confirmados numa revisão só, e o elemento **continua** em “Itens sem decisão de código” com o selo de precedente: aceitar não fechou o pacote (decisão 5). **Esta gravação não foi feita pelo navegador** — foi feita pela rota, com o mesmo corpo mais `catalog_sha256` (ver abaixo). A imagem mostra como a jornada desenha o resultado; ela não prova que a tela chega nele. |
+
+### O defeito que a captura achou: o aceite em lote nunca gravou
+
+O navegador enviou exatamente um pedido, e ele foi recusado:
+
+```
+POST /v1/estimate-rounds/{id}/code-assignments/decisions
+{"base_version":7,"item_id":"ti_0000000000f04402","action":"confirm",
+ "codes":["ZA20200100(/)","ZA20200200(B)","ZA20200300(/)"]}
+
+422  "confirmação de código exige a fonte de preço em `catalog_sha256`"
+```
+
+A causa foi isolada fora do navegador, numa rodada própria para não mexer no estado que as
+capturas mostram: o **mesmo corpo** acrescido de `catalog_sha256` é aceito e produz
+exatamente **uma** revisão nova (versão 7 → 8, uma revisão com `code_assignments_json`, os
+três pares `confirmed` do mesmo item). A diferença entre gravar e não gravar é um campo.
+
+As duas metades estavam certas isoladas, e é por isso que nenhuma suíte pegou:
+
+- **a rota** (T3a) manteve a validação que já existia para o caminho singular —
+  `action == "confirm"` sem `catalog_sha256` é recusa de fronteira — e nunca a afrouxou para
+  `codes`. O teste dela, `tests/api/test_precedents.py::_decide_codes`, **manda**
+  `catalog_sha256` junto do lote, e por isso passa;
+- **a tela** (T3b) implementou o contrato como as duas tasks o fixaram, e ele **não tem** o
+  campo: `codeDecisionBody` devolve `{base_version, item_id, action, codes}` e retorna antes
+  de escrever `catalog_sha256` (`apps/web/src/orcamento/requests.ts`). O teste dela,
+  `apps/web/src/orcamento/precedente.test.tsx`, afirma esse corpo — sem o campo — e por isso
+  também passa.
+
+A origem é anterior às duas: **o contrato escrito nas tasks** omite `catalog_sha256` no aceite
+de lote, nas duas pontas ([T3a](tasks/T3a-precedente-na-shortlist-api.md), seção “O aceite do
+pacote numa revisão só”, e [T3b](tasks/T3b-precedente-na-shortlist-tela.md), seção “Contrato
+de API”). O servidor implementou a regra mais
+estrita, o cliente implementou o contrato, e ninguém atravessou a fronteira até esta captura.
+
+**Não foi consertado aqui**, e não é conserto de uma linha por acidente: qual das duas pontas
+está certa é decisão de contrato. A fonte de preço do lote é conhecida e única — o bloco de
+precedente é montado sobre o catálogo **cabeça** da cascata (`_estimate_precedents`), e cada
+código já viaja com o seu `catalog_sha256` —, de modo que tanto “a tela cita a fonte” quanto
+“a rota aceita o lote sem citação, derivando-a dos códigos” produzem o mesmo resultado. Quem
+escolhe é quem manda no contrato da rota.
+
+Consequência para os critérios de aceite da T3b: o 3 (*“confirmar o pacote manda um pedido com
+os N códigos, e mostra a lista antes”*) está cumprido na metade da tela — o pedido é **um** e
+a lista aparece antes — e reprovado na metade do servidor. Os critérios 1, 2, 4, 5, 6 e 7
+estão exercidos pelas imagens acima.
+
+Um segundo ponto, menor e da mesma cena: a recusa chega ao usuário como **“Falha na API
+(422).”** — a mensagem genérica, sem o motivo nomeado que o servidor devolveu. A rota já
+manda a razão em `problem+json`; quem lê a tela não a recebe.
+
+### Divergências entre a tela e o pacote aprovado
+
+Todas de composição, e nenhuma delas toca as oito decisões — registradas porque foram vistas,
+não porque pedem conserto:
+
+| No pacote | Na tela |
+| --- | --- |
+| cabeçalho do bloco com **um** selo de fonte (`SCO-RIO`) | três selos: `Precedente`, `SCO · data-base 2026-09` e `1ª fonte da cascata` — mais informação, não menos |
+| “observação, não decisão” **ao lado** do botão de aceitar | na linha **abaixo** do botão |
+| a nota “o código aparece duas vezes” como faixa **abaixo do painel inteiro** | **dentro** do bloco de precedente, no rodapé dele |
+| bloco da cascata com cabeçalho próprio (`SCO-Rio · Out/2023 · 1ª da cascata`) | selo de fonte **por cartão**, que é como a etapa Códigos já desenhava antes desta feature (F-020) — a rendição do pacote é que estilizou uma superfície que a F-044 não altera |
+
+### Método
+
+O ambiente foi semeado pelas **funções do próprio teste**
+(`tests/api/test_estimate_round_routes`), apontadas para o servidor real em vez do
+`TestClient` — o mesmo método da [evidência da F-043](../F-043-planilha-no-gabarito-da-prefeitura/evidence.md),
+com as três substituições que ela documenta (object store no floci **com `ChecksumSHA256`**,
+`Database` real, e a reescrita de `_headers` porque o tenant default é avaliado na importação
+do módulo). A segunda metade é nova: as quatro praças passadas entram por
+`POST /v1/precedents/seed`, com `price_source` igual ao `source_sha256` do catálogo da rodada
+— o índice é chaveado por (rótulo, fonte), e semear sob outra fonte produziria um precedente
+que a shortlist jamais ofereceria (decisão 7).
+
+Três ajustes de ambiente, todos porque **outra sessão ocupava a 5173 e a 8010 ao mesmo tempo**,
+e nenhum deles tocou arquivo do repositório:
+
+1. API em `127.0.0.1:8011` e SPA em `localhost:5174`, com `CROQUITO_WEB_ORIGIN` e
+   `VITE_API_BASE_URL` passados **inline** no comando;
+2. no Keycloak local, o cliente `croquito-web` ganhou a 5174 nos `redirectUris`/`webOrigins`
+   (aditivo — a 5173 continuou valendo o tempo todo);
+3. um usuário `orcamentista.f044` com `tenant_id = tenant-f044`, para que a sessão real
+   ficasse num tenant próprio. Criá-lo pela API de administração exigiu ligar
+   `unmanagedAttributePolicy` no *user profile* do realm: o Keycloak 26 descarta atributo não
+   declarado **em silêncio**, e sem o claim a API responde `401` — o realm importado guarda o
+   atributo dos três usuários locais porque o import não passa por essa validação.
+
+Os três foram desfeitos ao fim da rodada: o cliente voltou às duas URIs do realm, o usuário
+sintético foi removido e o *user profile* voltou ao padrão. O `.env.local` da raiz, o
+`apps/web/.env.local` e `keycloak/croquito-realm.json` não foram editados.
