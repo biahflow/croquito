@@ -71,6 +71,7 @@ from croquito_api.database import (
     ReferenceCatalogEmbeddingRecord,
     ReferenceCatalogRecord,
     ReviewDecisionRecord,
+    ReviewElementSuggestionRejectionRecord,
     ReviewRevisionRecord,
     RevisionRecord,
     SiteSetupKitRecord,
@@ -332,6 +333,10 @@ from croquito_worker.review import (
     SceneApproval,
     apply_reading_decisions,
     rectify_reading_decisions,
+)
+from croquito_worker.review_element_suggestions import (
+    ReviewElementSuggestion,
+    suggest_review_elements,
 )
 from croquito_worker.tracing import (
     GENERAL_NOTE_TARGET,
@@ -1103,6 +1108,39 @@ class RejectElementProposalRequest(ApiModel):
 class ElementProposalRejectionResponse(ApiModel):
     proposal_id: str
     entity_ids: list[UUID]
+    rejected_by_role: str
+    rejected_at: datetime
+
+
+class ReviewElementSuggestionResponse(ApiModel):
+    """Uma sugestão assistida de identidade na REVISÃO, a partir do rótulo do modelo (F-051 T3).
+
+    O gêmeo, uma etapa antes, de `ElementProposalResponse`: `status` é sempre `unresolved` —
+    nada aqui foi declarado. Confirmar é o MESMO ato da T2 — reenviar `proposal_ids` para
+    `POST /v1/jobs/{job_id}/review/elements` — nunca um segundo caminho de identidade.
+    """
+
+    suggestion_id: str
+    status: Literal["unresolved"] = "unresolved"
+    label: str
+    proposal_ids: list[str]
+
+
+class ReviewElementSuggestionListResponse(ApiModel):
+    #: Versão da revisão sobre a qual as sugestões foram calculadas — puramente
+    #: informativo, como `scene_version` na listagem irmã da cena (F-047 T6): confirmar
+    #: reusa o `base_version` que a rota de identidade da revisão já exige.
+    review_version: int
+    suggestions: list[ReviewElementSuggestionResponse]
+
+
+class RejectReviewElementSuggestionRequest(ApiModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ReviewElementSuggestionRejectionResponse(ApiModel):
+    suggestion_id: str
+    proposal_ids: list[str]
     rejected_by_role: str
     rejected_at: datetime
 
@@ -6080,6 +6118,48 @@ def _review_element_label_owner(
         if declaration.get("label") == label:
             return str(declaration["element_ref"])
     return None
+
+
+def _review_declared_proposal_ids(declarations: list[dict[str, Any]]) -> set[str]:
+    """Propostas já cobertas por identidade ATIVA nesta revisão — não voltam como sugestão.
+
+    Revogada não conta: revogar libera as propostas, e é por isso que a sugestão pode
+    reaparecer depois de uma revogação (o rótulo do modelo não mudou, só deixou de estar
+    coberto por declaração).
+    """
+    return {
+        proposal_id
+        for declaration in declarations
+        if declaration.get("status") == "active"
+        for proposal_id in declaration.get("proposal_ids", [])
+    }
+
+
+def _current_review_element_suggestions(
+    session: Session, *, job_id: UUID, tenant_id: str, current: ReviewRevisionRecord
+) -> list[ReviewElementSuggestion]:
+    """Sugestões desta revisão AGORA: sem as já declaradas, sem as já recusadas (F-051 T3).
+
+    `current.proposals_json` é responsabilidade de quem chama garantir não-`None` (as duas
+    rotas abaixo checam antes de chegar aqui, no mesmo molde de `_review_element_act_target`).
+    """
+    proposals = VisionProposalSet.model_validate(current.proposals_json)
+    declared = _review_declared_proposal_ids(_review_element_declarations(current))
+    rejected = set(
+        session.scalars(
+            select(ReviewElementSuggestionRejectionRecord.suggestion_id).where(
+                ReviewElementSuggestionRejectionRecord.tenant_id == tenant_id,
+                ReviewElementSuggestionRejectionRecord.job_id == str(job_id),
+            )
+        )
+    )
+    return [
+        suggestion
+        for suggestion in suggest_review_elements(
+            proposals, job_id=job_id, declared_proposal_ids=declared
+        )
+        if suggestion.suggestion_id not in rejected
+    ]
 
 
 def _confirmed_reading_value_mm(reading: DimensionReading) -> Decimal:
@@ -11628,6 +11708,196 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=next_review.id,
             request_id=request.state.request_id,
             details={"element_ref": payload.element_ref},
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/jobs/{job_id}/review/elements/suggestions",
+        response_model=ReviewElementSuggestionListResponse,
+        tags=["review"],
+    )
+    async def list_review_element_suggestions(
+        job_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ReviewElementSuggestionListResponse:
+        """Sugestões assistidas de identidade a partir do rótulo do modelo (F-051 T3, ADR-0063).
+
+        O gêmeo, uma etapa antes, de `GET /v1/jobs/{job_id}/elements/proposals` (F-047 T6):
+        o produtor (`croquito_worker.review_element_suggestions.suggest_review_elements`) é
+        puro, determinístico e sem provider pago — roda de novo a cada leitura, sobre o
+        snapshot de propostas corrente. Nada é lido de cache nem de estado próprio; só a
+        RECUSA fica em memória, e é por isso que uma sugestão recusada não volta a aparecer
+        aqui para o mesmo conjunto de propostas nesta revisão.
+
+        Leitura: qualquer principal autenticado do tenant lê; o papel profissional só é
+        exigido para CONFIRMAR (a rota de sempre, `POST /v1/jobs/{job_id}/review/elements`)
+        ou RECUSAR (abaixo).
+        """
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        if current.proposals_json is None:
+            raise _problem(
+                "PROPOSALS_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Snapshot de propostas ainda não está disponível.",
+            )
+        suggestions = _current_review_element_suggestions(
+            session, job_id=job_id, tenant_id=principal.tenant_id, current=current
+        )
+        return ReviewElementSuggestionListResponse(
+            review_version=current.version,
+            suggestions=[
+                ReviewElementSuggestionResponse(
+                    suggestion_id=suggestion.suggestion_id,
+                    label=suggestion.label,
+                    proposal_ids=list(suggestion.proposal_ids),
+                )
+                for suggestion in suggestions
+            ],
+        )
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/elements/suggestions/{suggestion_id}/rejections",
+        response_model=ReviewElementSuggestionRejectionResponse,
+        tags=["review"],
+    )
+    async def reject_review_element_suggestion(
+        job_id: UUID,
+        suggestion_id: str,
+        payload: RejectReviewElementSuggestionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewElementSuggestionRejectionResponse:
+        """Recusa uma sugestão: NUNCA declara identidade, só registra quem recusou e quando.
+
+        Recomputa as sugestões correntes e exige que `suggestion_id` seja uma delas AGORA —
+        recusar um id já declarado, já recusado antes, ou nunca ofertado responde
+        `404 REVIEW_ELEMENT_SUGGESTION_NOT_FOUND`, nunca o 404 genérico de rota. Sem
+        `base_version`: como o ato não toca a revisão, não há concorrência otimista para
+        conferir.
+        """
+        rejected_by_role = _reviewer_role(principal)
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        operation = f"review.element.suggestion.reject:{job_id}:{suggestion_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ReviewElementSuggestionRejectionResponse.model_validate(existing)
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        if current.proposals_json is None:
+            raise _problem(
+                "PROPOSALS_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Snapshot de propostas ainda não está disponível.",
+            )
+        already_rejected = session.scalar(
+            select(ReviewElementSuggestionRejectionRecord.id).where(
+                ReviewElementSuggestionRejectionRecord.tenant_id == principal.tenant_id,
+                ReviewElementSuggestionRejectionRecord.job_id == str(job_id),
+                ReviewElementSuggestionRejectionRecord.suggestion_id == suggestion_id,
+            )
+        )
+        if already_rejected is not None:
+            raise _problem(
+                "REVIEW_ELEMENT_SUGGESTION_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Esta sugestão já foi recusada; ela não é mais oferecida.",
+            )
+        match = next(
+            (
+                suggestion
+                for suggestion in _current_review_element_suggestions(
+                    session, job_id=job_id, tenant_id=principal.tenant_id, current=current
+                )
+                if suggestion.suggestion_id == suggestion_id
+            ),
+            None,
+        )
+        if match is None:
+            raise _problem(
+                "REVIEW_ELEMENT_SUGGESTION_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Esta revisão não oferece esta sugestão.",
+            )
+        rejected_at = datetime.now(UTC)
+        session.add(
+            ReviewElementSuggestionRejectionRecord(
+                id=str(new_uuid7()),
+                tenant_id=principal.tenant_id,
+                job_id=str(job_id),
+                suggestion_id=suggestion_id,
+                proposal_ids_json=list(match.proposal_ids),
+                reason=payload.reason,
+                rejected_by=principal.subject,
+                rejected_by_role=rejected_by_role,
+                created_at=rejected_at,
+            )
+        )
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVIEW_ELEMENT_SUGGESTION_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Uma recusa concorrente já registrou esta sugestão.",
+            ) from error
+        response = ReviewElementSuggestionRejectionResponse(
+            suggestion_id=suggestion_id,
+            proposal_ids=list(match.proposal_ids),
+            rejected_by_role=rejected_by_role,
+            rejected_at=rejected_at,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="REVIEW_ELEMENT_SUGGESTION_REJECTED",
+            resource_type="review_revision",
+            resource_id=current.id,
+            request_id=request.state.request_id,
+            details={"suggestion_id": suggestion_id},
         )
         session.commit()
         return response

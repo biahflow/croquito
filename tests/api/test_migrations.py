@@ -448,6 +448,13 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             # prefeitura é extensão previsível. Índice só por `tenant_id`, o único caminho de
             # leitura — a listagem é do acervo inteiro, de poucas linhas.
             "estimate_templates",
+            # `0032` (F-051 T3): a recusa humana de uma sugestão assistida de identidade na
+            # revisão, uma etapa antes de `element_proposal_rejections`. Mesmo desenho: só a
+            # RECUSA é gravada — a sugestão é recomputada a cada leitura sobre o
+            # `VisionProposalSet` corrente —, e a unicidade `(tenant_id, job_id,
+            # suggestion_id)` é o que torna recusar duas vezes o mesmo ato. Índices por
+            # `tenant_id` e por `job_id`, os dois caminhos de leitura reais.
+            "review_element_suggestion_rejections",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),
