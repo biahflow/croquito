@@ -771,8 +771,40 @@ def _chain_readings(digest: str) -> list[DimensionReading]:
     ]
 
 
+def _balloon_reading(digest: str) -> DimensionReading:
+    """A cota-balão da F-051: medida escrita LONGE do elemento, ligada a ele pela letra "B".
+
+    O bbox fica no canto oposto às propostas do "elemento B" sintético (`vp_1111…`/`vp_2222…`),
+    a mais de 230 px — quase quatro vezes o alcance do funil de proximidade nesta imagem de
+    300x200. Nenhuma candidata dela para o elemento pode nascer de distância.
+    """
+    return DimensionReading(
+        id="rd_5555555555555555",
+        evidence=EvidenceRegion(
+            dataset_id="synthetic-guaxindiba-contract-v1",
+            page_number=1,
+            image_sha256=digest,
+            bbox=PixelBox(left=250, top=150, right=290, bottom=180),
+        ),
+        raw_text="C=56,00 m",
+        value_si=Decimal("56.00"),
+        unit=UnitCode.METRE,
+        kind=MeasurementKind.LENGTH,
+        written_decimals=2,
+        target_hint="(B) fecho",
+        target_entity_label="B",
+        extractor="contract-fixture",
+        extractor_version="v1",
+        status=ReadingStatus.PROPOSED,
+    )
+
+
 def _seed_review_session(
-    client: TestClient, *, extra_reading: bool = False, chain_readings: bool = False
+    client: TestClient,
+    *,
+    extra_reading: bool = False,
+    chain_readings: bool = False,
+    balloon_reading: bool = False,
 ) -> UUID:
     database = cast(Database, cast(Any, client.app).state.database)
     job_id = UUID("00000000-0000-7000-8000-000000000301")
@@ -838,6 +870,7 @@ def _seed_review_session(
             ),
             *([_extra_reading(digest)] if extra_reading else []),
             *(_chain_readings(digest) if chain_readings else []),
+            *([_balloon_reading(digest)] if balloon_reading else []),
         ],
         safety_notes=["Fixture sintética.", "Revisão humana obrigatória."],
     )
@@ -895,6 +928,24 @@ def _seed_review_session(
                         }
                     ]
                     if extra_reading
+                    else []
+                ),
+                *(
+                    [
+                        {
+                            # A cota-balão TEM vizinho: o contorno ao lado dela. É contra
+                            # este conjunto que a candidata por identidade se soma — nunca
+                            # no lugar dele (F-051 T4).
+                            "reading_id": "rd_5555555555555555",
+                            "proposal_id": "vp_4444444444444444",
+                            "proposal_kind": "contour",
+                            "relation": "nearest_geometry",
+                            "pixel_distance": 3,
+                            "proximity_score": 0.6,
+                            "visual_quality_score": 0.7,
+                        }
+                    ]
+                    if balloon_reading
                     else []
                 ),
             ],

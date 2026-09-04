@@ -694,6 +694,16 @@ exportação**.
 - Cada candidato de `associations.candidates` carrega `association_confidence` (0–1,
   "sei a qual segmento esta cota pertence?") e `orientation_alignment` (`number | null`;
   `null` quando o candidato não tem direção própria — círculo, contorno).
+- `relation` diz de ONDE o candidato veio: `nearest_geometry` e `inside_or_near_circle` são
+  as duas formas de proximidade em pixels; `element_identity` (F-051 T4) é o candidato que
+  nasceu do casamento entre o `target_entity_label` da leitura e o rótulo de um elemento
+  DECLARADO na revisão, independentemente da distância — a cota-balão alcançando seu
+  referente. Os demais campos continuam sendo fatos medidos (a distância real em pixels é
+  um fato; ela só não é mais o critério de elegibilidade), e `association_confidence` fica
+  em `0.0`: o score da F-029 mede proximidade e margem, não sabe nada de identidade, e
+  deixá-lo neutro mantém o candidato por identidade fora de qualquer corte automático.
+  `associator_version` NÃO muda — a procedência do candidato novo está nele mesmo, e o
+  associador de proximidade continua produzindo exatamente o que sempre produziu.
 - `reading_confidences`: `reading_confidence` (0–1, "li esta cota corretamente?") por
   leitura do pacote. As duas confianças nunca se fundem num número só: associar errado é
   o erro que nada a jusante percebe. Participar de cadeia que fecha corrobora a leitura;
@@ -799,12 +809,14 @@ de descarte (`READING_{n}_INCOMPLETE`, ou `READING_{n}_NOTE_WITHOUT_VALUE` quand
 
 `target_entity_label` de `packet.readings` é `string | null` (F-051 T1, 2026-09-04): o
 `TargetHint.entity_label` estruturado do provider, sobrevivendo até a leitura em vez de
-ser achatado só na string legível de `target_hint`. Sem nenhum consumidor ainda — a
-candidata por identidade que o casa contra um elemento declarado é a F-051 T4. O comando
+ser achatado só na string legível de `target_hint`. É ele que o candidato por identidade
+casa contra o rótulo de um elemento declarado na revisão (F-051 T4, descrito em
+[`POST .../review/elements`](#post-v1jobsjob_idreviewelements)). O comando
 de decisão (`POST .../review/decisions`) e o de correção
 (`POST .../review/rectifications`) aceitam o campo com a mesma semântica aditiva de
 `target_hint`: ausente não altera o valor vigente, presente corrige (ato registrado,
-nunca edição silenciosa). `ReviewPacket.schema_version` sobe para `"1.2.0"`
+nunca edição silenciosa) — e a correção **recunha os candidatos por identidade** da
+leitura na revisão que ela cria. `ReviewPacket.schema_version` sobe para `"1.2.0"`
 (retrocompatível: pacote persistido em `"1.0.0"`/`"1.1.0"` continua validando, com o
 campo novo em `null`).
 
@@ -864,6 +876,12 @@ nova revisão de leitura e retorna `409 REVISION_CONFLICT` se `base_version` nã
 for a atual. Uma leitura já decidida não pode ser sobrescrita **por este comando**
 (`422 READING_ALREADY_DECIDED`); a correção é a retificação declarada descrita
 abaixo.
+
+O portão da associação lê os candidatos **como estavam persistidos** quando o comando
+chegou. Um `target_entity_label` corrigido no mesmo envio recunha os candidatos por
+identidade da revisão que ele CRIA — nunca da revisão que ele está decidindo: confirmar um
+candidato que só passa a existir nessa mesma requisição seria a associação nascendo já
+confirmada, sem ninguém tê-la visto na tela.
 
 Quando a configuração do job exigir a família retangular, somente leituras
 confirmadas **e** associações explícitas chegam ao solver. A cena resultante é
@@ -1031,14 +1049,30 @@ Saída: o ato, a versão da revisão nova e a lista inteira de identidades depoi
   com o mesmo rótulo responde `409 ELEMENT_LABEL_ALREADY_USED` apontando o existente em
   `details.element_ref` — é por ele que o hint da cota-balão procura o referente, e um nome
   ambíguo não tem referente. O rótulo é aparado nas pontas; vazio ou só de espaço é
-  `422 ELEMENT_LABEL_INVALID`. **O casamento é EXATO**, nunca difuso em silêncio.
+  `422 ELEMENT_LABEL_INVALID`. A unicidade é por **texto exato** (depois do aparo); a
+  comparação mais larga do casamento hint↔rótulo está descrita abaixo, e é deliberadamente
+  outra.
+- **O ato CUNHA os candidatos por identidade da revisão nova** (F-051 T4,
+  [ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md) decisão 3): toda
+  leitura cujo `target_entity_label` casa com o rótulo de um elemento ativo ganha um
+  candidato de **cada proposta daquele elemento**, com `relation="element_identity"`,
+  `precision="unresolved"` e `export=false`, **ao lado** dos candidatos de proximidade e
+  nunca no lugar deles. O casamento é declarado e determinístico: igualdade ignorando caixa
+  e espaço nas pontas, **ou** o hint como palavra inteira do rótulo (separadores: espaço,
+  `—`, `-`, `·`, `:`, `/`). Assim `"B"` alcança `"B"`, `"grade B"` e
+  `"B — fecho da área de lazer"`; `"E"` não alcança nada, e `"B"` não alcança `"fecho"`.
+  Nunca há parecença, distância de edição ou prefixo. Dois elementos que casam com o mesmo
+  hint (`"grade B"` e `"alambrado B"`) produzem os dois conjuntos de candidatos: candidato é
+  observação, e desempatar em silêncio seria a inferência que o ADR recusa.
 - **O autor vem do JWT** e o instante é do servidor. A resposta devolve o **papel**
   profissional, nunca o subject; o subject fica na revisão (`created_by`) e na auditoria
   (`REVIEW_ELEMENT_IDENTITY_DECLARED`), e o TEXTO do rótulo nunca entra em auditoria.
-- **A revisão nova carrega todo o resto verbatim**: pacote, candidatas, associações
-  confirmadas, calibração, cena, blockers e solver não são tocados. Sem declaração nenhuma,
-  `GET /v1/jobs/{job_id}/review` responde exatamente como antes desta feature — a lista de
-  identidades sai pelas três rotas de ato, não pela leitura da revisão.
+- **A revisão nova carrega todo o resto verbatim**: pacote, associações confirmadas,
+  calibração, cena, blockers e solver não são tocados — os candidatos por identidade são a
+  única coisa que o ato recalcula, e eles são reconstruídos do zero a cada vez (aplicar o
+  mesmo ato duas vezes dá o mesmo conjunto). Sem declaração nenhuma, `associations_json` sai
+  byte a byte igual e `GET /v1/jobs/{job_id}/review` responde exatamente como antes desta
+  feature — a lista de identidades sai pelas três rotas de ato, não pela leitura da revisão.
 
 ### `POST /v1/jobs/{job_id}/review/elements/labels`
 
@@ -1056,7 +1090,9 @@ revisão nova. Não move proposta e não troca `element_ref`.
 
 Responde no mesmo formato, com `"act": "relabeled"`. O rótulo novo continua sendo único
 entre as identidades ativas (`409 ELEMENT_LABEL_ALREADY_USED`); ref que a revisão não tem
-ativo — inexistente ou já revogado — responde `409 ELEMENT_NOT_DECLARED`.
+ativo — inexistente ou já revogado — responde `409 ELEMENT_NOT_DECLARED`. Renomear **move o
+casamento junto**: os candidatos por identidade são recunhados pelo rótulo novo, então um
+elemento renomeado de `"B"` para `"C"` deixa de ser candidato das leituras com hint `"B"`.
 
 ### `POST /v1/jobs/{job_id}/review/elements/revocations`
 
@@ -1074,6 +1110,12 @@ ambas confirmadas no aceite do Design Approval Package da
   rótulo que teve e o carimbo de quem revogou, e o ref continua fora do estoque de cunhagem;
 - **não desfaz associação já confirmada por ela** — `selected_associations` sai intacto;
   corrigir associação é a retificação de decisão que a revisão já tem.
+
+Os candidatos por identidade daquele elemento saem da revisão nova, com uma exceção pelo
+mesmo motivo acima: o candidato que **sustenta** uma associação confirmada permanece na
+lista. Tirá-lo deixaria `selected_associations` apontando para um par que não é mais
+candidato da leitura, e a próxima retificação daquela cota morreria no portão — o desfazer
+que a revogação não faz, adiado um turno.
 
 O rótulo do elemento revogado volta a ficar livre para outra identidade: o que nunca se
 reaproveita é o ref. As propostas liberadas podem ser declaradas de novo.
@@ -1094,10 +1136,13 @@ T6). O sistema SUGERE, nunca decide. O produtor
 (`croquito_worker.review_element_suggestions.suggest_review_elements`) é determinístico,
 sem provider pago, e roda de novo a cada leitura sobre o snapshot de propostas
 (`proposals_json`) corrente — nada fica em cache. Ele agrupa propostas de geometria pelo
-`label` que o modelo deu (`VisionProposal.label`), casamento EXATO: o rótulo é só SINAL,
-não identidade — uma proposta pode estar rotulada errada, e é para isso que existe a
-recusa. Proposta sem rótulo, ou já coberta por uma declaração ATIVA desta revisão
-(`element_declarations_json`), não é sugerida.
+`label` que o modelo deu (`VisionProposal.label`), por **igualdade** ignorando caixa e
+espaço nas pontas: `"Grade B"` e `"grade b"` são o mesmo nome, `"grade B"` e `"B"` não são.
+Agrupar é mais estrito que casar de propósito — agrupar afirma que as propostas são a mesma
+coisa; o casamento mais largo é o do hint da cota-balão, descrito na rota de declaração. O
+rótulo é só SINAL, não identidade — uma proposta pode estar rotulada errada, e é para isso
+que existe a recusa. Proposta sem rótulo, ou já coberta por uma declaração ATIVA desta
+revisão (`element_declarations_json`), não é sugerida.
 
 Saída:
 

@@ -221,6 +221,9 @@ describe("dicionários de enum", () => {
     expect(relationLabel("inside_or_near_circle")).toBe(
       "dentro ou próximo do círculo",
     );
+    expect(relationLabel("element_identity")).toBe(
+      "identidade declarada do elemento",
+    );
     expect(relationLabel("same_layer")).toBe("same_layer");
   });
 

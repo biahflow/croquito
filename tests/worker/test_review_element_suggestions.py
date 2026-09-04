@@ -134,6 +134,29 @@ def test_sem_rotulo_nenhum_a_lista_vem_vazia() -> None:
     assert suggest_review_elements(proposals, job_id=JOB_ID) == []
 
 
+def test_agrupamento_ignora_caixa_e_espaco_mas_nao_aproxima_rotulos_diferentes() -> None:
+    """A normalização decidida na T4, adotada aqui: `label_group_key` (F-051 T4).
+
+    "Grade B" e "grade b" são o mesmo nome escrito com a mão trocada e agrupam juntas. Já
+    "grade B" e "B" NÃO agrupam: agrupar é afirmar que as propostas são a MESMA coisa, e a
+    força maior — o hint "B" alcançando o elemento "grade B" — é a do casamento da
+    cota-balão, do outro lado, no funil de associação.
+    """
+    proposals = _set(
+        [
+            _proposal("vp_1111111111111111", label="Grade B"),
+            _proposal("vp_2222222222222222", label=" grade b "),
+            _proposal("vp_3333333333333333", label="B"),
+        ]
+    )
+
+    suggestions = suggest_review_elements(proposals, job_id=JOB_ID)
+
+    assert [suggestion.label for suggestion in suggestions] == ["Grade B", "B"]
+    assert suggestions[0].proposal_ids == ("vp_1111111111111111", "vp_2222222222222222")
+    assert suggestions[1].proposal_ids == ("vp_3333333333333333",)
+
+
 def test_id_da_sugestao_depende_do_job_alem_do_conjunto_de_propostas() -> None:
     """`VisionProposal.id` só é único DENTRO de um job; o id da sugestão inclui o job."""
     proposals = _set([_proposal("vp_1111111111111111", label="B")])

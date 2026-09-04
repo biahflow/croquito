@@ -13,11 +13,14 @@ NOVO porque a entrada é diferente: `propose_element_groups` opera sobre `SceneR
 em `croquito_worker` — e é por isso que este módulo mora aqui, não em `packages/core`
 (`packages/core` nunca depende de `croquito_worker`; a direção é a oposta).
 
-O sinal é UM só: propostas com o MESMO `label`, casamento EXATO. Rótulos do modelo variam
-de forma ("B" vs. "grade B" vs. "alambrado B") — este produtor não decide normalização
-sozinho: a comparação vive em `_label_group_key`, função nomeada para a T4 trocar num lugar
-só quando a normalização mínima for decidida (Unknown 1 do contrato da feature, resolvido
-na T4 contra o dado do job de referência real).
+O sinal é UM só: propostas com o MESMO `label`, por **igualdade normalizada**
+(`label_group_key`, decidida na T4 contra o dado real — Unknown 1 do contrato da feature).
+"Grade B" e "grade b" são o mesmo nome escrito com a mão trocada e agrupam juntas; "grade
+B" e "B" NÃO agrupam, porque agrupar é afirmar que as propostas são a mesma coisa. O
+casamento mais largo — o hint "B" alcançando o elemento "grade B" — é o da cota-balão
+(`hint_matches_label`), e ele mora do outro lado, no funil de associação: são duas forças
+diferentes de propósito, e a diferença está escrita em
+`croquito_worker.element_identity_matching`.
 
 Proposta sem rótulo (`label is None` ou vazio) nunca é sugerida — não há o que agrupar.
 Proposta já coberta por uma declaração ATIVA (`declared_proposal_ids`) também não: ela já
@@ -34,6 +37,7 @@ from collections.abc import Collection
 from typing import Final, NamedTuple
 from uuid import UUID
 
+from croquito_worker.element_identity_matching import label_group_key
 from croquito_worker.vision import VisionProposalSet
 
 _SUGGESTION_PREFIX: Final = "els_"
@@ -62,18 +66,6 @@ def _suggestion_id(job_id: UUID, proposal_ids: tuple[str, ...]) -> str:
     return f"{_SUGGESTION_PREFIX}{hashlib.sha256(seed.encode()).hexdigest()[:16]}"
 
 
-def _label_group_key(label: str) -> str:
-    """A chave de agrupamento do rótulo — casamento EXATO por enquanto.
-
-    Comparação idêntica à de `croquito_api.main._review_element_label_owner`: a
-    normalização mínima ("B" casa com "grade B") é decisão declarada da T4 da F-051, com o
-    dado do job de referência real; aproximar aqui, antes dela, seria o casamento difuso em
-    silêncio que a feature recusa (ADR-0063). Quando a T4 decidir a constante, esta é a
-    ÚNICA função que muda.
-    """
-    return label
-
-
 def suggest_review_elements(
     proposals: VisionProposalSet,
     *,
@@ -95,7 +87,7 @@ def suggest_review_elements(
         label = proposal.label
         if not label or proposal.id in excluded:
             continue
-        key = _label_group_key(label)
+        key = label_group_key(label)
         if key not in buckets:
             buckets[key] = []
             order.append(key)

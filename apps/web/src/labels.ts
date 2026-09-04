@@ -128,6 +128,11 @@ export function keepApartAxisLabel(axis: "x" | "y" | null): string {
 const RELATION_LABELS: Record<string, string> = {
   nearest_geometry: "geometria mais próxima",
   inside_or_near_circle: "dentro ou próximo do círculo",
+  // F-051 T4. A tela de revisão já escreve a relação de cada candidata, e enum em inglês
+  // não aparece para quem revisa (FDD, nomenclatura do painel de geometria) — por isso a
+  // tradução entra junto com o valor novo do contrato. Como a candidata por identidade é
+  // apresentada ao lado das de proximidade (destaque, ordem, ícone) é decisão da T6.
+  element_identity: "identidade declarada do elemento",
 };
 
 export function relationLabel(relation: string): string {

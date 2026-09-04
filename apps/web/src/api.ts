@@ -240,6 +240,11 @@ export type Review = {
       reading_id: string;
       proposal_id: string;
       proposal_kind: string;
+      // `nearest_geometry` | `inside_or_near_circle` | `element_identity`. O terceiro
+      // (F-051 T4) é o candidato que veio do casamento entre o hint da leitura e o rótulo
+      // de um elemento declarado na revisão — a cota-balão alcançando seu referente, longe
+      // demais para a proximidade. Tipado como `string` de propósito: a tela não decide por
+      // relação, e um valor novo do contrato nunca deve quebrar a leitura.
       relation: string;
       // Sinais de confiança do ranking (F-029). Opcionais porque pacote associado antes
       // deles responde sem eles; a tela nunca ordena, filtra ou decide por eles.

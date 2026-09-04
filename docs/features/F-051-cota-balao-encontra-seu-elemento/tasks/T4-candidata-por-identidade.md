@@ -1,6 +1,6 @@
 # F-051 · T4 — A candidata por identidade, cunhada no ato
 
-Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Pendente**  
+Feature: [F-051](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**  
 `feature_id: F-051` · `task_id: T4` · `depends_on: T1, T2`
 
 ## Objetivo
@@ -77,3 +77,72 @@ required: make check && make test
 - Se a decisão da normalização contrariar o dado real (formas que deveriam casar e não
   casam), a resposta é **parar e registrar** — a constante é decisão declarada, não ajuste
   silencioso (princípio do contrato).
+
+## Resultado
+
+Entregue em 2026-09-04.
+
+**A normalização decidida (Unknown 1), em duas funções de força deliberadamente diferente**,
+num módulo próprio (`croquito_worker/element_identity_matching.py`) para que a diferença
+fique escrita num lugar só:
+
+- `label_group_key` (**agrupar**, adotado pela T3) — igualdade normalizada,
+  `casefold(strip())`. `"Grade B"` agrupa com `"grade b"`; `"grade B"` **não** agrupa com
+  `"B"`, porque agrupar afirma que as propostas são a mesma coisa.
+- `hint_matches_label` (**casar** hint↔elemento) — igualdade normalizada **ou** o hint como
+  palavra inteira do rótulo, tokenizado por espaço e por `—`, `-`, `·`, `:`, `/`. `"B"`
+  alcança `"B"`, `"grade B"` e `"B — fecho da área de lazer"`; `"E"` não alcança nada, e
+  `"B"` não alcança `"fecho"`. Nunca distância de edição, parecença ou prefixo.
+
+As formas são as reais (hints do provider na issue #139; rótulos humanos do ADR-0063 e do
+DAP aprovado) e estão na tabela de `tests/worker/test_element_identity_matching.py`. Dois
+elementos que casam com o mesmo hint produzem candidatas dos dois — resultado legítimo, não
+empate a desfazer.
+
+**A reconstrução, e não o acréscimo.** `rederive_element_identity_candidates` (função pura
+em `association.py`) remove todas as candidatas `element_identity` e as re-deriva das
+declarações correntes, com dedupe por `(reading_id, proposal_id)` e candidatas novas
+sempre DEPOIS das existentes. Idempotente por construção: chegar ao conjunto de entrada
+devolve o **mesmo objeto**, e é essa identidade que faz quem grava copiar o
+`associations_json` verbatim. Uma exceção declarada, que é o critério 4: a candidata que
+sustenta associação confirmada não é removida — tirá-la deixaria `selected_associations`
+apontando para um par fora da lista, e a próxima retificação daquela cota morreria no
+portão (o desfazer que a revogação não faz, adiado um turno).
+
+**Cinco pontos de chamada**, todos criando revisão nova como sempre: os três atos de
+identidade (por dentro de `_persist_review_element_act`, que passa a gravar as candidatas
+derivadas em vez da cópia verbatim) e os dois que corrigem o `target_entity_label` — decisão
+e retificação declarada. Nos dois últimos a derivação roda **depois** do portão: ele
+continua lendo as candidatas como estavam persistidas, senão o hint corrigido no mesmo envio
+confirmaria uma candidata que ninguém viu na tela. `_apply_association_rules`,
+`associate_readings`, o ranking de proximidade e `associator_version` ficaram intocados.
+
+Trio de superfície atualizado: `openapi.snapshot.json` (`make openapi-snapshot`, diff só o
+valor novo do enum), `API_CONTRACT.md` e `apps/web/src/api.ts` — este último já tipava
+`relation` como `string`, então recebeu só o comentário com os três valores.
+`FLUXO_DO_SISTEMA.md` ganhou a segunda origem de candidata do funil. **Uma linha a mais que
+o contrato não previa**: `labels.ts` ganhou a tradução de `element_identity`, porque a tela
+de revisão já escreve a relação de cada candidata e o FDD proíbe enum em inglês para quem
+revisa — sem isso, a primeira declaração feita pela API faria a tela mostrar
+`element_identity` cru. Como a candidata é APRESENTADA (destaque, ordem, ícone) continua
+sendo decisão da T6.
+
+28 funções de teste novas (47 casos, com a tabela parametrizada): 4 em
+`tests/worker/test_element_identity_matching.py` (20 formas reais na tabela + a diferença
+entre agrupar e casar), 15 em `tests/worker/test_association.py` (função
+pura — soma sem substituir, observacionalidade, dedupe, idempotência, revogação com e sem
+confirmação, correção de hint, dois elementos com o mesmo hint, ida e volta da lista de não
+associadas, proposta fora do snapshot, forma humana sem `quality_score`, conjunto legado),
+1 em `tests/worker/test_review_element_suggestions.py` (a T3 adotando a constante) e 8 em
+`tests/api/test_review_element_identity_candidates.py` (os cinco atos ponta a ponta, o
+portão único, e o controle byte a byte). A fixture `_seed_review_session` ganhou a
+cota-balão sintética (`balloon_reading=True`, desligada por padrão).
+
+**Desvio consciente registrado**: em `_persist_review_element_act` o `confidence_shadow_json`
+passou a ser computado sobre o conjunto derivado, em vez de `_carried_confidence_shadow`
+(que o computa sobre o conjunto da revisão anterior). O shadow descreve os candidatos DA
+revisão em que está gravado; deixá-lo apontando para o conjunto antigo criaria uma revisão
+internamente incoerente. Com o conjunto intocado os dois caminhos dão exatamente o mesmo
+valor — a função é pura sobre as mesmas entradas —, então o controle byte a byte segue
+válido. Candidata por identidade nasce com `association_confidence=0.0` e por isso nunca é
+escolhida por nenhum corte da grade do shadow nem pelo modo automático (ADR-0041).
