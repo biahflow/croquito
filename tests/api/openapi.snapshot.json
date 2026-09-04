@@ -706,7 +706,8 @@
           "relation": {
             "enum": [
               "nearest_geometry",
-              "inside_or_near_circle"
+              "inside_or_near_circle",
+              "element_identity"
             ],
             "title": "Relation",
             "type": "string"

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from croquito_worker.association_confidence import association_confidence as _score_association
+from croquito_worker.element_identity_matching import hint_matches_label
 from croquito_worker.io_utils import atomic_write_text
 from croquito_worker.review import DimensionReading, PixelBox, ReviewPacket
 from croquito_worker.vision import (
@@ -24,6 +26,16 @@ from croquito_worker.vision import (
 
 ASSOCIATOR_VERSION = "pixel-proximity-associator-v1"
 
+ELEMENT_IDENTITY_RELATION: Final = "element_identity"
+"""A relação da candidata que nasce de identidade declarada, não de distância (ADR-0063 D3).
+
+A procedência mora na CANDIDATA, e é por isso que `AssociationSet.associator_version`
+continua sendo `pixel-proximity-associator-v1` mesmo num conjunto que carrega candidatas
+por identidade: o associador de proximidade é o mesmo de sempre, e continua produzindo
+exatamente o que sempre produziu. Trocar a versão do conjunto diria que o funil mudou —
+ele não mudou; o que existe agora é uma segunda origem de candidata, declarada nela mesma.
+"""
+
 
 class AssociationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, str_strip_whitespace=True)
@@ -33,7 +45,12 @@ class AssociationCandidate(AssociationModel):
     reading_id: str = Field(pattern=r"^rd_[a-f0-9]{16}$")
     proposal_id: str = Field(pattern=r"^vp_[a-f0-9]{16}$")
     proposal_kind: Literal["line", "circle", "contour"]
-    relation: Literal["nearest_geometry", "inside_or_near_circle"]
+    # `element_identity` é aditivo (F-051 T4): conjunto persistido antes dela continua
+    # validando sem tocar em nada. A candidata por identidade nasce do ato humano de
+    # declaração, e não da distância — mas os campos observacionais abaixo continuam
+    # preenchidos com FATOS medidos (a distância real em pixels é um fato; ela só deixou
+    # de ser o critério de elegibilidade).
+    relation: Literal["nearest_geometry", "inside_or_near_circle", "element_identity"]
     pixel_distance: float = Field(ge=0)
     proximity_score: float = Field(ge=0, le=1)
     visual_quality_score: float = Field(ge=0, le=1)
@@ -145,6 +162,13 @@ def _orientation_alignment(reading: DimensionReading, proposal: VisionProposal) 
     return round(min(1.0, max(0.0, cosine)), 4)
 
 
+def _max_candidate_distance(proposals: VisionProposalSet, config: AssociationConfig) -> float:
+    """O alcance do funil de proximidade, em pixels: fração da diagonal da imagem."""
+    return math.hypot(proposals.image_width_px, proposals.image_height_px) * (
+        config.max_distance_diagonal_ratio
+    )
+
+
 def associate_readings(
     packet: ReviewPacket,
     proposals: VisionProposalSet,
@@ -160,9 +184,7 @@ def associate_readings(
         raise ValueError("digest do review packet diverge das propostas CV")
     if effective_config.max_candidates_per_reading < 1:
         raise ValueError("max_candidates_per_reading deve ser positivo")
-    max_distance = math.hypot(proposals.image_width_px, proposals.image_height_px) * (
-        effective_config.max_distance_diagonal_ratio
-    )
+    max_distance = _max_candidate_distance(proposals, effective_config)
     candidates: list[AssociationCandidate] = []
     unassociated_reading_ids: list[str] = []
     for reading in packet.readings:
@@ -223,6 +245,189 @@ def associate_readings(
             "Proximidade e quality score não confirmam cota, unidade, alvo ou geometria.",
             "Todo candidato permanece unresolved e não exportável até revisão humana.",
         ],
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ElementIdentity:
+    """Uma identidade ATIVA e NOMEADA da revisão, na forma que o casamento consome."""
+
+    element_ref: str
+    label: str
+    proposal_ids: tuple[str, ...]
+
+
+def active_element_identities(rows: Iterable[Mapping[str, Any]]) -> list[ElementIdentity]:
+    """As identidades da revisão que podem receber cota-balão, na ordem em que foram declaradas.
+
+    Duas entradas ficam de fora, cada uma por um motivo próprio:
+
+    - **revogada** (`status="revoked"`): alguém desfez o ato. A entrada continua no
+      histórico e o `element_ref` continua fora do estoque de cunhagem, mas o elemento não
+      existe mais — cunhar candidata para ele devolveria em silêncio o que uma pessoa
+      desfez;
+    - **sem rótulo**: é pelo NOME que o hint procura o referente, e um elemento sem nome não
+      tem por onde ser procurado. Declarar sem rótulo continua sendo válido (a identidade
+      serve ao transporte no traçado); ela só não participa deste casamento.
+    """
+    identities: list[ElementIdentity] = []
+    for row in rows:
+        if row.get("status", "active") != "active":
+            continue
+        label = row.get("label")
+        if not isinstance(label, str) or not label.strip():
+            continue
+        identities.append(
+            ElementIdentity(
+                element_ref=str(row["element_ref"]),
+                label=label,
+                proposal_ids=tuple(row.get("proposal_ids") or ()),
+            )
+        )
+    return identities
+
+
+def rederive_element_identity_candidates(
+    *,
+    packet: ReviewPacket,
+    proposals: VisionProposalSet,
+    associations: AssociationSet,
+    identities: Sequence[ElementIdentity],
+    confirmed_associations: Mapping[str, str] | None = None,
+    config: AssociationConfig | None = None,
+) -> AssociationSet:
+    """As candidatas por identidade deste conjunto, RECONSTRUÍDAS do zero (F-051 T4).
+
+    Reconstrução, e não acréscimo: toda candidata `element_identity` sai, e as que valem
+    voltam a nascer das declarações CORRENTES. É o que faz uma operação só servir aos quatro
+    atos que mudam o casamento — declarar, revogar, renomear e corrigir o hint da leitura —
+    e é o que garante que aplicar a mesma entrada duas vezes dê o mesmo conjunto. Uma versão
+    incremental precisaria saber o que mudou, e erraria em silêncio no dia em que dois atos
+    chegassem juntos.
+
+    Uma exceção, e ela é o aceite do Design Approval Package da feature: candidata por
+    identidade que SUSTENTA uma associação confirmada (`confirmed_associations`) não é
+    removida. Revogar o elemento não desfaz o que uma pessoa já confirmou, e um
+    `selected_associations` apontando para um par que não está mais na lista de candidatas
+    seria exatamente esse desfazer, adiado — a próxima retificação daquela leitura bateria
+    no portão e a associação humana morreria sem ninguém ter decidido nada.
+
+    O que esta função NUNCA faz: tocar candidata de proximidade (nem a pontuação delas),
+    tocar `selected_associations`, confirmar o que quer que seja. A candidata nasce
+    `unresolved`/`export=false` como todas as outras, e o portão único da API
+    (`_apply_association_rules`) continua sendo o caminho de confirmação.
+
+    Quando nada muda, o conjunto de ENTRADA volta — o mesmo objeto, não uma cópia igual.
+    Quem chama usa essa identidade para gravar o JSON persistido verbatim, e é assim que um
+    job sem declaração nenhuma continua respondendo byte a byte como antes da feature.
+    """
+    confirmed = dict(confirmed_associations or {})
+    effective_config = config or AssociationConfig()
+    kept: list[AssociationCandidate] = []
+    dropped_reading_ids: set[str] = set()
+    for candidate in associations.candidates:
+        if candidate.relation != ELEMENT_IDENTITY_RELATION:
+            kept.append(candidate)
+            continue
+        if confirmed.get(candidate.reading_id) == candidate.proposal_id:
+            kept.append(candidate)
+            continue
+        dropped_reading_ids.add(candidate.reading_id)
+
+    proposals_by_id = {proposal.id: proposal for proposal in proposals.proposals}
+    max_distance = _max_candidate_distance(proposals, effective_config)
+    # O par já presente NÃO ganha duplicata: a leitura cuja candidata mais próxima é
+    # justamente uma proposta do elemento declarado continua com uma linha só, a de
+    # proximidade, com a pontuação que ela já tinha.
+    existing_pairs = {(candidate.reading_id, candidate.proposal_id) for candidate in kept}
+    minted: list[AssociationCandidate] = []
+    for reading in packet.readings:
+        hint = reading.target_entity_label
+        if not hint:
+            continue
+        centre = _evidence_center(reading)
+        for identity in identities:
+            if not hint_matches_label(hint, identity.label):
+                continue
+            for proposal_id in identity.proposal_ids:
+                proposal = proposals_by_id.get(proposal_id)
+                if proposal is None:
+                    # Proposta fora do snapshot corrente: não há geometria para medir, e
+                    # inventar distância seria a única alternativa. A declaração continua
+                    # inteira no histórico da revisão.
+                    continue
+                pair = (reading.id, proposal.id)
+                if pair in existing_pairs:
+                    continue
+                existing_pairs.add(pair)
+                distance, _ = _distance_to_proposal(centre, proposal)
+                minted.append(
+                    AssociationCandidate(
+                        reading_id=reading.id,
+                        proposal_id=proposal.id,
+                        proposal_kind=proposal.kind,
+                        relation=ELEMENT_IDENTITY_RELATION,
+                        # Fatos medidos, não critério: a cota-balão está a milhares de
+                        # pixels do referente, e é isso que estes números dizem. Quem
+                        # revisa merece ver a distância real ao lado da candidata que
+                        # chegou por outro caminho.
+                        pixel_distance=round(distance, 4),
+                        proximity_score=(
+                            round(max(0.0, 1 - distance / max_distance), 4)
+                            if max_distance > 0
+                            else 0.0
+                        ),
+                        # Forma corrigida por pessoa não tem pontuação de detector
+                        # (ADR-0050, decisão 2). O 0.0 aqui é ausência de medição, e o
+                        # campo do candidato é obrigatório desde a primeira versão do
+                        # contrato; nenhum ranking depende dele nesta relação.
+                        visual_quality_score=(
+                            proposal.quality_score if proposal.quality_score is not None else 0.0
+                        ),
+                        orientation_alignment=_orientation_alignment(reading, proposal),
+                        # `association_confidence` fica no 0.0 de propósito: o score da
+                        # F-029 mede proximidade e margem entre vizinhos, e não sabe nada
+                        # sobre identidade declarada. Pontuá-la por proximidade daria
+                        # sempre ~0 com aparência de medição; deixá-la neutra mantém a
+                        # candidata por identidade FORA de qualquer corte automático —
+                        # ela ranqueia para o humano, e só ele a confirma.
+                        association_confidence=0.0,
+                    )
+                )
+
+    candidates = [*kept, *minted]
+    reading_ids_with_candidate = {candidate.reading_id for candidate in candidates}
+    unassociated = [
+        reading_id
+        for reading_id in associations.unassociated_reading_ids
+        if reading_id not in reading_ids_with_candidate
+    ]
+    # A leitura que só tinha candidata por identidade e a perdeu volta para a lista de não
+    # associadas, em ordem de pacote: o modelo proíbe estar nas duas listas, e sumir das
+    # duas esconderia da revisão que aquela cota ficou sem referente nenhum.
+    already_listed = set(unassociated)
+    unassociated.extend(
+        reading.id
+        for reading in packet.readings
+        if reading.id in dropped_reading_ids
+        and reading.id not in reading_ids_with_candidate
+        and reading.id not in already_listed
+    )
+    if (
+        candidates == associations.candidates
+        and unassociated == associations.unassociated_reading_ids
+    ):
+        # Reconstrução que chegou ao conjunto de entrada: o objeto de origem volta, e quem
+        # grava a revisão nova copia o JSON persistido em vez de reserializá-lo. É o que
+        # faz a segunda chamada do MESMO ato (e todo ato de uma revisão sem declaração)
+        # sair byte a byte igual ao que já estava no banco.
+        return associations
+    return AssociationSet.model_validate(
+        {
+            **associations.model_dump(mode="json"),
+            "candidates": [candidate.model_dump(mode="json") for candidate in candidates],
+            "unassociated_reading_ids": unassociated,
+        }
     )
 
 

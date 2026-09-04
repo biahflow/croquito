@@ -284,7 +284,11 @@ from croquito_valuation.takeoff import (
 from croquito_valuation.template import EstimateTemplateLayout, default_template
 from croquito_valuation.workbook_writer import consolidate_by_code
 from croquito_valuation.worksite_calc import build_worksite_takeoff_valuation
-from croquito_worker.association import AssociationSet
+from croquito_worker.association import (
+    AssociationSet,
+    active_element_identities,
+    rederive_element_identity_candidates,
+)
 from croquito_worker.association_confidence import (
     CONFIDENCE_REFERENCE_THRESHOLD,
     confidence_shadow_json,
@@ -6101,10 +6105,12 @@ def _review_element_label_owner(
 ) -> str | None:
     """O ref que já usa este rótulo entre as identidades ATIVAS, quando existe.
 
-    Comparação EXATA sobre o rótulo já aparado: a normalização mínima do casamento
-    ("B" contra "grade B") é decisão declarada da T4 da F-051, com o dado do job de
-    referência; aproximar aqui, antes dela, seria o casamento difuso em silêncio que a
-    feature recusa.
+    Comparação EXATA sobre o rótulo já aparado, e ela continua exata depois de a T4 decidir
+    a normalização do casamento (`croquito_worker.element_identity_matching`). São
+    perguntas diferentes: aqui a pergunta é "este nome já é de alguém?", e responder "sim"
+    para `"grade B"` porque existe um `"B"` proibiria nomear dois elementos distintos que a
+    folha nomeia assim. Que os dois casem depois com o mesmo hint `"B"` é resultado
+    legítimo — viram duas candidatas, e quem revisa escolhe.
 
     Rótulo de identidade REVOGADA volta a ficar livre: o ref é que nunca se reaproveita. Um
     nome preso para sempre impediria a correção mais óbvia — revogar o grupo errado e
@@ -6118,6 +6124,40 @@ def _review_element_label_owner(
         if declaration.get("label") == label:
             return str(declaration["element_ref"])
     return None
+
+
+def _associations_after_identity_change(
+    current: ReviewRevisionRecord,
+    *,
+    packet: ReviewPacket,
+    associations: AssociationSet,
+    declarations: Sequence[Mapping[str, Any]],
+    selected_associations: Mapping[str, str],
+) -> AssociationSet:
+    """As candidatas da revisão NOVA, com as de identidade recunhadas no ato (F-051 T4).
+
+    Chamada por todo ato que pode mudar o casamento hint↔elemento, e por nenhum outro: os
+    três atos de identidade (declarar, revogar, renomear) e os dois que corrigem o
+    `target_entity_label` da leitura (decisão e retificação declarada). As candidatas são
+    PERSISTIDAS e a API nunca as recomputa na leitura — então elas nascem e morrem aqui,
+    e não numa rota de recompute que ninguém chamaria na hora certa.
+
+    Devolve o MESMO objeto recebido quando nada muda, e é isso que permite a quem chama
+    gravar o JSON de origem verbatim: revisão sem declaração nenhuma continua produzindo
+    `associations_json` byte a byte igual ao de antes desta feature.
+
+    Sem snapshot de propostas não há o que casar — nem poderia haver declaração, que exige
+    o snapshot para validar o grupo. O conjunto volta intocado.
+    """
+    if current.proposals_json is None:
+        return associations
+    return rederive_element_identity_candidates(
+        packet=packet,
+        proposals=VisionProposalSet.model_validate(current.proposals_json),
+        associations=associations,
+        identities=active_element_identities(declarations),
+        confirmed_associations=selected_associations,
+    )
 
 
 def _review_declared_proposal_ids(declarations: list[dict[str, Any]]) -> set[str]:
@@ -9232,6 +9272,19 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "A leitura não pode receber outra decisão.",
             ) from error
 
+        # Depois de decidir, e nunca antes: corrigir o `target_entity_label` é um dos atos
+        # que mudam o casamento hint↔elemento (F-051 T4), e o portão acima continua
+        # validando contra as candidatas que ESTAVAM persistidas — confirmar uma candidata
+        # que só passa a existir nesta mesma requisição seria a associação nascendo já
+        # confirmada, sem ninguém tê-la visto na tela.
+        associations = _associations_after_identity_change(
+            current,
+            packet=reviewed_packet,
+            associations=associations,
+            declarations=_review_element_declarations(current),
+            selected_associations=selected_associations,
+        )
+
         resolved = _resolve_scene_after_review_change(
             session,
             job_id=job_id,
@@ -9483,6 +9536,17 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "A correção não pôde ser registrada sobre esta leitura.",
             ) from error
+
+        # O mesmo recunhar da decisão, pelo mesmo motivo: aqui é onde o revisor corrige o
+        # "B" que o modelo leu errado, e a leitura corrigida precisa sair desta revisão já
+        # com as candidatas do elemento certo (F-051 T4).
+        associations = _associations_after_identity_change(
+            current,
+            packet=rectified_packet,
+            associations=associations,
+            declarations=_review_element_declarations(current),
+            selected_associations=selected_associations,
+        )
 
         resolved = _resolve_scene_after_review_change(
             session,
@@ -11335,7 +11399,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         ref: ambas leem a mesma `base_version`, ambas cunham o mesmo número, e a segunda a
         gravar colide aqui. Todo o resto da revisão viaja verbatim — declarar identidade não
         decide leitura, não mexe em associação confirmada, não toca cena, blocker ou solver.
+
+        A ÚNICA coisa que o ato recalcula são as candidatas por identidade (F-051 T4): elas
+        são a consequência direta de quem é elemento nesta revisão, são persistidas, e a
+        leitura da revisão nunca as recomputa. Sem declaração ativa nenhuma a reconstrução é
+        vazia e o `associations_json` de origem é gravado verbatim.
         """
+        packet = ReviewPacket.model_validate(current.packet_json)
+        associations = AssociationSet.model_validate(current.associations_json)
+        derived = _associations_after_identity_change(
+            current,
+            packet=packet,
+            associations=associations,
+            declarations=declarations,
+            selected_associations=current.selected_associations_json,
+        )
         next_review = ReviewRevisionRecord(
             id=str(new_uuid7()),
             tenant_id=principal.tenant_id,
@@ -11343,12 +11421,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             version=current.version + 1,
             parent_review_id=current.id,
             packet_json=current.packet_json,
-            associations_json=current.associations_json,
+            associations_json=(
+                current.associations_json
+                if derived is associations
+                else derived.model_dump(mode="json")
+            ),
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
             **{**_carried_review_context(current), "element_declarations_json": declarations},
-            confidence_shadow_json=_carried_confidence_shadow(current),
+            # O shadow descreve os candidatos DESTA revisão, então ele segue a
+            # reconstrução acima em vez de `_carried_confidence_shadow`. Com o conjunto
+            # intocado os dois são a mesma coisa: a função é pura sobre as mesmas entradas.
+            confidence_shadow_json=confidence_shadow_json(
+                packet, derived, current.declared_chains_json
+            ),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             trace_acceptance_json=current.trace_acceptance_json,

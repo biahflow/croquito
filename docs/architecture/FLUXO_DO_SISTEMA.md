@@ -196,6 +196,23 @@ leitura procura o referente; e revogar **não desfaz associação já confirmada
 associação é a retificação de decisão que a revisão já tem. A identidade revogada continua no
 histórico, e o ref revogado nunca é reaproveitado.
 
+Declarada a identidade, o **funil de associação ganha uma segunda origem de candidata**
+(decisão 3): a leitura cujo `target_entity_label` casa com o rótulo de um elemento declarado
+vira candidata de **todas as propostas daquele elemento**, com `relation="element_identity"`,
+independentemente da distância — que continua sendo medida e gravada como fato, só não é mais
+o critério. O associador de proximidade (`pixel-proximity-associator-v1`) **não muda**: a
+procedência da candidata nova está nela mesma. Como as candidatas são persistidas e a leitura
+da revisão nunca as recomputa, elas são **recunhadas no próprio ato** — os três de identidade
+e os dois que corrigem o hint da leitura (decisão e retificação declarada) —, por
+reconstrução do zero a cada vez: nada de incremento que erra quando dois atos chegam juntos.
+Revogar tira as candidatas por identidade **não confirmadas**; a que sustenta uma associação
+já confirmada fica, porque tirá-la seria desfazer o ato humano com um turno de atraso. O
+casamento hint↔rótulo é declarado e determinístico (`element_identity_matching.py`):
+igualdade ignorando caixa e espaço, ou o hint como **palavra inteira** do rótulo — "B" alcança
+"grade B" e "B — fecho da área de lazer"; "E" não alcança nada. Nunca há parecença, distância
+de edição ou desempate secreto: dois elementos que casam com o mesmo hint viram duas
+candidatas, e quem revisa escolhe olhando a folha.
+
 E o **traçado transporta essa identidade** (decisão 2): a entidade criada a partir de uma
 proposta declarada **nasce** com o `element_ref`, e o rótulo entra em
 `SceneRevision.element_labels` — a letra do balão vira identidade da cena sem ninguém
