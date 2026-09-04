@@ -22,8 +22,9 @@
 > **Gabarito real publicado como artefato de plataforma em 2026-09-04** (mesma data do
 > aceite, ato operacional no ambiente local): id `01a06c0c-c56b-7c96-96e3-8254edd2a698`,
 > nome "PLANILHA ORÇAMENTÁRIA (SMH/Rio)", revisão `REV SEAC — OUT/23`, 433 linhas, digest
-> `94e6f6fd97cf…`, imutável. **Dívida que segue declarada**: o unknown 1 (gabarito por
-> lote?) continua aberto, com evidência a favor de um só.
+> `94e6f6fd97cf…`, imutável. **O unknown 1 fechou em 2026-09-04**: o gabarito é por lote
+> do contrato, e a escolha explícita na rodada (T3) é a declaração — nada mais aberto
+> nesta feature.
 
 > Histórico: **as três tarefas entregues em 2026-09-01.** A T1 (o escritor do gabarito,
 > provado contra o documento real sem um finding do auditor) entrou pelo PR #115; a T2 (o
@@ -147,9 +148,13 @@ fail-closed que já protege a medição.
 
 ## Unknowns
 
-1. **O gabarito é por lote do contrato ou único para todas as praças?** Os três lotes têm
-   listas diferentes (328/383/112 códigos). Se for por lote, a rodada precisa declarar em
-   qual lote a praça entra, e isso muda o modelo.
+1. ~~**O gabarito é por lote do contrato ou único para todas as praças?**~~ **Resolvido
+   em 2026-09-04 por oráculo humano** (Daniel Campos): é **por lote** — e a escolha
+   explícita do gabarito na rodada (T3, nome+revisão à vista) É a declaração de lote, então
+   o modelo não muda. Os demais gabaritos são publicados como artefatos de plataforma
+   quando os arquivos dos outros lotes chegarem. Texto original: Os três lotes têm listas
+   diferentes (328/383/112 códigos). Se for por lote, a rodada precisa declarar em qual
+   lote a praça entra, e isso muda o modelo.
 2. ~~**De onde sai o preço impresso.**~~ ~~Resolvido em 2026-08-28: a coluna
    `VALOR UNIT (OUT/23)` traz o preço **com BDI**, porque o rodapé deriva o total sem BDI
    dividindo por 1,18.~~ **CORRIGIDO em 2026-09-04 por oráculo humano** (Daniel Campos):

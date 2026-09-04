@@ -240,9 +240,11 @@ que falha em silêncio", além dos dois já registrados acima):
 
 ## O que continua aberto
 
-- **Se o gabarito é por lote do contrato** (unknown 1) — os três arquivos usam o mesmo
-  gabarito de 433 linhas, o que é evidência a favor de um só, mas as três praças são do mesmo
-  contrato.
+- ~~**Se o gabarito é por lote do contrato** (unknown 1)~~ — **resolvido em 2026-09-04
+  por oráculo humano**: é por lote (as três praças reais são do mesmo lote, por isso o
+  mesmo gabarito de 433 linhas). A escolha explícita do seletor da rodada é a declaração
+  de lote; os gabaritos dos outros lotes entram como artefatos de plataforma quando os
+  arquivos vierem.
 - ~~A publicação do **gabarito real** como artefato de plataforma~~ — **feita em
   2026-09-04** (`POST /v1/platform/estimate-templates`, ambiente local): id
   `01a06c0c-c56b-7c96-96e3-8254edd2a698`, revisão `REV SEAC — OUT/23`, 433 linhas, digest
