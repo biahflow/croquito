@@ -117,6 +117,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-048 | A DEFINIR | READY_FOR_SPEC | Auditoria de medição de terceiros: elevar `parity`/`compare-bulletin` a jornada de usuário — importar MAPÃO/BM externo e devolver relatório de furos (a definir em contrato) |
 | F-049 | A DEFINIR | READY_FOR_SPEC | Dashboard executivo do contrato: planejado × realizado, acumulado × saldo, avanço físico-financeiro entre medições, sobre F-031/F-036/F-039 (a definir em contrato) |
 | F-050 | A DEFINIR | READY_FOR_SPEC | Relatório de risco e pendências do período de medição, pronto para o cliente, ao lado do BM (a definir em contrato) |
+| F-051 | HIGH | READY_FOR_PLANNING | [A cota-balão encontra seu elemento: identidade declarada na revisão](../features/F-051-cota-balao-encontra-seu-elemento/feature.md) — nasce da [issue #139](https://github.com/biahflow/croquito/issues/139) (revisão real do Toca); caminho de arquitetura escolhido pelo dono em 2026-09-04 ([ADR-0063](../adr/0063-identidade-de-elemento-nasce-na-revisao.md), `Proposed`). Gates pendentes que precedem o planejamento: aceite do ADR e Design Approval Package (`INTERFACE_CHANGE`) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -636,6 +637,14 @@ detection (o insumo do croquito é croqui e prancha 2D; o análogo — fechament
 croqui × CAD — já existe), cronograma com caminho crítico, e pós-obra (manutenção/garantias).
 O degrau "antes da obra" daquele arco o croquito já cobre: orçamento-base (F-020) e modo teto
 (F-027) são a porta de entrada de baixo risco — "comece sabendo o número real".
+
+**F-051** nasce em 2026-09-04 da issue #139, aberta pela primeira revisão completa de croqui
+real: a cota-balão (medida escrita longe do elemento, ligada por letra) é inalcançável pelo
+funil de proximidade por construção, e o escape `annotation=true` deixa medida confirmada por
+humano fora do solver. Dos três caminhos apresentados, o dono escolheu o desenho completo — a
+identidade de elemento (`element_ref`, ADR-0058) passa a poder nascer NA REVISÃO, sobre
+propostas, pelo mesmo ato humano, e o traçado a transporta para a cena (ADR-0063, `Proposed`).
+É a ponte que faltava na cadeia croqui→cena→quantitativo da F-047.
 
 ## Agora — MVP privado
 
