@@ -243,9 +243,11 @@ que falha em silêncio", além dos dois já registrados acima):
 - **Se o gabarito é por lote do contrato** (unknown 1) — os três arquivos usam o mesmo
   gabarito de 433 linhas, o que é evidência a favor de um só, mas as três praças são do mesmo
   contrato.
-- A publicação do **gabarito real** como artefato de plataforma (o mecanismo da T2 existe e
-  foi exercido com dado sintético na T3; o JSON real de 433 linhas está em
-  `output/f043-aceite/gabarito-rev-seac.json`, local) — ato operacional pendente.
+- ~~A publicação do **gabarito real** como artefato de plataforma~~ — **feita em
+  2026-09-04** (`POST /v1/platform/estimate-templates`, ambiente local): id
+  `01a06c0c-c56b-7c96-96e3-8254edd2a698`, revisão `REV SEAC — OUT/23`, 433 linhas, digest
+  `94e6f6fd97cf…`. O documento deixou de depender da retenção do `output/`; o seletor da
+  jornada (T3) passa a enxergá-lo na próxima rodada.
 - Candidatas a feature anotadas na conferência: "linha com quantidade e preço zero" e
   "bloco calculado e não transportado" (a segunda já registrada acima).
 
