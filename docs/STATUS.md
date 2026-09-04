@@ -2,7 +2,12 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-09-02 (**F-040, F-046 e F-047 `DONE`** — o dono do produto exerceu o
+Última revisão: 2026-09-04 (**F-043 `DONE`** — aceite humano do arquivo gerado **contra o
+documento real** do Campo do Toca, o primeiro aceite da jornada de orçamento exercido sobre
+dado real e não sintético: 454/454 linhas espelhadas, auditoria 0 findings. A revisão
+pré-aceite achou e fechou a linha de grupo ausente, PR #143; decisões do dono: rodapé pelo
+ADR-0038 por agora, e o preço do contrato NÃO embute BDI. Ver o `feature.md` e a evidência
+da F-043 para as dívidas declaradas. Antes, 2026-09-02: **F-040, F-046 e F-047 `DONE`** — o dono do produto exerceu o
 ato humano de aceite das três, que estavam `READY_FOR_HUMAN_REVIEW`, fechando as issues
 #100, #101 e #102. Ver "Aceite de 2026-09-02" abaixo para o que ficou como dívida
 declarada. Antes, 2026-08-28: **F-007, F-022, F-029, F-031 e F-032 `DONE`** — o dono do

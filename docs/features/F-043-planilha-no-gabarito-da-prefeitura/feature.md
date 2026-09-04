@@ -2,21 +2,36 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
-> **As três tarefas entregues em 2026-09-01.** A T1 (o escritor do gabarito, provado contra o
-> documento real sem um finding do auditor) entrou pelo PR #115; a T2 (o gabarito como
-> artefato de plataforma) e a T3 (a escolha na jornada web), pelo #131.
+> **Aceita por ato humano em 2026-09-04** (Daniel Campos, pelo chat: "sim ficou muito bom"),
+> contra o **documento real** do Campo do Toca — diferente dos aceites de 2026-09-02, este
+> não é sobre evidência sintética: o arquivo gerado espelha o real linha por linha
+> (454/454 nas linhas 10..463, 433 códigos + 21 grupos), auditoria 0 findings, total
+> 648.956,63. A bancada do aceite e os números estão em [evidence.md](evidence.md).
+>
+> O aceite exerceu também as duas decisões que estavam registradas: **o rodapé segue o
+> ADR-0038 por agora** (três linhas, BDI como diferença), e **o preço do contrato NÃO
+> embute BDI** — o `TOTAL S/BDI` do documento do cliente divide por 1,18 um valor que
+> nunca teve BDI, erro do arquivo dele, não do nosso raciocínio (corrige o unknown 2).
+>
+> A revisão da bancada achou e fechou um defeito antes do aceite: o escritor da T1 não
+> imprimia a **linha de grupo** (aprovada no pacote de design rev. 2/3) e emitia o grupo
+> como oitava coluna — consertado pelo PR #143, cujo merge conclui esta feature.
+>
+> **Dívidas declaradas**: o gabarito real de 433 linhas ainda não foi publicado como
+> artefato de plataforma (o mecanismo da T2 existe; o dado real entra por ato operacional);
+> o unknown 1 (gabarito por lote?) segue aberto, com evidência a favor de um só.
+
+> Histórico: **as três tarefas entregues em 2026-09-01.** A T1 (o escritor do gabarito,
+> provado contra o documento real sem um finding do auditor) entrou pelo PR #115; a T2 (o
+> gabarito como artefato de plataforma) e a T3 (a escolha na jornada web), pelo #131.
 >
 > Os gates: [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md) aceito em
 > 2026-08-28, e o [Design Approval Package](mock/README.md) nas revisões 1 e 2 na mesma data e
 > na **revisão 3 em 2026-09-01** — as três por ato humano (Daniel Campos).
 > `BROWSER_REQUIRED` cumprido: três estados capturados contra o stack local, e a captura achou
 > dois defeitos que a suíte não achava ([evidence.md](evidence.md)).
->
-> O que resta é ato humano: o **aceite do arquivo gerado** contra o documento real, por quem
-> entrega à prefeitura. E a pergunta registrada na evidência, que é da orçamentista: **o preço
-> do contrato embute BDI?** Ela muda o significado de duas células do documento.
 >
 > Nasce em 2026-08-28, da mesma medição de ROI que originou a
 > [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md): o dono do produto perguntou o
@@ -133,9 +148,16 @@ fail-closed que já protege a medição.
 1. **O gabarito é por lote do contrato ou único para todas as praças?** Os três lotes têm
    listas diferentes (328/383/112 códigos). Se for por lote, a rodada precisa declarar em
    qual lote a praça entra, e isso muda o modelo.
-2. ~~**De onde sai o preço impresso.**~~ **Resolvido em 2026-08-28** contra o arquivo real: a
-   coluna `VALOR UNIT (OUT/23)` traz o preço **com BDI**, porque o rodapé deriva o total sem
-   BDI dividindo o total por 1,18 (BDI de 18%). Ver [`evidence.md`](evidence.md).
+2. ~~**De onde sai o preço impresso.**~~ ~~Resolvido em 2026-08-28: a coluna
+   `VALOR UNIT (OUT/23)` traz o preço **com BDI**, porque o rodapé deriva o total sem BDI
+   dividindo por 1,18.~~ **CORRIGIDO em 2026-09-04 por oráculo humano** (Daniel Campos):
+   o preço do contrato **NÃO embute BDI** — é o custo de tabela SCO com desconto de
+   licitação (~0,15%), como a comparação com a FGV06 já sugeria. A dedução de 2026-08-28
+   confiou no rodapé do cliente, e é o rodapé que está errado: `TRUNC(G465/1.18,2)` divide
+   por 1,18 um valor que nunca teve BDI. Palavras do dono: "Nossos cálculos, raciocínio
+   estão certos, a planilha deles errou no cálculo." Consequência: `bdi_percent = 0` com o
+   preço do contrato como preço final é a semântica correta do documento, não uma
+   aproximação. Ver [`evidence.md`](evidence.md).
 3. ~~**O gabarito real é o da aba `PLANILHA PADRÃO ORDENADA`** (518 códigos) **ou o da
    `PLANILHA ORÇAMENTÁRIA`** (433)?~~ **Decidido em 2026-08-28** (Daniel Campos): a
    `PLANILHA ORÇAMENTÁRIA`, de 433 códigos, conferida linha a linha em
@@ -172,11 +194,15 @@ fail-closed que já protege a medição.
    não tem a metade "de tenant" que o acervo de canteiro tem.
 2. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
-3. **Fornecer o gabarito real** e dizer qual revisão vale (unknown 3) — ato do dono, porque
-   depende do que a prefeitura aceita hoje. **Qual aba vale foi decidido em 2026-08-28**
-   (Daniel Campos): a `PLANILHA ORÇAMENTÁRIA`, de 433 códigos. O arquivo em si continua
-   pendente — ele entra como gabarito JSON declarado, sem tocar código.
-4. **Aceite do arquivo gerado** contra o real, por quem entrega à prefeitura.
+3. ~~**Fornecer o gabarito real** e dizer qual revisão vale~~ — **cumprido**: qual aba vale
+   foi decidido em 2026-08-28 (a `PLANILHA ORÇAMENTÁRIA`, de 433 códigos), e o gabarito
+   declarado foi transcrito do documento real na bancada do aceite
+   (`output/f043-aceite/gabarito-rev-seac.json`, local — a publicação como artefato de
+   plataforma é dívida declarada no Status).
+4. ~~**Aceite do arquivo gerado** contra o real~~ — **cumprido em 2026-09-04** (Daniel
+   Campos), com o arquivo espelhando o documento real linha por linha; as duas decisões
+   embutidas (rodapé pelo ADR-0038 por agora; preço do contrato sem BDI) registradas no
+   Status e no unknown 2.
 
 ## References
 
