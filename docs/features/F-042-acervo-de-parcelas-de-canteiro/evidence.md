@@ -64,13 +64,60 @@ notado. A linha correspondente na planilha sai com quantidade zero.
 Relacionado, mas distinto, dos dois achados registrados na
 [evidência da F-043](../F-043-planilha-no-gabarito-da-prefeitura/evidence.md).
 
+## Evidência de navegador da T6 — o estado 09 renderizado
+
+**Data**: 2026-09-04. Chromium 1440 px, `deviceScaleFactor: 2`, sessão OIDC real no Keycloak
+local (`orcamentista.local`, tenant `tenant-local`), API e web servidos **do código da T6**.
+A rodada é **sintética** e foi semeada pelas funções dos próprios testes apontadas ao servidor
+real — o método da [evidência da F-043](../F-043-planilha-no-gabarito-da-prefeitura/evidence.md),
+seção "Método". Nenhum dado de cliente entra; nenhuma chamada paga acontece.
+
+A rodada semeada tem **duas parcelas de canteiro gravadas**: uma vinda de acervo
+(`kit_origin` preenchido) e uma autorada à mão — que é o par que a frase do estado 09 conta.
+
+| Captura | O que ela prova |
+| --- | --- |
+| [`00-painel-com-o-ato-de-guardar.png`](evidencia/00-painel-com-o-ato-de-guardar.png) | O ato "Guardar como acervo" ao lado de "Aplicar um acervo", no mesmo painel de onde as parcelas são recortadas |
+| [`09-autoria-real.png`](evidencia/09-autoria-real.png) | O estado 09 renderizado: os dois painéis, a contagem por origem, o aviso âmbar, a declaração por operando e o selo "novo" |
+| [`10-recusa-de-nome-repetido.png`](evidencia/10-recusa-de-nome-repetido.png) | A recusa `409 SITE_SETUP_KIT_ALREADY_PUBLISHED` **de verdade**, provocada guardando a versão que já existe |
+| [`12-o-acervo-novo-na-lista.png`](evidencia/12-o-acervo-novo-na-lista.png) | O acervo guardado aparecendo na lista da aplicação, com "cita 2 parâmetros de obra" — os bindings declarados chegaram ao documento |
+
+O desfecho lido na tela, palavra por palavra:
+
+```text
+Acervo "CANTEIRO — CONTRATO SINTETICO T6E", versão 2, guardado com 2 parcelas de canteiro.
+Ele já aparece na lista de acervos desta rodada. A rodada não mudou: nada foi gravado nela.
+```
+
+### O defeito que a evidência achou: a tela em branco da matriz gravada
+
+Na primeira tentativa de captura, a jornada do orçamento **não renderizou nada** — página em
+branco, sem mensagem e sem como voltar. O console dizia
+`Cannot read properties of null (reading 'kit_version')`.
+
+A causa é da T5, não da T6, e é anterior a esta captura: `disassembleCalcMatrix`
+(`apps/web/src/orcamento/matrix.ts`) testava a proveniência com
+`contribution.kit_origin !== undefined`, mas o servidor manda **`kit_origin: null`** para a
+parcela autorada à mão — `model_dump` do Pydantic serializa o campo opcional ausente como
+`null` em vez de omiti-lo. O `null` entrava no ramo e era desreferenciado.
+
+O alcance é maior que o desta task: **qualquer rodada com uma contribuição autorada à mão na
+matriz gravada derrubava a etapa de códigos ao ser aberta**. Nenhum teste pegava porque as
+fixturas da suíte montam a matriz com o campo AUSENTE, que é a forma que a tela produz — não a
+que ela recebe.
+
+Corrigido nesta task, com regressão em `matrix.test.ts` ("kit_origin nulo no fio é parcela
+autorada à mão, e não derruba a leitura"). É desvio consciente de escopo, registrado aqui
+porque ele era o bloqueio direto da evidência que a T6 exigia.
+
 ## Human Gates
 
 1. **Design Approval Package** — revisão 1 aprovada em 2026-08-28 (Daniel Campos); a
-   implementação expôs um beco sem saída na recusa, e a **revisão 2** aguarda aprovação. Ver
-   [`mock/README.md`](mock/README.md).
+   implementação expôs um beco sem saída na recusa, e a **revisão 2** foi aprovada na mesma
+   data. Ver [`mock/README.md`](mock/README.md).
 2. ~~Aceite do ADR-0059~~ — cumprido em 2026-08-28.
 3. ~~Decisão do unknown 1 (onde o acervo vive)~~ — cumprido em 2026-08-28: ADR-0060 `Accepted`.
-4. **Autoria do primeiro acervo** — **pendente**. É ato da orçamentista. As cinco parcelas
-   acima são o rascunho que o documento real sustenta; quais entram, com que parâmetros e sob
-   que nome, é decisão dela.
+4. **Autoria do primeiro acervo** — **pendente**. É ato da orçamentista, e desde a T6 ele tem
+   caminho na tela: o estado 09 está no ar e foi exercido de ponta a ponta contra uma praça
+   sintética. As cinco parcelas acima são o rascunho que o documento real sustenta; quais
+   entram, com que parâmetros e sob que nome, continua sendo decisão dela.

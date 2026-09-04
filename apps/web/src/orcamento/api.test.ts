@@ -17,6 +17,7 @@ import {
   listReferenceCatalogs,
   listSiteSetupKits,
   postApproveEstimate,
+  postAuthorSiteSetupKit,
   postBuildEstimate,
   postCodeDecision,
   postExportEstimate,
@@ -805,5 +806,66 @@ describe("acervo de parcelas de canteiro", () => {
     expect(orcamentoErrorCode(erro as ApiError)).toBe(
       "SITE_SETUP_PARAMETER_MISSING",
     );
+  });
+
+  /**
+   * A autoria (T6). Ela cita `base_version` mesmo a rodada **não** mudando com o ato: o
+   * acervo é recortado da matriz que a orçamentista estava vendo, e sem a guarda uma
+   * aplicação em outra aba moveria as parcelas — e, com elas, o índice de cada binding —
+   * entre a leitura e o envio.
+   */
+  it("autorar cita a versão-base, manda a chave e leva os bindings declarados", async () => {
+    await postAuthorSiteSetupKit(TOKEN, ROUND, {
+      baseVersion: 9,
+      name: "Canteiro — contrato SMH/Rio",
+      kitVersion: "2",
+      parameterBindings: { "0.MESES": "prazo de obra", "1.COMP": "semiperímetro" },
+    });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/site-setup/kits`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(corpoDaChamada()).toEqual({
+      base_version: 9,
+      name: "Canteiro — contrato SMH/Rio",
+      kit_version: "2",
+      parameter_bindings: {
+        "0.MESES": "prazo de obra",
+        "1.COMP": "semiperímetro",
+      },
+    });
+  });
+
+  /** Sem binding nenhum o acervo nasce só de constantes, e o mapa vazio diz exatamente isso. */
+  it("autorar sem declarar parâmetro manda o mapa vazio, não omite o campo", async () => {
+    await postAuthorSiteSetupKit(TOKEN, ROUND, {
+      baseVersion: 9,
+      name: "Canteiro do contrato",
+      kitVersion: "1",
+      parameterBindings: {},
+    });
+
+    expect(corpoDaChamada().parameter_bindings).toEqual({});
+  });
+
+  it("a recusa de binding chega nomeando as declarações que o servidor não achou", async () => {
+    stub(() =>
+      problema(422, "SITE_SETUP_BINDING_INVALID", "binding inválido", {
+        bindings: ["0.SEMANAS", "9.MESES"],
+      }),
+    );
+
+    const erro = await postAuthorSiteSetupKit(TOKEN, ROUND, {
+      baseVersion: 9,
+      name: "Canteiro do contrato",
+      kitVersion: "1",
+      parameterBindings: { "0.SEMANAS": "prazo" },
+    }).catch((falha: unknown) => falha);
+
+    expect(erro).toBeInstanceOf(ApiError);
+    expect(orcamentoErrorCode(erro as ApiError)).toBe("SITE_SETUP_BINDING_INVALID");
+    expect((erro as ApiError).details.bindings).toEqual(["0.SEMANAS", "9.MESES"]);
   });
 });

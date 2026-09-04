@@ -25,6 +25,7 @@ import {
   postCodeRevocation,
   postCodeDecision,
   getEstimateTemplates,
+  postAuthorSiteSetupKit,
   postExportEstimate,
   postSiteSetupApply,
   postSiteSetupPreview,
@@ -70,6 +71,7 @@ import {
   isAbortError,
   isForbidden,
   isSelfApprovalForbidden,
+  recusaDaAutoriaDeAcervo,
   recusaDeMutacao,
   recusaDoAcervo,
   SELF_APPROVAL_FORBIDDEN_CODE,
@@ -192,7 +194,33 @@ import {
   ACERVO_TEXTO_TRAZER_DE_VOLTA,
   AVISO_MATRIZ_GRAVADA_NAO_LIDA,
   LENDO_MATRIZ_GRAVADA,
+  ACERVO_AUTORIA_ACAO_CANCELAR,
+  ACERVO_AUTORIA_ACERVO_BASE_ROTULO,
+  ACERVO_AUTORIA_MODO_NAO_ESCOLHIDO,
+  ACERVO_AUTORIA_MODO_NOVO,
+  ACERVO_AUTORIA_MODO_ROTULO,
+  ACERVO_AUTORIA_MODO_VERSAO,
+  ACERVO_AUTORIA_NOME_DO_ACERVO_BASE,
+  ACERVO_AUTORIA_NOME_ROTULO,
+  ACERVO_AUTORIA_NUMEROS_VIRAM_PARAMETRO,
+  ACERVO_AUTORIA_OPERANDO_CONSTANTE,
+  ACERVO_AUTORIA_OPERANDO_ROTULO,
+  ACERVO_AUTORIA_OPERANDO_TAMBEM_DEDUCAO,
+  ACERVO_AUTORIA_PRIMEIRO_ACERVO,
+  ACERVO_AUTORIA_SELO_NOVO,
+  ACERVO_AUTORIA_SEM_PARAMETROS,
+  ACERVO_AUTORIA_SO_ACERVO_DO_TENANT,
+  ACERVO_AUTORIA_TITULO,
+  ACERVO_AUTORIA_VERSAO_ROTULO,
+  botaoSalvarAcervo,
+  fraseAcervoAutorado,
+  fraseBindingsInvalidos,
+  fraseDoQueEntra,
+  fraseParcelasNaoGravadas,
+  motivoDeAutoriaIndisponivelTexto,
+  tituloDosParametrosDaAutoria,
   CANTEIRO_ACAO_APLICAR,
+  CANTEIRO_ACAO_AUTORAR,
   CANTEIRO_ACAO_REAPLICAR,
   CANTEIRO_DICA,
   CANTEIRO_GRAVADO_DICA,
@@ -262,6 +290,25 @@ import {
   type SiteSetupParameter,
   type SiteSetupPreviewResponse,
 } from "./acervo";
+import {
+  acervosVersionaveis,
+  autoriaInicial,
+  declararBinding,
+  declararNomeDoAcervo,
+  declararVersaoDoAcervo,
+  escolherAcervoBase,
+  escolherModoDeAutoria,
+  motivoDeAutoriaIndisponivel,
+  parametrosDaAutoria,
+  parcelasAutoraveis,
+  pedidoDaAutoria,
+  podeAutorar,
+  registrarAutoria,
+  resumoDoQueEntra,
+  type FluxoDeAutoria,
+  type ModoDeAutoria,
+  type ParcelaAutoravel,
+} from "./acervoAutoria";
 import {
   avisoDeRevisao,
   corpoDoDespacho,
@@ -2087,12 +2134,19 @@ export function PainelParcelasDeCanteiro({
   aplicacao,
   aviso,
   onAplicarAcervo,
+  onAutorarAcervo,
   submitting,
 }: {
   parcelas: readonly CalcContributionDraft[];
   aplicacao: AplicacaoDeAcervo | null;
   aviso: string | null;
   onAplicarAcervo: (() => void) | null;
+  /**
+   * Guardar as parcelas desta rodada como acervo (T6, estado 09). `null` fecha o ato: ou já
+   * há um fluxo aberto, ou não há parcela de canteiro nenhuma para recortar — e um botão que
+   * só pode falhar não é oferta, é armadilha.
+   */
+  onAutorarAcervo: (() => void) | null;
   submitting: boolean;
 }) {
   // Sem aplicação NESTA sessão, o carimbo possível é o do que está gravado: a matriz diz a
@@ -2151,16 +2205,31 @@ export function PainelParcelasDeCanteiro({
           <p className="dica">{ACERVO_REAPLICAR_SUBSTITUI}</p>
         </>
       )}
-      {onAplicarAcervo === null ? null : (
+      {onAplicarAcervo === null && onAutorarAcervo === null ? null : (
         <div className="acoes-linha">
-          <button
-            type="button"
-            className="botao-primario"
-            onClick={onAplicarAcervo}
-            disabled={submitting}
-          >
-            {aplicacao === null ? CANTEIRO_ACAO_APLICAR : CANTEIRO_ACAO_REAPLICAR}
-          </button>
+          {onAplicarAcervo === null ? null : (
+            <button
+              type="button"
+              className="botao-primario"
+              onClick={onAplicarAcervo}
+              disabled={submitting}
+            >
+              {aplicacao === null ? CANTEIRO_ACAO_APLICAR : CANTEIRO_ACAO_REAPLICAR}
+            </button>
+          )}
+          {/* Guardar é o caminho INVERSO do aplicar, e por isso é secundário aqui: quem
+              chega a esta etapa está montando a praça, não publicando receita. O ato é
+              oferecido no mesmo painel porque é destas parcelas que o acervo é recortado. */}
+          {onAutorarAcervo === null ? null : (
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={onAutorarAcervo}
+              disabled={submitting}
+            >
+              {CANTEIRO_ACAO_AUTORAR}
+            </button>
+          )}
         </div>
       )}
     </section>
@@ -2338,6 +2407,255 @@ export function FormularioDoAcervo({
           </div>
         </>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * A AUTORIA do acervo — o estado 09 do pacote aprovado: guardar as parcelas de canteiro
+ * desta rodada como acervo novo ou como versão nova de um acervo do próprio escritório.
+ *
+ * A composição é a do pacote: painel esquerdo "Salvar como acervo", com o nome, o que salvar
+ * e a frase que conta o que entra; painel direito "Parâmetros que a versão N vai citar", com
+ * a lista derivada e os dois controles. O que o pacote **não** desenha, e esta tela precisa
+ * ter, é o gesto de declarar: o aviso do próprio estado 09 diz "confira o que virou
+ * parâmetro", e sem um lugar onde declarar não haveria o que conferir — a rota recusa
+ * adivinhar (`1 × 2` pode ser "uma unidade por dois meses" ou "duas placas de um metro"), e
+ * todo operando não citado vira constante. A declaração fica onde o aviso aponta.
+ *
+ * As parcelas vêm da matriz **gravada**, lida do servidor ao abrir, e não do rascunho da
+ * tela: o índice que cada binding cita é a posição da parcela na enumeração do servidor, e um
+ * rascunho com parcela ainda não gravada o deslocaria — ligando o parâmetro ao operando
+ * errado, que é o acervo nascendo errado sem ninguém ver.
+ */
+export function FormularioDeAutoriaDeAcervo({
+  fluxo,
+  parcelas,
+  parcelasNaSessao,
+  kits,
+  recusa,
+  submitting,
+  onModo,
+  onAcervoBase,
+  onNome,
+  onVersao,
+  onBinding,
+  onSalvar,
+  onCancelar,
+}: {
+  fluxo: FluxoDeAutoria;
+  /** As parcelas `STANDALONE` da matriz GRAVADA, na ordem que o servidor enumera. */
+  parcelas: readonly ParcelaAutoravel[];
+  /** Quantas parcelas de canteiro o rascunho desta sessão tem, para declarar a diferença. */
+  parcelasNaSessao: number;
+  kits: readonly SiteSetupKit[];
+  recusa: { bindings: string[]; mensagem: string } | null;
+  submitting: boolean;
+  onModo: (modo: ModoDeAutoria) => void;
+  onAcervoBase: (kitId: string) => void;
+  onNome: (nome: string) => void;
+  onVersao: (versao: string) => void;
+  onBinding: (chave: string, parametro: string) => void;
+  onSalvar: () => void;
+  onCancelar: () => void;
+}) {
+  const versionaveis = acervosVersionaveis(kits);
+  const kitBase = versionaveis.find((kit) => kit.kit_id === fluxo.kitId) ?? null;
+  const resumo = resumoDoQueEntra(parcelas);
+  const parametros = parametrosDaAutoria(fluxo, parcelas, kitBase);
+  const naoGravadas = fraseParcelasNaoGravadas(parcelas.length, parcelasNaSessao);
+  const motivo = motivoDeAutoriaIndisponivel(fluxo, parcelas);
+  return (
+    <section className="acervo-fluxo" aria-label={ACERVO_AUTORIA_TITULO}>
+      <h3>{ACERVO_AUTORIA_TITULO}</h3>
+      <p className="dica">{ACERVO_AUTORIA_PRIMEIRO_ACERVO}</p>
+
+      {/* A recusa do servidor é persistente e fica no formulário, ao lado dos campos que ela
+          nomeia — o pacote não desenhou estado próprio para ela, e a superfície de erro
+          comum da jornada é o que existe. */}
+      {recusa === null ? null : (
+        <p className="banner-erro" role="alert">
+          {recusa.bindings.length === 0
+            ? recusa.mensagem
+            : fraseBindingsInvalidos(recusa.bindings)}
+        </p>
+      )}
+
+      <div className="acervo-autoria">
+        <div className="acervo-autoria-painel">
+          <h4>Salvar como acervo</h4>
+          <div className="acervo-autoria-campos">
+            <label className="campo">
+              {ACERVO_AUTORIA_MODO_ROTULO}
+              {/* Nada nasce escolhido: um modo pré-marcado criaria acervo novo quando a
+                  intenção era versionar o que já existe. */}
+              <select
+                value={fluxo.modo}
+                onChange={(event) => onModo(event.target.value as ModoDeAutoria)}
+                disabled={submitting}
+              >
+                <option value="">{ACERVO_AUTORIA_MODO_NAO_ESCOLHIDO}</option>
+                <option value="novo">{ACERVO_AUTORIA_MODO_NOVO}</option>
+                <option value="versao">{ACERVO_AUTORIA_MODO_VERSAO}</option>
+              </select>
+            </label>
+            {fluxo.modo === "versao" ? (
+              // Linha inteira: o nome do acervo É a identidade do que ganha versão, e num
+              // seletor de meia linha ele sai truncado ("CANTEIRO — CONTRATO S…"). O mesmo
+              // achado da F-043 com o seletor de gabarito, e a mesma conclusão.
+              <label className="campo acervo-autoria-campo-largo">
+                {ACERVO_AUTORIA_ACERVO_BASE_ROTULO}
+                <select
+                  value={fluxo.kitId}
+                  onChange={(event) => onAcervoBase(event.target.value)}
+                  disabled={submitting || versionaveis.length === 0}
+                >
+                  <option value="">{ACERVO_AUTORIA_MODO_NAO_ESCOLHIDO}</option>
+                  {versionaveis.map((kit) => (
+                    <option key={kit.kit_id} value={kit.kit_id}>
+                      {kit.name} (versão {kit.kit_version})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="campo">
+                {ACERVO_AUTORIA_NOME_ROTULO}
+                <input
+                  type="text"
+                  value={fluxo.nome}
+                  onChange={(event) => onNome(event.target.value)}
+                  disabled={submitting || fluxo.modo === ""}
+                />
+              </label>
+            )}
+            <label className="campo">
+              {ACERVO_AUTORIA_VERSAO_ROTULO}
+              <input
+                type="text"
+                value={fluxo.versao}
+                onChange={(event) => onVersao(event.target.value)}
+                disabled={submitting || fluxo.modo === ""}
+              />
+            </label>
+          </div>
+
+          {fluxo.modo === "versao" ? (
+            <p className="campo-dica">
+              {versionaveis.length === 0
+                ? ACERVO_AUTORIA_SO_ACERVO_DO_TENANT
+                : `${ACERVO_AUTORIA_NOME_ROTULO}: ${
+                    kitBase === null ? "—" : kitBase.name
+                  }. ${ACERVO_AUTORIA_NOME_DO_ACERVO_BASE}`}
+            </p>
+          ) : null}
+
+          <p>{fraseDoQueEntra(resumo)}</p>
+
+          {/* O rascunho pode ter parcela que o servidor ainda não enxerga; dizê-lo é o que
+              impede a frase acima de prometer o que não vai entrar. Não é recusa. */}
+          {naoGravadas === null ? null : (
+            <p className="campo-aviso" role="alert">
+              {naoGravadas}
+            </p>
+          )}
+
+          <p className="acervo-autoria-nota">{ACERVO_AUTORIA_NUMEROS_VIRAM_PARAMETRO}</p>
+
+          <ul className="acervo-autoria-parcelas">
+            {parcelas.map((parcela) => (
+              <li key={parcela.indice}>
+                <span className="acervo-autoria-parcela">
+                  {parcela.label} <code>{parcela.code}</code>{" "}
+                  <SeloDeOrigemDaParcela kitVersion={parcela.kitVersion} />
+                </span>
+                <div className="acervo-autoria-operandos">
+                  {parcela.operandos.map((operando) => {
+                    const recusado = recusa?.bindings.includes(operando.chave) ?? false;
+                    return (
+                      <label className="campo" key={operando.chave}>
+                        {operando.nome} {formatDecimalText(operando.valor)}
+                        {operando.unidade === null
+                          ? ""
+                          : ` ${unitLabel(operando.unidade)}`}{" "}
+                        — {ACERVO_AUTORIA_OPERANDO_ROTULO}
+                        <input
+                          type="text"
+                          value={fluxo.bindings[operando.chave] ?? ""}
+                          onChange={(event) =>
+                            onBinding(operando.chave, event.target.value)
+                          }
+                          aria-invalid={recusado}
+                          disabled={submitting}
+                        />
+                        <span className="campo-dica">
+                          {ACERVO_AUTORIA_OPERANDO_CONSTANTE}
+                          {operando.tambemDeducao
+                            ? ` · ${ACERVO_AUTORIA_OPERANDO_TAMBEM_DEDUCAO}`
+                            : ""}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="acervo-autoria-painel">
+          <h4>{tituloDosParametrosDaAutoria(fluxo.versao)}</h4>
+          {parametros.length === 0 ? (
+            <p className="dica">{ACERVO_AUTORIA_SEM_PARAMETROS}</p>
+          ) : (
+            <ul className="acervo-autoria-parametros">
+              {parametros.map((parametro) => (
+                <li key={parametro.nome}>
+                  {parametro.nome}
+                  {parametro.unidade === null
+                    ? ""
+                    : ` — ${unitLabel(parametro.unidade)}`}{" "}
+                  <span className="campo-dica">
+                    citado por {parametro.citadoPor}{" "}
+                    {parametro.citadoPor === 1 ? "operando" : "operandos"}
+                  </span>{" "}
+                  {/* "novo" só existe quando há acervo de base contra o que comparar. */}
+                  {parametro.novo ? (
+                    <span className="selo selo-acervo">{ACERVO_AUTORIA_SELO_NOVO}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Indisponível COM o motivo nomeado ao lado, como a decisão 10 do pacote exige do
+              ato de aplicar: um botão apagado sem explicação é pior que a recusa. */}
+          {motivo === null ? null : (
+            <p className="campo-aviso" role="alert">
+              {motivoDeAutoriaIndisponivelTexto(motivo)}
+            </p>
+          )}
+
+          <div className="acoes-linha">
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={onCancelar}
+              disabled={submitting}
+            >
+              {ACERVO_AUTORIA_ACAO_CANCELAR}
+            </button>
+            <button
+              type="button"
+              className="botao-primario"
+              onClick={onSalvar}
+              disabled={submitting || !podeAutorar(fluxo, parcelas)}
+            >
+              {botaoSalvarAcervo(fluxo.versao)}
+            </button>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -3871,6 +4189,24 @@ export function OrcamentoApp({
   /** O carimbo da última aplicação desta sessão; ele MOSTRA os parâmetros, nunca os semeia. */
   const [canteiroAplicacao, setCanteiroAplicacao] =
     useState<AplicacaoDeAcervo | null>(null);
+  /**
+   * A AUTORIA de acervo (T6, estado 09). `null` é o formulário fechado; abri-lo é gesto.
+   *
+   * `parcelas` e `baseVersion` vêm da MESMA leitura de `GET .../calc-matrix` feita ao abrir,
+   * e é essa simultaneidade que sustenta o índice dos bindings: se a rodada andar entre a
+   * leitura e o envio, a `base_version` daquela leitura devolve `409` em vez de gravar um
+   * acervo cujo índice aponta para outra parcela. Nem uma nem outra são relidas do estado
+   * geral, que muda a cada volta do poll.
+   */
+  const [canteiroAutoria, setCanteiroAutoria] = useState<{
+    fluxo: FluxoDeAutoria;
+    parcelas: ParcelaAutoravel[];
+    baseVersion: number;
+  } | null>(null);
+  const [canteiroAutoriaRecusa, setCanteiroAutoriaRecusa] = useState<{
+    bindings: string[];
+    mensagem: string;
+  } | null>(null);
   // Recusa de ORDEM da matriz na montagem (ciclo/auto-referência), escrita por extenso.
   const [matrizErro, setMatrizErro] = useState<string | null>(null);
 
@@ -4285,6 +4621,11 @@ export function OrcamentoApp({
       setCanteiroFluxo(null);
       setCanteiroRecusa(null);
       setCanteiroAplicacao(null);
+      // A autoria carrega a matriz e a versão-base da rodada ANTERIOR: guardar com elas
+      // recortaria o acervo de uma praça citando a versão de outra, e o índice de cada
+      // binding apontaria para parcela nenhuma.
+      setCanteiroAutoria(null);
+      setCanteiroAutoriaRecusa(null);
       // O rascunho da matriz é DA rodada: levá-lo adiante aplicaria a uma praça as
       // contribuições de outra, e com a hidratação isso deixaria de ser sujeira de tela
       // para virar corrupção silenciosa. Zerar aqui acontece antes de qualquer leitura da
@@ -5112,6 +5453,145 @@ export function OrcamentoApp({
       await carregarEstado();
     } catch (error) {
       registrarRecusaDoAcervo(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // --- A autoria de acervo (T6, estado 09 do pacote aprovado) ---------------------------
+  //
+  // O caminho inverso do de cima: em vez de materializar parcela a partir de receita, ele
+  // recorta a RECEITA das parcelas que a rodada já tem. É o Human Gate 4 da feature — o
+  // primeiro acervo é autorado por gente, a partir de uma praça já feita.
+
+  /**
+   * Abre o formulário lendo a matriz **gravada**, que é a única de onde o índice do binding
+   * é válido: ele é a posição da parcela na enumeração do servidor.
+   *
+   * A `base_version` guardada é a DESSA leitura, e não a do estado geral: as duas vêm da
+   * mesma resposta, então gravar com ela é gravar contra a matriz que foi lida. Se a rodada
+   * andar no meio, o `409` acontece em vez de um acervo com índice deslocado.
+   */
+  const abrirAutoriaDoAcervo = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null) {
+      return;
+    }
+    setSubmitting(true);
+    setCanteiroAutoriaRecusa(null);
+    try {
+      const gravada = await getCalcMatrix(token, orcamento);
+      setCanteiroAutoria({
+        fluxo: autoriaInicial(),
+        parcelas: parcelasAutoraveis(gravada.calc_matrix),
+        baseVersion: gravada.version,
+      });
+      // Abrir a autoria fecha a aplicação: dois fluxos abertos sobre as mesmas parcelas
+      // seriam dois atos ao mesmo tempo, e o segundo leria uma matriz que o primeiro moveu.
+      setCanteiroFluxo(null);
+      setCanteiroRecusa(null);
+      setAlertMessage(null);
+    } catch (error) {
+      // Sem a matriz gravada não há índice, e sem índice não há autoria. O motivo fica
+      // escrito no alerta comum da jornada em vez de abrir um formulário que não funciona.
+      if (isForbidden(error)) {
+        setSemAcesso(error instanceof Error ? error.message : null);
+      } else {
+        setAlertMessage(describeError(error));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fecharAutoriaDoAcervo = () => {
+    setCanteiroAutoria(null);
+    setCanteiroAutoriaRecusa(null);
+  };
+
+  /** Aplica uma edição ao fluxo aberto, preservando a matriz e a versão-base já lidas. */
+  const editarAutoria = (
+    aplicar: (fluxo: FluxoDeAutoria) => FluxoDeAutoria,
+  ) => {
+    setCanteiroAutoria((atual) =>
+      atual === null ? atual : { ...atual, fluxo: aplicar(atual.fluxo) },
+    );
+  };
+
+  const escolherModoDaAutoria = (modo: ModoDeAutoria) => {
+    editarAutoria((fluxo) => escolherModoDeAutoria(fluxo, modo));
+    setCanteiroAutoriaRecusa(null);
+  };
+
+  const escolherAcervoBaseDaAutoria = (kitId: string) => {
+    // Só acervo DO TENANT ganha versão nova por aqui (ADR-0060): a rota grava sempre um
+    // acervo do tenant, e "versionar" um de plataforma criaria um homônimo — bifurcação com
+    // aparência de continuação. O filtro é repetido aqui e não só na lista renderizada.
+    const kit = acervosVersionaveis(canteiroKits ?? []).find(
+      (entrada) => entrada.kit_id === kitId,
+    );
+    editarAutoria((fluxo) =>
+      kit === undefined
+        ? { ...fluxo, kitId: "", nome: "" }
+        : escolherAcervoBase(fluxo, kit),
+    );
+    setCanteiroAutoriaRecusa(null);
+  };
+
+  const declararNomeDaAutoria = (nome: string) => {
+    editarAutoria((fluxo) => declararNomeDoAcervo(fluxo, nome));
+  };
+
+  const declararVersaoDaAutoria = (versao: string) => {
+    editarAutoria((fluxo) => declararVersaoDoAcervo(fluxo, versao));
+  };
+
+  /**
+   * Declara que UM operando vira parâmetro. A recusa aberta NÃO é limpa aqui, pela mesma
+   * razão do passo 2 da aplicação: ela nomeia todos os bindings recusados, e apagá-la na
+   * primeira tecla tiraria a marca dos outros campos que continuam errados.
+   */
+  const declararBindingDaAutoria = (chave: string, parametro: string) => {
+    editarAutoria((fluxo) => declararBinding(fluxo, chave, parametro));
+  };
+
+  /**
+   * Guarda o acervo. A rodada **não muda** com este ato: nenhuma revisão nasce e o contador
+   * dela não avança, então nada de `aplicarVersao` aqui — o que se relê é a LISTA de acervos,
+   * porque é ela que passa a oferecer o que acabou de ser guardado.
+   */
+  const salvarAcervoAutorado = async () => {
+    const token = tokenDaSessao();
+    const autoria = canteiroAutoria;
+    if (token === null || orcamento === null || autoria === null) {
+      return;
+    }
+    if (!podeAutorar(autoria.fluxo, autoria.parcelas)) {
+      return;
+    }
+    setSubmitting(true);
+    setCanteiroAutoriaRecusa(null);
+    try {
+      const resposta = await postAuthorSiteSetupKit(token, orcamento, {
+        baseVersion: autoria.baseVersion,
+        ...pedidoDaAutoria(autoria.fluxo),
+      });
+      const acervo = registrarAutoria(resposta);
+      setCanteiroAutoria(null);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(fraseAcervoAutorado(acervo));
+      // A lista é a evidência durável do desfecho: o toast expira, o acervo novo fica
+      // oferecido em "Aplicar um acervo" para esta e para as próximas praças.
+      await carregarAcervoDeCanteiro();
+    } catch (error) {
+      if (isForbidden(error)) {
+        setSemAcesso(error instanceof Error ? error.message : null);
+        return;
+      }
+      const recusa = recusaDaAutoriaDeAcervo(error);
+      setRevisionConflict(recusa.conflito);
+      setCanteiroAutoriaRecusa(recusa.conflito ? null : recusa);
     } finally {
       setSubmitting(false);
     }
@@ -6485,20 +6965,34 @@ export function OrcamentoApp({
             ) : null}
 
             {/* O painel do canteiro é seção própria desta etapa, IRMÃ da lista de
-                elementos (F-042, decisão 1 do pacote aprovado). Ele só aparece quando há
-                acervo a aplicar — ou quando a lista não pôde ser lida, que precisa ser
-                dito. Rodada sem acervo nenhum deixa a etapa exatamente como ela é hoje: o
-                estado "nenhum acervo disponível" depende do ADR-0060 e não é decidido
-                aqui. */}
+                elementos (F-042, decisão 1 do pacote aprovado). Ele aparece quando há
+                acervo a aplicar, quando a lista não pôde ser lida (que precisa ser dito),
+                ou quando a rodada já TEM parcela de canteiro — este último desde a T6,
+                porque é dessas parcelas que o primeiro acervo é recortado, e sem ele um
+                escritório sem acervo nenhum não teria por onde autorar o seu.
+
+                O que continua sem existir é o estado "nenhum acervo disponível" da
+                APLICAÇÃO: rodada sem acervo e sem parcela deixa a etapa como ela é hoje, e
+                a frase dele é questão aberta do pacote de design. */}
             {(canteiroKits !== null && canteiroKits.length > 0) ||
-            canteiroAviso !== null ? (
+            canteiroAviso !== null ||
+            parcelasDoCanteiro.length > 0 ? (
               <PainelParcelasDeCanteiro
                 parcelas={parcelasDoCanteiro}
                 aplicacao={canteiroAplicacao}
                 aviso={canteiroAviso}
                 onAplicarAcervo={
-                  canteiroFluxo === null && (canteiroKits?.length ?? 0) > 0
+                  canteiroFluxo === null &&
+                  canteiroAutoria === null &&
+                  (canteiroKits?.length ?? 0) > 0
                     ? abrirFluxoDoAcervo
+                    : null
+                }
+                onAutorarAcervo={
+                  canteiroFluxo === null &&
+                  canteiroAutoria === null &&
+                  parcelasDoCanteiro.length > 0
+                    ? () => void abrirAutoriaDoAcervo()
                     : null
                 }
                 submitting={submitting}
@@ -6521,6 +7015,27 @@ export function OrcamentoApp({
                 onAlternar={alternarParcelaDoAcervo}
                 onAplicar={() => void aplicarAcervo()}
                 onCancelar={fecharFluxoDoAcervo}
+              />
+            ) : null}
+
+            {/* O estado 09: guardar as parcelas desta rodada como acervo. Exclusivo com os
+                três passos acima — os dois leem as mesmas parcelas, e o segundo aberto leria
+                uma matriz que o primeiro está prestes a mover. */}
+            {canteiroAutoria !== null ? (
+              <FormularioDeAutoriaDeAcervo
+                fluxo={canteiroAutoria.fluxo}
+                parcelas={canteiroAutoria.parcelas}
+                parcelasNaSessao={parcelasDoCanteiro.length}
+                kits={canteiroKits ?? []}
+                recusa={canteiroAutoriaRecusa}
+                submitting={submitting}
+                onModo={escolherModoDaAutoria}
+                onAcervoBase={escolherAcervoBaseDaAutoria}
+                onNome={declararNomeDaAutoria}
+                onVersao={declararVersaoDaAutoria}
+                onBinding={declararBindingDaAutoria}
+                onSalvar={() => void salvarAcervoAutorado()}
+                onCancelar={fecharAutoriaDoAcervo}
               />
             ) : null}
             </div>

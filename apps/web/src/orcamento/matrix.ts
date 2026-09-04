@@ -94,7 +94,12 @@ export type CalcContribution = {
   deductions: CalcOperand[];
   depends_on_code: string | null;
   note: string | null;
-  kit_origin?: KitOrigin;
+  /**
+   * `undefined` na matriz que a TELA monta (o campo é omitido) e `null` na que ela LÊ de
+   * volta: `model_dump` do Pydantic serializa o opcional ausente como `null` em vez de
+   * omiti-lo. As duas formas significam "autorada à mão", e quem lê precisa aceitar as duas.
+   */
+  kit_origin?: KitOrigin | null;
 };
 
 /** As parcelas que um serviço (`code`) recebe de todos os elementos que o alimentam. */
@@ -484,12 +489,18 @@ export function disassembleCalcMatrix(
         dependsOnCode: contribution.depends_on_code ?? "",
         note: contribution.note ?? "",
       };
-      if (contribution.kit_origin !== undefined) {
+      // A parcela autorada à mão chega com `kit_origin: null`, e não com o campo ausente:
+      // `model_dump` do Pydantic serializa o opcional como `null`. Testar só contra
+      // `undefined` entrava aqui com `null` e derrubava a jornada inteira ao ler a matriz
+      // gravada — tela em branco, não mensagem. Achado pela evidência de navegador da T6
+      // (2026-09-04), numa rodada com uma parcela de acervo e uma autorada à mão.
+      const kitOrigin = contribution.kit_origin;
+      if (kitOrigin !== undefined && kitOrigin !== null) {
         draft.kitOrigin = {
           kitId: "",
           kitName: "",
-          kitVersion: contribution.kit_origin.kit_version,
-          parcelId: contribution.kit_origin.parcel_id,
+          kitVersion: kitOrigin.kit_version,
+          parcelId: kitOrigin.parcel_id,
         };
       }
       drafts.push(draft);

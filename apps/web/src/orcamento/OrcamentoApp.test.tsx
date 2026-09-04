@@ -10,6 +10,7 @@ import {
   AutoriaDeContribuicao,
   BannerOrcamentoMudou,
   BlocoConsumoDoTeto,
+  FormularioDeAutoriaDeAcervo,
   FormularioDoAcervo,
   PainelParcelasDeCanteiro,
   EstadoDoBracoSemantico,
@@ -40,6 +41,14 @@ import {
   itemJaRevisado,
 } from "./OrcamentoApp";
 import {
+  ACERVO_AUTORIA_MODO_NAO_ESCOLHIDO,
+  ACERVO_AUTORIA_NUMEROS_VIRAM_PARAMETRO,
+  ACERVO_AUTORIA_OPERANDO_CONSTANTE,
+  ACERVO_AUTORIA_OPERANDO_ROTULO,
+  ACERVO_AUTORIA_PRIMEIRO_ACERVO,
+  ACERVO_AUTORIA_SELO_NOVO,
+  ACERVO_AUTORIA_SEM_PARAMETROS,
+  ACERVO_AUTORIA_SO_ACERVO_DO_TENANT,
   ACERVO_E_RECEITA,
   ACERVO_OPERANDO_NAO_DECLARADO,
   ACERVO_PARCELA_NAO_NASCE,
@@ -51,8 +60,11 @@ import {
   AVISO_MEMORIA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
+  CANTEIRO_ACAO_AUTORAR,
   CANTEIRO_GRAVADO_DICA,
   CANTEIRO_QUANTIDADE_NA_MONTAGEM,
+  motivoDeAutoriaIndisponivelTexto,
+  RECUSA_ACERVO_JA_PUBLICADO,
   DICA_LOTE_VAZIO,
   DICA_REGIME,
   fraseAplicarBloqueado,
@@ -73,11 +85,21 @@ import {
   type SiteSetupPreviewResponse,
 } from "./acervo";
 import {
+  autoriaInicial,
+  declararBinding,
+  declararVersaoDoAcervo,
+  escolherAcervoBase,
+  escolherModoDeAutoria,
+  parcelasAutoraveis,
+  type FluxoDeAutoria,
+} from "./acervoAutoria";
+import {
   assembleCalcMatrix,
   disassembleCalcMatrix,
   emptyContributionForm,
   type CalcContributionDraft,
   type CalcContributionForm,
+  type CalcMatrix,
 } from "./matrix";
 import { derivarTeto } from "./teto";
 
@@ -2151,6 +2173,7 @@ describe("PainelParcelasDeCanteiro", () => {
         aplicacao={null}
         aviso={null}
         onAplicarAcervo={() => undefined}
+        onAutorarAcervo={null}
         submitting={false}
       />,
     );
@@ -2168,6 +2191,7 @@ describe("PainelParcelasDeCanteiro", () => {
         aplicacao={null}
         aviso={null}
         onAplicarAcervo={() => undefined}
+        onAutorarAcervo={null}
         submitting={false}
       />,
     );
@@ -2194,6 +2218,7 @@ describe("PainelParcelasDeCanteiro", () => {
         }}
         aviso={null}
         onAplicarAcervo={() => undefined}
+        onAutorarAcervo={null}
         submitting={false}
       />,
     );
@@ -2221,6 +2246,7 @@ describe("PainelParcelasDeCanteiro", () => {
         aplicacao={null}
         aviso={null}
         onAplicarAcervo={() => undefined}
+        onAutorarAcervo={null}
         submitting={false}
       />,
     );
@@ -2245,6 +2271,7 @@ describe("PainelParcelasDeCanteiro", () => {
         aplicacao={null}
         aviso="A lista não pôde ser lida."
         onAplicarAcervo={null}
+        onAutorarAcervo={null}
         submitting={false}
       />,
     );
@@ -2253,6 +2280,273 @@ describe("PainelParcelasDeCanteiro", () => {
     expect(html).toContain("A lista não pôde ser lida.");
     // Sem acervo a aplicar, nenhum botão inerte é desenhado.
     expect(html).not.toContain("Aplicar um acervo");
+  });
+
+  /**
+   * O ato de guardar (T6) é oferecido no MESMO painel, porque é destas parcelas que o
+   * acervo é recortado. Quando ele é `null`, nenhum botão inerte é desenhado.
+   */
+  it("oferece guardar como acervo ao lado de aplicar, e nada quando os dois são nulos", () => {
+    const comOsDois = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={doAcervo}
+        aplicacao={null}
+        aviso={null}
+        onAplicarAcervo={() => undefined}
+        onAutorarAcervo={() => undefined}
+        submitting={false}
+      />,
+    );
+    const soGuardar = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={doAcervo}
+        aplicacao={null}
+        aviso={null}
+        onAplicarAcervo={null}
+        onAutorarAcervo={() => undefined}
+        submitting={false}
+      />,
+    );
+    const nenhum = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={doAcervo}
+        aplicacao={null}
+        aviso={null}
+        onAplicarAcervo={null}
+        onAutorarAcervo={null}
+        submitting={false}
+      />,
+    );
+
+    expect(comOsDois).toContain(CANTEIRO_ACAO_AUTORAR);
+    expect(comOsDois).toContain("Aplicar um acervo");
+    // Escritório sem acervo nenhum ainda pode autorar o primeiro: é o Human Gate 4.
+    expect(soGuardar).toContain(CANTEIRO_ACAO_AUTORAR);
+    expect(soGuardar).not.toContain("Aplicar um acervo");
+    expect(nenhum).not.toContain(CANTEIRO_ACAO_AUTORAR);
+    expect(nenhum).not.toContain("Aplicar um acervo");
+  });
+});
+
+/**
+ * A AUTORIA do acervo (F-042 T6) — o estado 09 do pacote aprovado.
+ *
+ * Render estático, como o resto: `useEffect` não roda, e o que se prova é o que a
+ * orçamentista lê antes de guardar. As parcelas vêm da matriz GRAVADA, e é o índice delas
+ * que cada binding cita.
+ */
+const MATRIZ_GRAVADA: CalcMatrix = {
+  schema_version: "1.0.0",
+  services: [
+    {
+      code: "AD14100200",
+      contributions: [
+        {
+          source_item_id: "ti_00000000000000b1",
+          label: "ALAMBRADO GALVANIZADO",
+          basis: "full",
+          recipe: "declared_product",
+          operands: [{ name: "COMPRIMENTO", value: "10.00", unit: "m" }],
+          deductions: [],
+          depends_on_code: null,
+          note: null,
+        },
+        {
+          source_item_id: null,
+          label: "WC QUIMICO",
+          basis: "standalone",
+          recipe: "qty_times_months",
+          operands: [
+            { name: "QTD", value: "1", unit: null },
+            { name: "MESES", value: "2", unit: "mes" },
+          ],
+          deductions: [],
+          depends_on_code: null,
+          note: null,
+          kit_origin: { kit_version: "sco-site-setup-v1", parcel_id: "ss_aaaa" },
+        },
+      ],
+    },
+    {
+      code: "AD19250300",
+      contributions: [
+        {
+          source_item_id: null,
+          label: "PLACA DE OBRA",
+          basis: "standalone",
+          recipe: "declared_product",
+          operands: [
+            { name: "COMP", value: "2.00", unit: "m" },
+            { name: "LARG", value: "1.40", unit: "m" },
+          ],
+          deductions: [],
+          depends_on_code: null,
+          note: null,
+        },
+      ],
+    },
+  ],
+};
+
+const KIT_DO_ESCRITORIO: SiteSetupKit = {
+  ...KIT_DO_CANTEIRO,
+  kit_id: "kit-do-escritorio",
+  origin: "tenant",
+  parameters: [{ name: "prazo de obra", unit: "mes", cited_by: 1 }],
+};
+
+describe("FormularioDeAutoriaDeAcervo", () => {
+  const noop = () => undefined;
+  const parcelasGravadas = parcelasAutoraveis(MATRIZ_GRAVADA);
+
+  function render(
+    fluxo: FluxoDeAutoria,
+    over: Partial<Parameters<typeof FormularioDeAutoriaDeAcervo>[0]> = {},
+  ): string {
+    return renderToStaticMarkup(
+      <FormularioDeAutoriaDeAcervo
+        fluxo={fluxo}
+        parcelas={parcelasGravadas}
+        parcelasNaSessao={parcelasGravadas.length}
+        kits={[KIT_DO_CANTEIRO, KIT_DO_ESCRITORIO]}
+        recusa={null}
+        submitting={false}
+        onModo={noop}
+        onAcervoBase={noop}
+        onNome={noop}
+        onVersao={noop}
+        onBinding={noop}
+        onSalvar={noop}
+        onCancelar={noop}
+        {...over}
+      />,
+    );
+  }
+
+  /** O gate humano da feature, dito na tela que o exerce. Nada nasce escolhido. */
+  it("abre declarando que acervo é autorado por gente, e sem nada pré-marcado", () => {
+    const html = render(autoriaInicial());
+
+    expect(html).toContain(ACERVO_AUTORIA_PRIMEIRO_ACERVO);
+    expect(html).toContain(ACERVO_AUTORIA_MODO_NAO_ESCOLHIDO);
+    expect(html).toContain(ACERVO_AUTORIA_NUMEROS_VIRAM_PARAMETRO);
+    // Sem modo escolhido, guardar está indisponível COM o motivo escrito ao lado.
+    expect(html).toContain(motivoDeAutoriaIndisponivelTexto("sem-modo"));
+    const salvar = html.match(/<button[^>]*>Salvar acervo</)?.[0] ?? "";
+    expect(salvar).toContain("disabled");
+  });
+
+  /** A frase conta o que entra e por origem — e diz o que NÃO entra. */
+  it("conta as parcelas que entram, separando as de acervo das autoradas à mão", () => {
+    const html = render(autoriaInicial());
+
+    expect(html).toContain("Entram as 2 parcelas de canteiro gravadas nesta rodada");
+    expect(html).toContain("1 de acervo");
+    expect(html).toContain("1 autorada à mão");
+    expect(html).toContain("As parcelas com origem na prancha não entram");
+    // A parcela da prancha não aparece na lista de declaração.
+    expect(html).not.toContain("ALAMBRADO GALVANIZADO");
+    expect(html).toContain("WC QUIMICO");
+    expect(html).toContain("PLACA DE OBRA");
+  });
+
+  /**
+   * O campo do parâmetro nasce vazio, e vazio quer dizer "fica constante". Um valor
+   * pré-preenchido seria o sistema adivinhando qual número é parâmetro — exatamente o que a
+   * rota recusa fazer.
+   */
+  it("oferece um campo vazio por operando, dizendo que em branco fica constante", () => {
+    const html = render(autoriaInicial());
+
+    expect(html).toContain("MESES");
+    expect(html).toContain("COMP");
+    expect(html).toContain("LARG");
+    expect(html).toContain(ACERVO_AUTORIA_OPERANDO_ROTULO);
+    expect(html).toContain(ACERVO_AUTORIA_OPERANDO_CONSTANTE);
+    expect(html).toContain('value=""');
+    // Sem declaração nenhuma, o painel da direita diz que tudo fica constante.
+    expect(html).toContain(ACERVO_AUTORIA_SEM_PARAMETROS);
+  });
+
+  /** O painel da direita é o resultado do que foi declarado, e ecoa a versão escrita. */
+  it("lista os parâmetros declarados e marca como novo o que a base não citava", () => {
+    let fluxo = escolherAcervoBase(
+      escolherModoDeAutoria(autoriaInicial(), "versao"),
+      KIT_DO_ESCRITORIO,
+    );
+    fluxo = declararVersaoDoAcervo(fluxo, "2");
+    fluxo = declararBinding(fluxo, "0.MESES", "prazo de obra");
+    fluxo = declararBinding(fluxo, "1.COMP", "caçambas de entulho");
+
+    const html = render(fluxo);
+
+    expect(html).toContain("Parâmetros que a versão 2 vai citar");
+    expect(html).toContain("prazo de obra");
+    expect(html).toContain("caçambas de entulho");
+    expect(html).toContain(ACERVO_AUTORIA_SELO_NOVO);
+    // O botão ecoa a versão escrita, como o "Salvar versão 2" do pacote.
+    const salvar = html.match(/<button[^>]*>Salvar versão 2</)?.[0] ?? "";
+    expect(salvar).not.toBe("");
+    expect(salvar).not.toContain("disabled");
+  });
+
+  /**
+   * Só acervo do próprio escritório ganha versão nova (ADR-0060): versionar um de
+   * plataforma criaria um homônimo do tenant, que é bifurcação e não continuação.
+   */
+  it("no modo versão oferece só o acervo do tenant, e diz por quê quando não há nenhum", () => {
+    const comAcervoProprio = render(escolherModoDeAutoria(autoriaInicial(), "versao"));
+    const semAcervoProprio = render(escolherModoDeAutoria(autoriaInicial(), "versao"), {
+      kits: [KIT_DO_CANTEIRO],
+    });
+
+    expect(comAcervoProprio).toContain(`value="${KIT_DO_ESCRITORIO.kit_id}"`);
+    expect(comAcervoProprio).not.toContain(`value="${KIT_DO_CANTEIRO.kit_id}"`);
+    expect(semAcervoProprio).toContain(ACERVO_AUTORIA_SO_ACERVO_DO_TENANT);
+  });
+
+  /** A recusa do servidor é persistente e marca os campos exatos que ela nomeou. */
+  it("mostra a recusa do servidor e marca os bindings que ela nomeou", () => {
+    const html = render(autoriaInicial(), {
+      recusa: {
+        bindings: ["0.MESES"],
+        mensagem: "não usada quando há binding nomeado",
+      },
+    });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("0.MESES");
+    expect(html).toContain('aria-invalid="true"');
+  });
+
+  it("recusa sem lista mostra a frase do servidor, sem binding fabricado", () => {
+    const html = render(autoriaInicial(), {
+      recusa: { bindings: [], mensagem: RECUSA_ACERVO_JA_PUBLICADO },
+    });
+
+    expect(html).toContain(RECUSA_ACERVO_JA_PUBLICADO);
+    expect(html).not.toContain('aria-invalid="true"');
+  });
+
+  /**
+   * O acervo é recortado do que está GRAVADO. Uma parcela autorada nesta sessão e ainda não
+   * montada não entra, e dizê-lo é o que impede a frase da contagem de mentir.
+   */
+  it("declara as parcelas da sessão que ainda não foram gravadas", () => {
+    const html = render(autoriaInicial(), { parcelasNaSessao: 4 });
+
+    expect(html).toContain(
+      "2 parcelas de canteiro desta sessão ainda não foram gravadas",
+    );
+    expect(html).toContain("Monte o orçamento antes de guardar");
+  });
+
+  it("sem parcela gravada, guardar fica indisponível com o motivo escrito", () => {
+    const html = render(autoriaInicial(), { parcelas: [], parcelasNaSessao: 0 });
+
+    expect(html).toContain(motivoDeAutoriaIndisponivelTexto("sem-parcelas"));
+    const salvar = html.match(/<button[^>]*>Salvar acervo</)?.[0] ?? "";
+    expect(salvar).toContain("disabled");
   });
 });
 
