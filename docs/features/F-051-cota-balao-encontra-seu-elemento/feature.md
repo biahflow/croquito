@@ -2,10 +2,12 @@
 
 ## Status
 
-`READY_FOR_PLANNING` — condicionado aos dois gates humanos abaixo (aceite do
-[ADR-0063](../../adr/0063-identidade-de-elemento-nasce-na-revisao.md) e Design Approval
-Package), que precedem o planejamento por esta feature ser `INTERFACE_CHANGE`.
+`READY_FOR_PLANNING`
 
+> Condicionado aos dois gates humanos da seção Human Gates — aceite do
+> [ADR-0063](../../adr/0063-identidade-de-elemento-nasce-na-revisao.md) e Design Approval
+> Package —, que precedem o planejamento por esta feature ser `INTERFACE_CHANGE`.
+>
 > Nasce em 2026-09-04 da issue
 > [#139](https://github.com/biahflow/croquito/issues/139), aberta pela primeira revisão
 > completa de croqui real (Campo da Toca): 3 das 37 leituras eram cotas-balão — medidas
