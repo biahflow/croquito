@@ -156,6 +156,13 @@ flag basta para nenhuma chamada paga sair, sem redeploy de código.
   `AnthropicProviderAdapter` e de `build_extraction_arm` em toda outra via do repositório;
   `CROQUITO_PROVIDER_TIMEOUT_SECONDS`, quando definida, unifica os dois).
 
+> Nota (issue #137, 2026-09-04): a divergência acima deixou de existir — os 30s do braço
+> OpenAI eram falta de decisão, não escolha, e um `TIMEOUT` real sobre croqui manuscrito
+> (42s e 45,1s medidos) estourava o timeout curto e consumia a reserva de custo sem
+> devolver, derrubando o retry por `BUDGET_EXCEEDED`. Todo braço LLM (extração,
+> transcrição, embeddings) passou a usar `DEFAULT_LLM_TIMEOUT_SECONDS` (120s); o braço
+> `ocr` não muda. Este registro não é reescrito — ver [Model Routing](../ai/MODEL_ROUTING.md).
+
 ## Pendências registradas
 
 - Rota de plataforma dedicada para administrar a allowlist de digest (hoje é variável do

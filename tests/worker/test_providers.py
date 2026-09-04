@@ -3444,8 +3444,8 @@ def test_rate_limiting_waits_in_seconds_and_a_hang_waits_in_milliseconds() -> No
 
     Um 429 volta em ~1 s: a escada antiga de 250 ms → 500 ms queimava as três tentativas em
     1,8 s, e limite de taxa nenhum abre nessa janela. Já numa pendurada quem domina é o
-    timeout do braço (60 s), e esperar segundos antes de gastar mais um minuto só encurta a
-    cadeia sem melhorar nada.
+    timeout do braço (120 s, issue #137), e esperar segundos antes de gastar mais um
+    minuto só encurta a cadeia sem melhorar nada.
     """
     throttle_clock = _FakeClock()
     with pytest.raises(ProviderExecutionError):
@@ -3505,17 +3505,18 @@ def test_jitter_enters_the_seconds_ladder_and_only_it() -> None:
 def test_a_hung_arm_stops_when_the_wall_clock_deadline_runs_out() -> None:
     """O prazo é o que encerra a cadeia — e é ele que torna as duas falhas comparáveis.
 
-    Cada tentativa aqui custa os 60 s do timeout do braço Anthropic. Contar tentativas daria
-    tempos incomparáveis: cinco tentativas são cinco minutos nesta pendurada e ~40 s num 429.
+    Cada tentativa aqui custa os 120 s do timeout do braço Anthropic (issue #137). Contar
+    tentativas daria tempos incomparáveis: três tentativas são seis minutos nesta
+    pendurada e ~40 s num 429.
     """
     clock = _FakeClock()
-    arm = _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT, clock=clock, cost_seconds=60.0)
+    arm = _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT, clock=clock, cost_seconds=120.0)
 
     with pytest.raises(ProviderExecutionError) as error:
         _deterministic_retry(arm, clock).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
 
     assert error.value.code is ProviderFailureCode.TIMEOUT
-    assert arm.attempts == 5
+    assert arm.attempts == 3
     assert clock.elapsed > DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS
     # Parou pelo prazo, não pelo teto de segurança de tentativas.
     assert arm.attempts < RETRY_ATTEMPT_CEILING
@@ -3920,6 +3921,35 @@ def test_the_budget_never_gives_back_more_than_it_reserved() -> None:
     assert budget.spent_usd == Decimal("0")
 
 
+def test_reserve_refusal_logs_the_limit_and_the_reserved_total(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """O operador precisa do número para separar teto pequeno de gasto real (issue #137).
+
+    `BUDGET_EXCEEDED` continua sendo o único código de falha — o log não inventa uma
+    categoria nova, só carrega o que o `CostBudget` já sabe: quanto está reservado e qual
+    é o teto.
+    """
+    budget = CostBudget(limit_usd=Decimal("1.00"))
+    budget.reserve(Decimal("0.75"))
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        budget.reserve(Decimal("0.75"))
+
+    assert error.value.code is ProviderFailureCode.BUDGET_EXCEEDED
+    message = next(
+        entry.getMessage()
+        for entry in caplog.records
+        if entry.getMessage().startswith("provider_budget_reserve_refused")
+    )
+    assert "limit_usd=1.00" in message
+    assert "spent_usd=0.75" in message
+    assert "requested_usd=0.75" in message
+
+
 def test_a_transport_failure_in_the_ocr_arm_keeps_its_provenance() -> None:
     """O reembrulho do braço OCR não pode apagar quem sabe se a chamada saiu."""
 
@@ -3969,6 +3999,10 @@ def _hosted_suite_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(GROQ_API_KEY_ENV, raising=False)
     monkeypatch.delenv(TRANSCRIPTION_PRIMARY_ENV, raising=False)
     monkeypatch.delenv(TRANSCRIPTION_FALLBACK_ENV, raising=False)
+    # Mesmo motivo para o timeout (issue #137): um `CROQUITO_PROVIDER_TIMEOUT_SECONDS`
+    # exportado no shell de quem roda a suíte não pode disfarçar o default real dos
+    # braços na suíte de testes.
+    monkeypatch.delenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", raising=False)
     # `build_real_provider_suite` também monta o braço `ocr` sempre, via ADC
     # (`google.auth.default`) — sem rede/credencial real em teste, mocka a única chamada
     # de autenticação envolvida na construção da suite.
@@ -4017,12 +4051,19 @@ def test_real_provider_suite_builds_two_direct_arms_without_aws(
     assert openai_adapter.api_key == "openai-key"
     assert anthropic_adapter.api_key == "anthropic-key"
     assert anthropic_adapter.model_id == "claude-opus-5"
+    # Sem `CROQUITO_PROVIDER_TIMEOUT_SECONDS`, os dois braços LLM usam o novo teto de
+    # segurança (issue #137) — a divergência de 30s do OpenAI contra 60s do Anthropic
+    # deixou de existir.
+    assert openai_adapter.timeout_seconds == 120.0
+    assert anthropic_adapter.timeout_seconds == 120.0
     # O braço `ocr` é sempre montado, autenticado por ADC (sem chave nova) e reserva no
     # MESMO `CostBudget` da rodada — o teto é da rodada, não de cada braço.
     assert suite.ocr is not None
     ocr_arm = suite.ocr
     ocr_adapter = cast(GcpVisionOcrAdapter, _budgeted(ocr_arm).adapter)
     assert isinstance(ocr_adapter.credentials, _FakeGcpCredentials)
+    # OCR não muda: a resposta não cresce com o prompt de extração.
+    assert ocr_adapter.timeout_seconds == 30.0
     assert _budgeted(openai_arm).budget is _budgeted(suite.anthropic).budget
     assert _budgeted(ocr_arm).budget is _budgeted(openai_arm).budget
 
@@ -4699,6 +4740,7 @@ def test_build_extraction_arm_wraps_a_new_axis_in_retry_and_budget(
     """Eixo novo entra sob o MESMO teto e a MESMA política de retry dos que já existiam."""
     monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.00")
     monkeypatch.setenv(variable, "chave-de-teste")
+    monkeypatch.delenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", raising=False)
 
     arm = build_extraction_arm(provider=provider, model_id="modelo-de-eval")
 
@@ -4708,6 +4750,8 @@ def test_build_extraction_arm_wraps_a_new_axis_in_retry_and_budget(
     inner = budgeted.adapter
     assert isinstance(inner, adapter_type)
     assert inner.model_id == "modelo-de-eval"
+    # Sem a env, o eixo novo já nasce no novo teto de segurança (issue #137).
+    assert inner.timeout_seconds == 120.0
 
 
 def test_build_extraction_arm_still_refuses_an_unknown_provider(
@@ -4717,6 +4761,39 @@ def test_build_extraction_arm_still_refuses_an_unknown_provider(
 
     with pytest.raises(ValueError, match="provider desconhecido para extração"):
         build_extraction_arm(provider="cohere", model_id="qualquer")
+
+
+@pytest.mark.parametrize(
+    ("provider", "variable", "adapter_type"),
+    [
+        ("openai", "CROQUITO_OPENAI_API_KEY", OpenAIProviderAdapter),
+        ("anthropic", "CROQUITO_ANTHROPIC_API_KEY", AnthropicProviderAdapter),
+        ("gemini", "CROQUITO_GEMINI_API_KEY", GeminiProviderAdapter),
+        ("mistral", "CROQUITO_MISTRAL_API_KEY", MistralProviderAdapter),
+    ],
+)
+def test_build_extraction_arm_defaults_every_axis_timeout_to_the_new_ceiling(
+    provider: str,
+    variable: str,
+    adapter_type: type[OpenAIProviderAdapter]
+    | type[AnthropicProviderAdapter]
+    | type[GeminiProviderAdapter]
+    | type[MistralProviderAdapter],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A divergência de 30s do braço OpenAI contra 60s dos demais não existe mais (#137)."""
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.00")
+    monkeypatch.setenv(variable, "chave-de-teste")
+    monkeypatch.delenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", raising=False)
+
+    arm = build_extraction_arm(provider=provider, model_id="modelo-de-eval")
+
+    assert isinstance(arm, RetryingProviderAdapter)
+    budgeted = arm.adapter
+    assert isinstance(budgeted, BudgetedProviderAdapter)
+    inner = budgeted.adapter
+    assert isinstance(inner, adapter_type)
+    assert inner.timeout_seconds == 120.0
 
 
 SCO_TEXT_PAYLOAD = (
@@ -5387,6 +5464,24 @@ def test_the_embeddings_factory_refuses_without_a_key_or_a_cap(
         build_embeddings_adapter()
 
 
+def test_the_embeddings_factory_defaults_the_timeout_to_the_new_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sem a env, a via de embeddings também sobe para o novo teto de segurança (#137)."""
+    monkeypatch.setenv("CROQUITO_OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.0")
+    monkeypatch.delenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", raising=False)
+
+    arm = build_embeddings_adapter()
+
+    assert isinstance(arm, RetryingEmbeddingsAdapter)
+    budgeted = arm.adapter
+    assert isinstance(budgeted, BudgetedEmbeddingsAdapter)
+    inner = budgeted.adapter
+    assert isinstance(inner, OpenAIEmbeddingsAdapter)
+    assert inner.timeout_seconds == 120.0
+
+
 CHAT_IMAGE = b"\x89PNG synthetic sheet"
 CHAT_TEXT_PAYLOAD = json.dumps(
     {
@@ -5982,6 +6077,8 @@ def test_build_transcription_arm_embrulha_em_retry_e_budget(
     assert adapter.provider is ProviderName.GROQ
     assert adapter.endpoint == GROQ_TRANSCRIPTION_ENDPOINT
     assert adapter.model_id == DEFAULT_GROQ_TRANSCRIPTION_MODEL
+    # Default do PARÂMETRO da função, sem env nem suite: novo teto de segurança (#137).
+    assert adapter.timeout_seconds == 120.0
 
 
 def test_suite_hospedada_monta_groq_como_primario_provisorio_sem_reserva(
@@ -6008,6 +6105,9 @@ def test_suite_hospedada_monta_groq_como_primario_provisorio_sem_reserva(
     assert adapter.language == "pt"
     # Mesmo teto da rodada: transcrição não tem orçamento próprio.
     assert _budgeted(suite.transcription).budget is _budgeted(suite.anthropic).budget
+    # Sem `CROQUITO_PROVIDER_TIMEOUT_SECONDS`, a transcrição também sobe para o novo teto
+    # de segurança (issue #137).
+    assert adapter.timeout_seconds == 120.0
 
 
 def test_suite_hospedada_sem_chave_da_groq_fica_sem_braco_de_transcricao(
