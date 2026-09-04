@@ -606,6 +606,15 @@ class OcrLineOutput(ProviderContractModel):
     raw_text: str = Field(min_length=1, max_length=200)
     bbox: NormalizedBox
     text_type: Literal["printed", "handwritten", "unknown"] = "unknown"
+    rotation_ccw_degrees: Literal[0, 90, 180, 270] | None = None
+    """Quarto de volta anti-horário que deixaria ESTA linha em pé, quando o braço o observa.
+
+    Só o Cloud Vision reporta vértice de palavra na resposta; Textract e Document AI
+    entregam a caixa e não a direção do texto, e para eles o campo fica `None`. `None` é
+    "não observado", nunca "está em pé": `page_orientation.predominant_rotation` deixa a
+    linha fora do voto em vez de contá-la como zero, para que um braço calado não empurre
+    a folha para a orientação errada.
+    """
 
 
 class OcrOutput(ProviderContractModel):
@@ -2957,6 +2966,72 @@ def _cloud_vision_word_text(word: object) -> str:
     return "".join(str(symbol.get("text", "")) for symbol in symbols if isinstance(symbol, dict))
 
 
+def _cloud_vision_word_rotation(word: object) -> tuple[int, int] | None:
+    """`(quarto de volta anti-horário, peso)` de uma palavra, pela aresta v0→v1 da caixa.
+
+    O Cloud Vision entrega os quatro vértices da palavra na ordem do texto: v0 é o canto
+    onde a palavra começa e v1 é o canto seguinte no sentido da leitura. O vetor v0→v1,
+    portanto, aponta para onde o texto corre. Com y crescendo para baixo, `atan2(dy, dx)`
+    dá 0° para texto em pé, +90° para texto correndo para baixo (folha girada um quarto de
+    volta no sentido horário) e assim por diante; o snap ao quarto de volta mais próximo
+    devolve a rotação ANTI-HORÁRIA que endireitaria a palavra.
+
+    O peso é o número de símbolos: uma palavra longa é evidência mais forte da direção do
+    texto do que um algarismo solto, e é o mesmo critério de peso do voto de página.
+
+    Devolve `None` quando a palavra não tem dois vértices utilizáveis, quando os dois
+    coincidem (não há direção) ou quando ela não tem símbolo nenhum para pesar.
+    """
+    if not isinstance(word, dict):
+        return None
+    bounding_box = word.get("boundingBox")
+    vertices = bounding_box.get("vertices") if isinstance(bounding_box, dict) else None
+    if not isinstance(vertices, list) or len(vertices) < 2:
+        return None
+    points: list[tuple[float, float]] = []
+    for vertex in vertices[:2]:
+        if not isinstance(vertex, dict):
+            return None
+        x, y = vertex.get("x", 0), vertex.get("y", 0)
+        if isinstance(x, bool) or isinstance(y, bool):
+            return None
+        if not isinstance(x, int | float) or not isinstance(y, int | float):
+            return None
+        points.append((float(x), float(y)))
+    dx, dy = points[1][0] - points[0][0], points[1][1] - points[0][1]
+    if dx == 0.0 and dy == 0.0:
+        return None
+    symbols = word.get("symbols")
+    weight = len(symbols) if isinstance(symbols, list) else 0
+    if weight <= 0:
+        return None
+    quarter = round(math.degrees(math.atan2(dy, dx)) / 90) % 4
+    return quarter * 90, weight
+
+
+def _cloud_vision_paragraph_rotation(words: object) -> int | None:
+    """Maioria ponderada das palavras do parágrafo; empate ou silêncio devolve `None`.
+
+    Uma linha sem veredito não vira zero: ela sai do voto da página. Fabricar "em pé"
+    para o parágrafo ilegível faria o silêncio empurrar a folha para a orientação de
+    origem, que é justamente a que se quer poder contradizer.
+    """
+    if not isinstance(words, list):
+        return None
+    weights: dict[int, int] = {}
+    for word in words:
+        vote = _cloud_vision_word_rotation(word)
+        if vote is None:
+            continue
+        rotation, weight = vote
+        weights[rotation] = weights.get(rotation, 0) + weight
+    if not weights:
+        return None
+    top = max(weights.values())
+    winners = [rotation for rotation, weight in weights.items() if weight == top]
+    return winners[0] if len(winners) == 1 else None
+
+
 def _cloud_vision_bbox(node: object, *, width: int, height: int) -> dict[str, float] | None:
     """Bbox normalizada 0-1 do `boundingBox` de um bloco/parágrafo do Cloud Vision.
 
@@ -3004,6 +3079,9 @@ def _cloud_vision_lines(
     casos; usar essa granularidade evita inventar uma heurística de quebra sem fixture
     real para validar contra. `text_type` fica sempre `unknown`: a API não distingue
     impresso de manuscrito na resposta, diferente do Textract.
+
+    `rotation_ccw_degrees` sai do voto das palavras do parágrafo — é o único braço de OCR
+    que reporta vértice de palavra, e é dele que sai a orientação da folha.
     """
     if not isinstance(full_text_annotation, dict):
         return []
@@ -3032,7 +3110,14 @@ def _cloud_vision_lines(
                 bbox = _cloud_vision_bbox(paragraph, width=width, height=height)
                 if not raw_text or bbox is None:
                     continue
-                lines.append({"raw_text": raw_text, "bbox": bbox, "text_type": "unknown"})
+                lines.append(
+                    {
+                        "raw_text": raw_text,
+                        "bbox": bbox,
+                        "text_type": "unknown",
+                        "rotation_ccw_degrees": _cloud_vision_paragraph_rotation(words),
+                    }
+                )
     return lines
 
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +17,11 @@ from PIL import Image
 
 from croquito_core.models import MeasurementKind, UnitCode
 from croquito_worker.association import AssociationSet, associate_readings
+from croquito_worker.page_orientation import (
+    predominant_rotation,
+    rotate_image_upright,
+    rotate_normalized_box,
+)
 from croquito_worker.providers import (
     GeometryExtractionOutput,
     MeasurementExtractionOutput,
@@ -93,6 +100,15 @@ class ProviderReviewSnapshot:
     associations: AssociationSet
     proposals: VisionProposalSet
     source_image_bytes: bytes
+    applied_rotation_ccw_degrees: int = 0
+    """Quarto de volta anti-horário aplicado à página antes de qualquer chamada de modelo.
+
+    Zero quando a folha já estava em pé, quando o OCR não opinou e quando o voto ficou
+    indeciso. Diferente de zero significa que `source_image_bytes` NÃO são os bytes do
+    preview recebido: são os bytes girados, e é sobre eles que o digest do pacote, as
+    caixas das leituras, as propostas e a tela da revisão estão escritos.
+    """
+
     executions: tuple[ProviderExecution, ...] = ()
     """Toda chamada de provider CONCLUÍDA nesta montagem, na ordem em que retornou.
 
@@ -364,6 +380,75 @@ def _readings_agree(
     return Decimal(observation.normalized_value) == Decimal(counterpart.normalized_value)
 
 
+def _execute_page_ocr(
+    suite: ProviderSuite,
+    *,
+    image_bytes: bytes,
+    image_sha256: str,
+    width: int,
+    height: int,
+    executions: list[ProviderExecution],
+) -> tuple[list[OcrLineOutput], bool]:
+    """Roda o braço de OCR uma vez sobre a página como ela chegou, e devolve o que ele leu.
+
+    Uma chamada por snapshot: o resultado serve à decisão de orientação **e** à
+    corroboração das leituras mais adiante. Duas chamadas custariam duas vezes para
+    responder a mesma pergunta.
+
+    O tratamento de falha é o que já valia para a corroboração: `BUDGET_EXCEEDED` propaga
+    (descreve o teto do job, não o braço); qualquer outra falha permanente degrada com log
+    de operador e `ocr_ran=False`, sem nota — a nota `OCR_UNAVAILABLE` continua sendo
+    decidida lá na frente, onde se sabe se havia leitura para conferir.
+
+    O `input_digest` desta execução é o digest da folha COMO CHEGOU, mesmo quando a página
+    é girada logo depois: foi essa imagem que saiu para o provider, e o lineage descreve o
+    que foi enviado, não o que veio a ser a evidência.
+    """
+    if suite.ocr is None:
+        # Braço ausente e braço que falhou são a mesma degradação para o revisor; só o log
+        # distingue os dois. O aviso sai uma vez por snapshot, como o do braço OpenAI.
+        _log_ocr_unavailable("ARM_NOT_CONFIGURED")
+        return [], False
+    try:
+        execution = suite.ocr.execute(
+            build_request(
+                PromptTask.OCR,
+                image_bytes=image_bytes,
+                image_sha256=image_sha256,
+                image_width_px=width,
+                image_height_px=height,
+                region_label="main_plan",
+            )
+        )
+    except ProviderExecutionError as error:
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
+            raise
+        _log_ocr_unavailable(error.code.value)
+        return [], False
+    executions.append(execution)
+    if not isinstance(execution.output, OcrOutput):
+        raise ProviderContractError("OCR não retornou contrato de OCR")
+    return list(execution.output.lines), True
+
+
+@contextmanager
+def _ink_source(image_path: Path, image_bytes: bytes, applied_rotation: int) -> Iterator[Path]:
+    """Caminho da imagem que a corroboração de tinta deve ler.
+
+    `register_to_ink`/`corroborate_with_ink` leem do disco, e a folha girada só existe em
+    memória. Sem este desvio, as propostas — que o modelo produziu olhando a folha em pé —
+    seriam medidas contra a tinta da folha deitada, e todo elemento sairia sem corroboração.
+    Sem rotação, o arquivo original é usado como sempre e nada é copiado.
+    """
+    if applied_rotation == 0:
+        yield image_path
+        return
+    with tempfile.NamedTemporaryFile(suffix=".png") as rotated_file:
+        rotated_file.write(image_bytes)
+        rotated_file.flush()
+        yield Path(rotated_file.name)
+
+
 def build_provider_review_snapshot(
     image_path: Path,
     *,
@@ -375,16 +460,6 @@ def build_provider_review_snapshot(
     image_sha256 = hashlib.sha256(source_image_bytes).hexdigest()
     with Image.open(image_path) as source_image:
         width, height = source_image.size
-
-    def request(task: PromptTask) -> ProviderRequest:
-        return build_request(
-            task,
-            image_bytes=source_image_bytes,
-            image_sha256=image_sha256,
-            image_width_px=width,
-            image_height_px=height,
-            region_label="main_plan",
-        )
 
     # Anthropic é o braço primário de toda tarefa com escolha; OpenAI é o reserva e a
     # contraparte da comparação. As notas de fallback acompanham o pacote até o fim,
@@ -402,6 +477,52 @@ def build_provider_review_snapshot(
     # caller emita um evento por chamada. Anotar no ponto de retorno (e não no fim) é o que
     # faz o registro sobreviver aos caminhos que devolvem o snapshot mais cedo.
     executions: list[ProviderExecution] = []
+    # O OCR é a PRIMEIRA chamada do snapshot porque é ele que diz se a folha está deitada,
+    # e a folha precisa estar em pé antes de qualquer modelo olhar para ela. O preço dessa
+    # ordem é declarado: o OCR passou a rodar mesmo quando o job morre antes da extração —
+    # página com classificação ambígua, ou sem leitura nenhuma — o que custa ~US$ 0,0015
+    # por página que antes não custava nada. É o preço de decidir a orientação antes de
+    # qualquer chamada de LLM, que custa duas ordens de grandeza mais.
+    ocr_lines, ocr_ran = _execute_page_ocr(
+        suite,
+        image_bytes=source_image_bytes,
+        image_sha256=image_sha256,
+        width=width,
+        height=height,
+        executions=executions,
+    )
+    rotation_notes: list[str] = []
+    applied_rotation = 0
+    if ocr_ran:
+        vote = predominant_rotation(ocr_lines)
+        if vote.decided and vote.rotation_ccw_degrees != 0:
+            applied_rotation = vote.rotation_ccw_degrees
+            # A partir daqui a folha girada É a evidência: o digest, as dimensões, o que
+            # todo braço recebe, o que a corroboração de tinta mede e o que a revisão
+            # humana vê. Nenhum consumidor transforma coordenada — eles leem a mesma
+            # imagem, como já liam.
+            source_image_bytes, width, height = rotate_image_upright(
+                source_image_bytes, applied_rotation
+            )
+            image_sha256 = hashlib.sha256(source_image_bytes).hexdigest()
+            # As linhas do OCR foram lidas na folha deitada; a corroboração compara a bbox
+            # delas com a bbox das leituras, que virão do modelo já no espaço girado.
+            ocr_lines = [
+                line.model_copy(update={"bbox": rotate_normalized_box(line.bbox, applied_rotation)})
+                for line in ocr_lines
+            ]
+            rotation_notes.append(f"PAGE_ROTATED_{applied_rotation}CCW_FROM_OCR_ORIENTATION")
+
+    def request(task: PromptTask) -> ProviderRequest:
+        return build_request(
+            task,
+            image_bytes=source_image_bytes,
+            image_sha256=image_sha256,
+            image_width_px=width,
+            image_height_px=height,
+            region_label="main_plan",
+        )
+
     survey = _execute_with_fallback(
         suite.anthropic,
         openai_arm,
@@ -427,6 +548,7 @@ def build_provider_review_snapshot(
             safety_notes=[
                 "REGION_CLASSIFICATION_REQUIRED",
                 "Nenhuma região foi escolhida automaticamente para extração externa.",
+                *rotation_notes,
                 *fallback_notes,
             ],
         )
@@ -457,7 +579,10 @@ def build_provider_review_snapshot(
                     "Propostas geométricas não são promovidas antes da classificação humana.",
                 ],
             ),
+            # A folha girada é o que o humano vai classificar: devolver aqui os bytes
+            # originais faria a tela mostrar deitada a mesma página que o survey leu em pé.
             source_image_bytes=source_image_bytes,
+            applied_rotation_ccw_degrees=applied_rotation,
             executions=tuple(executions),
         )
     # Os dois braços são chamados de propósito: a extração dupla é a comparação. Por isso
@@ -516,6 +641,7 @@ def build_provider_review_snapshot(
         if dual
         else "Leitura de um braço único sem comparação; revisão humana é obrigatória.",
         "Nenhuma leitura cria geometria métrica ou libera exportação.",
+        *rotation_notes,
         *fallback_notes,
     ]
     if not dual:
@@ -556,34 +682,17 @@ def build_provider_review_snapshot(
         extractor = f"{anchor.provider.value}+{counterpart_execution.provider.value}"
         extractor_version = f"{anchor.model_id}+{counterpart_execution.model_id}"
         lineage = [_lineage(anchor), _lineage(counterpart_execution)]
-    # Corroboração por OCR determinístico: roda uma vez por documento (não por leitura) e
-    # só quando existe alguma leitura do LLM para conferir — sem isso não há chamada paga
-    # à toa. `suite.ocr is None` e falha permanente do OCR têm o MESMO tratamento (nota
-    # única `OCR_UNAVAILABLE`, pacote segue normal); `BUDGET_EXCEEDED` propaga como as
-    # demais chamadas do job, porque descreve o teto da rodada, não o braço.
-    ocr_lines: list[OcrLineOutput] = []
-    ocr_ran = False
-    if anchor_output.readings:
-        if suite.ocr is None:
-            # A nota diz ao revisor que a conferência não rodou; o log diz ao operador POR
-            # QUE. Braço ausente e braço que falhou produzem a mesma nota e, até aqui, o
-            # mesmo silêncio — foi assim que o OCR passou de HML inteiro sem um rastro.
-            _log_ocr_unavailable("ARM_NOT_CONFIGURED")
-            safety_notes.append("OCR_UNAVAILABLE")
-        else:
-            try:
-                ocr_execution = suite.ocr.execute(request(PromptTask.OCR))
-            except ProviderExecutionError as error:
-                if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
-                    raise
-                _log_ocr_unavailable(error.code.value)
-                safety_notes.append("OCR_UNAVAILABLE")
-            else:
-                executions.append(ocr_execution)
-                if not isinstance(ocr_execution.output, OcrOutput):
-                    raise ProviderContractError("OCR não retornou contrato de OCR")
-                ocr_lines = list(ocr_execution.output.lines)
-                ocr_ran = True
+    # Corroboração por OCR determinístico: reusa a ÚNICA execução do começo do snapshot —
+    # a mesma que decidiu a orientação —, então nenhuma chamada paga é repetida aqui. As
+    # linhas já estão no espaço da folha vigente (giradas junto com a página quando ela
+    # girou), que é o mesmo espaço das bboxes que o modelo devolveu.
+    #
+    # A nota, essa sim, continua condicionada à existência de leitura para conferir: sem
+    # leitura não há conferência que tenha deixado de acontecer. `suite.ocr is None` e
+    # falha permanente do OCR têm o MESMO tratamento (nota única `OCR_UNAVAILABLE`, pacote
+    # segue normal); o motivo de cada um está no log do operador, emitido lá no começo.
+    if anchor_output.readings and not ocr_ran:
+        safety_notes.append("OCR_UNAVAILABLE")
     for position, (observation, counterpart) in enumerate(pairs, start=1):
         if observation.normalized_value is None:
             # Recado sem valor é insumo da rodada seguinte (quantos "note" o modelo
@@ -713,8 +822,9 @@ def build_provider_review_snapshot(
         # Registro assenta o conjunto e depois cada elemento sobre a tinta; a conferência
         # mede o que sobrou. A nota declara os três estágios: esconder o refino faria a
         # revisão acreditar que só houve deslocamento global.
-        proposals_list, registration = register_to_ink(proposals_list, image_path)
-        proposals_list, ink_notes = corroborate_with_ink(proposals_list, image_path)
+        with _ink_source(image_path, source_image_bytes, applied_rotation) as ink_path:
+            proposals_list, registration = register_to_ink(proposals_list, ink_path)
+            proposals_list, ink_notes = corroborate_with_ink(proposals_list, ink_path)
         proposal_notes.append(
             f"INK_REGISTRATION:{registration.coverage_before:.3f}"
             f"->{registration.coverage_after:.3f}"
@@ -748,5 +858,6 @@ def build_provider_review_snapshot(
         associations=associations,
         proposals=proposals,
         source_image_bytes=source_image_bytes,
+        applied_rotation_ccw_degrees=applied_rotation,
         executions=tuple(executions),
     )
