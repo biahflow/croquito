@@ -2667,6 +2667,63 @@
         "title": "DeclareIdentityLinkRequest",
         "type": "object"
       },
+      "DeclareReviewElementRequest": {
+        "additionalProperties": false,
+        "description": "O humano diz QUAIS propostas são um elemento; nunca QUAL é o nome dele (ADR-0063 D1).\n\nGêmeo de `DeclareElementRequest` uma etapa antes da cena: lá o grupo é de entidades já\nresolvidas, aqui é de propostas de geometria do snapshot desta revisão de leitura. O\n`element_ref` aparece na entrada pelo mesmo motivo de lá — para ser RECUSADO com código\nestável em vez de cair no 422 genérico do `extra=\"forbid\"`.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "element_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Ref"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "proposal_ids": {
+            "items": {
+              "pattern": "^vp_[a-f0-9]{16}$",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Proposal Ids",
+            "type": "array"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "proposal_ids",
+          "reason"
+        ],
+        "title": "DeclareReviewElementRequest",
+        "type": "object"
+      },
       "DeclareSceneLinkRequest": {
         "additionalProperties": false,
         "description": "O croqui aprovado que alimenta esta rodada — declarado, nunca inferido (F-047 T4b).\n\nO corpo tem UM campo além da guarda de concorrência, e é o `job_id`: quem mede diz qual\ncroqui manda. Não há aqui nenhum critério de busca, nem \"usar o croqui da mesma obra\",\nnem \"o mais recente\" — inferir o elo por semelhança seria a associação por proximidade\nque o ADR-0058 rejeita com todas as letras.\n\nO carimbo de identidade não entra pelo corpo (`extra=\"forbid\"`): quem declarou vem do\n`Principal` e quando, do servidor. A revisão da cena e o export citados também não: o\nservidor os resolve do job e os grava, para que o elo aponte para um pacote específico.",
@@ -7826,6 +7883,42 @@
         "title": "RelabelElementRequest",
         "type": "object"
       },
+      "RelabelReviewElementRequest": {
+        "additionalProperties": false,
+        "description": "Renomear a identidade da revisão: ato declarado, nunca edição silenciosa.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "element_ref": {
+            "pattern": "^EL-\\d{3,}$",
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "element_ref",
+          "label",
+          "reason"
+        ],
+        "title": "RelabelReviewElementRequest",
+        "type": "object"
+      },
       "RemoveEstimateCascadeSourceRequest": {
         "additionalProperties": false,
         "description": "Remove uma fonte da cascata instalada, citada pelo `source_sha256` dela.\n\nEspelho de `ReorderEstimateCascadeRequest`: um único digest, e não posição nem origem,\npelo mesmo motivo que a reordenação cita digest — é o identificador estável da fonte,\no mesmo que a confirmação de código cita.",
@@ -8176,6 +8269,151 @@
         "title": "ReviewDecisionCommand",
         "type": "object"
       },
+      "ReviewElementDeclarationResponse": {
+        "additionalProperties": false,
+        "description": "Uma identidade declarada na revisão, como ela ficou depois dos atos.\n\nDevolve só o PAPEL profissional de quem declarou e de quem revogou, nunca o subject — a\nmesma regra do ato de identidade da cena. A entrada revogada continua na lista, com\n`status=\"revoked\"`: o ref sai de circulação e o histórico não perde o que foi afirmado.",
+        "properties": {
+          "declared_at": {
+            "format": "date-time",
+            "title": "Declared At",
+            "type": "string"
+          },
+          "declared_by_role": {
+            "title": "Declared By Role",
+            "type": "string"
+          },
+          "element_ref": {
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "proposal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposal Ids",
+            "type": "array"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By Role"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_ref",
+          "proposal_ids",
+          "status",
+          "declared_by_role",
+          "declared_at"
+        ],
+        "title": "ReviewElementDeclarationResponse",
+        "type": "object"
+      },
+      "ReviewElementIdentityResponse": {
+        "additionalProperties": false,
+        "description": "O ato de identidade da revisão e o estado que ele deixou.\n\nO gêmeo da cena devolve a `SceneRevision` inteira porque a cena É o estado. Aqui o estado\ndo ato é a lista de identidades da revisão nova, e ela vem inteira em `declarations` —\njunto com `review_version`, que é o `base_version` do próximo ato.",
+        "properties": {
+          "act": {
+            "enum": [
+              "declared",
+              "revoked",
+              "relabeled"
+            ],
+            "title": "Act",
+            "type": "string"
+          },
+          "acted_at": {
+            "format": "date-time",
+            "title": "Acted At",
+            "type": "string"
+          },
+          "acted_by_role": {
+            "title": "Acted By Role",
+            "type": "string"
+          },
+          "declarations": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewElementDeclarationResponse"
+            },
+            "title": "Declarations",
+            "type": "array"
+          },
+          "element_ref": {
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "proposal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposal Ids",
+            "type": "array"
+          },
+          "review_version": {
+            "title": "Review Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "act",
+          "element_ref",
+          "proposal_ids",
+          "acted_by_role",
+          "acted_at",
+          "review_version",
+          "declarations"
+        ],
+        "title": "ReviewElementIdentityResponse",
+        "type": "object"
+      },
       "ReviewPacket": {
         "additionalProperties": false,
         "properties": {
@@ -8511,6 +8749,35 @@
           "reason"
         ],
         "title": "RevokeElementRequest",
+        "type": "object"
+      },
+      "RevokeReviewElementRequest": {
+        "additionalProperties": false,
+        "description": "Desfazer a identidade da revisão: ato próprio, com autor, instante e motivo.\n\nNão desfaz associação já confirmada por ela — corrigir associação é a retificação de\ndecisão que a revisão já tem (leitura confirmada no aceite do DAP da F-051).",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "element_ref": {
+            "pattern": "^EL-\\d{3,}$",
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "element_ref",
+          "reason"
+        ],
+        "title": "RevokeReviewElementRequest",
         "type": "object"
       },
       "SceneQuantitiesRequest": {
@@ -15572,6 +15839,231 @@
           }
         ],
         "summary": "Annotate Dimension",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/elements": {
+      "post": {
+        "description": "Declara que um conjunto de PROPOSTAS é um elemento, cunhando o ref no ato.\n\nO mesmo ato do ADR-0058 uma etapa antes (ADR-0063, decisão 1): é humano, nunca\ninferência — a rota não olha rótulo do modelo, proximidade nem camada para escolher o\ngrupo. Quem escolhe é quem assina; a sugestão assistida só semeia a seleção.",
+        "operationId": "declare_review_element_v1_jobs__job_id__review_elements_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclareReviewElementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewElementIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Declare Review Element",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/elements/labels": {
+      "post": {
+        "description": "Renomeia a identidade da revisão: ato declarado, com autor, instante e revisão nova.\n\nO rótulo é o nome que a pessoa lê e, aqui, é também por onde o hint da cota-balão\nprocura o referente — por isso ele continua ÚNICO entre as identidades ativas do job\ndepois da renomeação. Renomear não move proposta e não troca `element_ref`; ainda\nassim é revisão nova, porque quem revisa precisa ver que o nome mudou e por quem.",
+        "operationId": "relabel_review_element_v1_jobs__job_id__review_elements_labels_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelabelReviewElementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewElementIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Relabel Review Element",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/elements/revocations": {
+      "post": {
+        "description": "Desfaz a identidade declarada na revisão: ato próprio, com autor e instante.\n\nDuas coisas que a revogação NÃO faz, e ambas são leitura confirmada no aceite do DAP\nda F-051: não apaga a entrada do histórico (ela fica `revoked`, e o ref revogado\ncontinua fora do estoque de cunhagem), e não desfaz associação já confirmada por ela\n— corrigir associação é a retificação de decisão que a revisão já tem.",
+        "operationId": "revoke_review_element_v1_jobs__job_id__review_elements_revocations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeReviewElementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewElementIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Review Element",
         "tags": [
           "review"
         ]

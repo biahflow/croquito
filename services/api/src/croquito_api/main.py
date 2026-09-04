@@ -983,6 +983,95 @@ class ElementIdentityResponse(ApiModel):
     scene: SceneRevision
 
 
+#: Quantas propostas cabem num elemento declarado na revisão. O mesmo teto do grupo da cena
+#: (`DeclareElementRequest.entity_ids`): o ato é o mesmo, uma etapa antes.
+REVIEW_ELEMENT_PROPOSAL_LIMIT: Final = 200
+
+#: Id de proposta do `VisionProposalSet`, no formato que `VisionProposal.id` já impõe. Casar o
+#: formato aqui recusa lixo antes da consulta ao snapshot; id BEM formado e inexistente segue
+#: sendo erro de domínio, com a lista do que não pertence à revisão.
+ReviewProposalId = Annotated[str, Field(pattern=r"^vp_[a-f0-9]{16}$")]
+
+
+class DeclareReviewElementRequest(ApiModel):
+    """O humano diz QUAIS propostas são um elemento; nunca QUAL é o nome dele (ADR-0063 D1).
+
+    Gêmeo de `DeclareElementRequest` uma etapa antes da cena: lá o grupo é de entidades já
+    resolvidas, aqui é de propostas de geometria do snapshot desta revisão de leitura. O
+    `element_ref` aparece na entrada pelo mesmo motivo de lá — para ser RECUSADO com código
+    estável em vez de cair no 422 genérico do `extra="forbid"`.
+    """
+
+    base_version: int = Field(ge=1)
+    proposal_ids: list[ReviewProposalId] = Field(
+        min_length=1, max_length=REVIEW_ELEMENT_PROPOSAL_LIMIT
+    )
+    reason: str = Field(min_length=3, max_length=500)
+    element_ref: str | None = None
+    #: O nome legível ("B", "grade B") — opcional, como na cena: identidade sem nome continua
+    #: sendo identidade. Quando vem, é ÚNICO entre as identidades ativas do job (leitura
+    #: confirmada no aceite do DAP da F-051), porque é por ele que o hint da cota-balão
+    #: procura o referente, e um nome ambíguo não tem referente.
+    label: str | None = Field(default=None, max_length=ELEMENT_LABEL_MAX_LENGTH)
+
+
+class RelabelReviewElementRequest(ApiModel):
+    """Renomear a identidade da revisão: ato declarado, nunca edição silenciosa."""
+
+    base_version: int = Field(ge=1)
+    element_ref: str = Field(pattern=ELEMENT_REF_PATTERN)
+    label: str = Field(min_length=1, max_length=ELEMENT_LABEL_MAX_LENGTH)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class RevokeReviewElementRequest(ApiModel):
+    """Desfazer a identidade da revisão: ato próprio, com autor, instante e motivo.
+
+    Não desfaz associação já confirmada por ela — corrigir associação é a retificação de
+    decisão que a revisão já tem (leitura confirmada no aceite do DAP da F-051).
+    """
+
+    base_version: int = Field(ge=1)
+    element_ref: str = Field(pattern=ELEMENT_REF_PATTERN)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ReviewElementDeclarationResponse(ApiModel):
+    """Uma identidade declarada na revisão, como ela ficou depois dos atos.
+
+    Devolve só o PAPEL profissional de quem declarou e de quem revogou, nunca o subject — a
+    mesma regra do ato de identidade da cena. A entrada revogada continua na lista, com
+    `status="revoked"`: o ref sai de circulação e o histórico não perde o que foi afirmado.
+    """
+
+    element_ref: str
+    label: str | None = None
+    proposal_ids: list[str]
+    status: Literal["active", "revoked"]
+    declared_by_role: str
+    declared_at: datetime
+    revoked_by_role: str | None = None
+    revoked_at: datetime | None = None
+
+
+class ReviewElementIdentityResponse(ApiModel):
+    """O ato de identidade da revisão e o estado que ele deixou.
+
+    O gêmeo da cena devolve a `SceneRevision` inteira porque a cena É o estado. Aqui o estado
+    do ato é a lista de identidades da revisão nova, e ela vem inteira em `declarations` —
+    junto com `review_version`, que é o `base_version` do próximo ato.
+    """
+
+    act: Literal["declared", "revoked", "relabeled"]
+    element_ref: str
+    label: str | None = None
+    proposal_ids: list[str]
+    acted_by_role: str
+    acted_at: datetime
+    review_version: int
+    declarations: list[ReviewElementDeclarationResponse]
+
+
 class ElementProposalResponse(ApiModel):
     """Uma proposta candidata de agrupamento (F-047 T6, ADR-0058 decisão 2).
 
@@ -5779,13 +5868,23 @@ def _next_element_ref(session: Session, *, job_id: UUID, tenant_id: str) -> str:
     duas coisas pelo mesmo nome — a quantidade errada em silêncio que o ADR-0058 existe
     para impedir. Monotônico por job é o que faz do ref um elo estável.
 
-    Não há corrida aqui: duas declarações simultâneas sobre a mesma `base_version` cunham o
-    mesmo número, e a que perder colide em `uq_scene_version` ao gravar a revisão, virando
-    `REVISION_CONFLICT` antes de qualquer cena existir com ref duplicado. A cunhagem é
-    protegida pela concorrência otimista da revisão, não por um contador próprio.
+    E olha os DOIS lugares onde a identidade nasce: as cenas (ADR-0058) e as declarações
+    sobre propostas da revisão de leitura (ADR-0063, decisão 2 — "o namespace de
+    `element_ref` é um só por job"). Varrer só um lado faria a revisão e a cena cunharem
+    `EL-002` para coisas diferentes do mesmo job, que é exatamente a colisão que o
+    transporte no traçado não teria como desfazer.
 
-    Só a coluna `scene` é carregada: a varredura é O(revisões x entidades) do job, e
-    hidratar o ORM inteiro para ler um campo custaria sem devolver nada.
+    Não há corrida DENTRO de cada lado: duas declarações simultâneas sobre a mesma
+    `base_version` cunham o mesmo número, e a que perder colide em `uq_scene_version` (cena)
+    ou `uq_review_version` (revisão) ao gravar, virando `REVISION_CONFLICT` antes de existir
+    ref duplicado. A cunhagem é protegida pela concorrência otimista de cada revisão, não
+    por um contador próprio. Duas declarações RIGOROSAMENTE simultâneas em lados diferentes
+    (uma na cena, outra na revisão) leem o mesmo maior e não colidem entre si, porque as
+    duas unicidades são de tabelas distintas — o desenho aceito é este, e o alcance dele
+    está registrado como risco no contrato da F-051 T2.
+
+    Só as colunas necessárias são carregadas: a varredura é O(revisões x entidades) do job,
+    e hidratar o ORM inteiro para ler um campo custaria sem devolver nada.
     """
     highest = 0
     for scene in session.scalars(
@@ -5798,6 +5897,17 @@ def _next_element_ref(session: Session, *, job_id: UUID, tenant_id: str) -> str:
             ref = entity.get("element_ref")
             # `fullmatch`, e não `match`: `$` também casa antes de um `\n` final, e um
             # `"EL-001\n"` vindo de um banco antigo viraria ordinal em vez de ser ignorado.
+            if isinstance(ref, str) and _ELEMENT_REF_RE.fullmatch(ref):
+                highest = max(highest, int(ref.removeprefix(ELEMENT_REF_PREFIX)))
+    for declarations in session.scalars(
+        select(ReviewRevisionRecord.element_declarations_json).where(
+            ReviewRevisionRecord.job_id == str(job_id),
+            ReviewRevisionRecord.tenant_id == tenant_id,
+        )
+    ):
+        for declaration in declarations or []:
+            # A entrada REVOGADA conta igual: o ref sai de circulação, não volta ao estoque.
+            ref = declaration.get("element_ref")
             if isinstance(ref, str) and _ELEMENT_REF_RE.fullmatch(ref):
                 highest = max(highest, int(ref.removeprefix(ELEMENT_REF_PREFIX)))
     return f"{ELEMENT_REF_PREFIX}{highest + 1:0{ELEMENT_REF_MIN_DIGITS}d}"
@@ -5883,16 +5993,87 @@ def _shape_correction_id(job_id: UUID, review_version: int, ordinal: int) -> str
 def _carried_review_context(record: ReviewRevisionRecord) -> dict[str, Any]:
     """Campos laterais que toda revisão sucessora preserva verbatim.
 
-    Testemunhas e observações de campo (F-030) e as correções humanas de forma (F-018)
-    não são recomputadas por ato nenhum da revisão: elas são registro histórico e viajam
-    inteiras para a revisão seguinte. Ficam num lugar só justamente porque esquecer uma
-    delas em um dos caminhos de escrita apagaria trabalho humano em silêncio.
+    Testemunhas e observações de campo (F-030), as correções humanas de forma (F-018) e as
+    identidades de elemento declaradas sobre propostas (F-051) não são recomputadas por ato
+    nenhum da revisão: elas são registro histórico e viajam inteiras para a revisão seguinte.
+    Ficam num lugar só justamente porque esquecer uma delas em um dos caminhos de escrita
+    apagaria trabalho humano em silêncio.
     """
     return {
         "field_witnesses_json": list(record.field_witnesses_json),
         "field_observations_json": list(record.field_observations_json),
         "shape_corrections_json": record.shape_corrections_json,
+        "element_declarations_json": _review_element_declarations(record),
     }
+
+
+def _review_element_declarations(record: ReviewRevisionRecord) -> list[dict[str, Any]]:
+    """As identidades declaradas nesta revisão, como cópia rasa e tolerante a `NULL`.
+
+    Tolerante porque uma linha gravada antes da migration `0031` pode chegar com `NULL` de
+    banco que a coluna nova não previu; cópia porque quem monta a revisão seguinte precisa
+    poder acrescentar uma entrada sem editar a lista da revisão anterior, que é imutável.
+    """
+    return [dict(item) for item in record.element_declarations_json or []]
+
+
+def _review_element_declaration_response(
+    declaration: Mapping[str, Any],
+) -> ReviewElementDeclarationResponse:
+    """A entrada gravada como ela sai da API: por PAPEL, nunca pelo subject de quem agiu."""
+    return ReviewElementDeclarationResponse(
+        element_ref=declaration["element_ref"],
+        label=declaration.get("label"),
+        proposal_ids=list(declaration.get("proposal_ids", [])),
+        status=declaration.get("status", "active"),
+        declared_by_role=declaration["declared_role"],
+        declared_at=declaration["declared_at"],
+        revoked_by_role=declaration.get("revoked_role"),
+        revoked_at=declaration.get("revoked_at"),
+    )
+
+
+def _active_review_element(
+    declarations: list[dict[str, Any]], *, element_ref: str
+) -> dict[str, Any]:
+    """A identidade ATIVA com este ref, ou a recusa nomeada — nunca um 500 de índice.
+
+    Revogada não conta: o ref continua ocupado para efeito de cunhagem, mas não há mais
+    identidade para renomear nem para revogar de novo.
+    """
+    for declaration in declarations:
+        if declaration.get("element_ref") == element_ref and declaration.get("status") == "active":
+            return declaration
+    raise _problem(
+        "ELEMENT_NOT_DECLARED",
+        status.HTTP_409_CONFLICT,
+        "Esta revisão não tem elemento ativo declarado com este element_ref.",
+        {"element_ref": element_ref},
+    )
+
+
+def _review_element_label_owner(
+    declarations: list[dict[str, Any]], *, label: str, ignoring: str | None = None
+) -> str | None:
+    """O ref que já usa este rótulo entre as identidades ATIVAS, quando existe.
+
+    Comparação EXATA sobre o rótulo já aparado: a normalização mínima do casamento
+    ("B" contra "grade B") é decisão declarada da T4 da F-051, com o dado do job de
+    referência; aproximar aqui, antes dela, seria o casamento difuso em silêncio que a
+    feature recusa.
+
+    Rótulo de identidade REVOGADA volta a ficar livre: o ref é que nunca se reaproveita. Um
+    nome preso para sempre impediria a correção mais óbvia — revogar o grupo errado e
+    declarar o certo com o mesmo nome da folha.
+    """
+    for declaration in declarations:
+        if declaration.get("status") != "active":
+            continue
+        if ignoring is not None and declaration.get("element_ref") == ignoring:
+            continue
+        if declaration.get("label") == label:
+            return str(declaration["element_ref"])
+    return None
 
 
 def _confirmed_reading_value_mm(reading: DimensionReading) -> Decimal:
@@ -11003,6 +11184,437 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="scene_revision",
             resource_id=str(next_scene.id),
             request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    def _review_element_act_target(
+        session: Session,
+        *,
+        job_id: UUID,
+        tenant_id: str,
+        base_version: int,
+    ) -> tuple[ReviewRevisionRecord, VisionProposalSet]:
+        """Revisão de leitura na versão declarada, e o snapshot de propostas dela.
+
+        A busca do job vem ANTES da revisão pelo mesmo motivo da cena: job de outro tenant é
+        `NOT_FOUND`, e não `JOB_NOT_READY`, que diria "ainda não tem revisão" sobre algo que
+        quem pergunta não pode nem saber que existe.
+        """
+        job = session.scalar(
+            select(JobRecord).where(JobRecord.id == str(job_id), JobRecord.tenant_id == tenant_id)
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        current = _latest_review(session, job_id=job_id, tenant_id=tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        if current.proposals_json is None:
+            raise _problem(
+                "PROPOSALS_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Snapshot de propostas ainda não está disponível.",
+            )
+        if current.version != base_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Existe uma revisão de leitura mais recente.",
+            )
+        return current, VisionProposalSet.model_validate(current.proposals_json)
+
+    def _persist_review_element_act(
+        session: Session,
+        *,
+        principal: Principal,
+        job_id: UUID,
+        current: ReviewRevisionRecord,
+        declarations: list[dict[str, Any]],
+        acted_at: datetime,
+    ) -> ReviewRevisionRecord:
+        """Grava a revisão de leitura nova com a lista de identidades, ou recusa a corrida.
+
+        `uq_review_version` é o que impede duas declarações simultâneas de cunharem o mesmo
+        ref: ambas leem a mesma `base_version`, ambas cunham o mesmo número, e a segunda a
+        gravar colide aqui. Todo o resto da revisão viaja verbatim — declarar identidade não
+        decide leitura, não mexe em associação confirmada, não toca cena, blocker ou solver.
+        """
+        next_review = ReviewRevisionRecord(
+            id=str(new_uuid7()),
+            tenant_id=principal.tenant_id,
+            job_id=str(job_id),
+            version=current.version + 1,
+            parent_review_id=current.id,
+            packet_json=current.packet_json,
+            associations_json=current.associations_json,
+            proposals_json=current.proposals_json,
+            selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
+            **{**_carried_review_context(current), "element_declarations_json": declarations},
+            confidence_shadow_json=_carried_confidence_shadow(current),
+            calibration_json=current.calibration_json,
+            proposal_decisions_json=current.proposal_decisions_json,
+            trace_acceptance_json=current.trace_acceptance_json,
+            evidence_refs_json=current.evidence_refs_json,
+            solver_request_json=current.solver_request_json,
+            solver_blockers_json=current.solver_blockers_json,
+            required_blocker_codes_json=current.required_blocker_codes_json,
+            required_criteria_texts_json=current.required_criteria_texts_json,
+            scene_revision_id=current.scene_revision_id,
+            created_by=principal.subject,
+            created_at=acted_at,
+        )
+        session.add(next_review)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Um ato concorrente de identidade criou outra revisão.",
+            ) from error
+        return next_review
+
+    def _review_element_identity_response(
+        *,
+        act: Literal["declared", "revoked", "relabeled"],
+        element_ref: str,
+        label: str | None,
+        proposal_ids: list[str],
+        acted_by_role: str,
+        acted_at: datetime,
+        next_review: ReviewRevisionRecord,
+        declarations: list[dict[str, Any]],
+    ) -> ReviewElementIdentityResponse:
+        return ReviewElementIdentityResponse(
+            act=act,
+            element_ref=element_ref,
+            label=label,
+            proposal_ids=proposal_ids,
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            review_version=next_review.version,
+            declarations=[_review_element_declaration_response(item) for item in declarations],
+        )
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/elements",
+        response_model=ReviewElementIdentityResponse,
+        tags=["review"],
+    )
+    async def declare_review_element(
+        job_id: UUID,
+        payload: DeclareReviewElementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewElementIdentityResponse:
+        """Declara que um conjunto de PROPOSTAS é um elemento, cunhando o ref no ato.
+
+        O mesmo ato do ADR-0058 uma etapa antes (ADR-0063, decisão 1): é humano, nunca
+        inferência — a rota não olha rótulo do modelo, proximidade nem camada para escolher o
+        grupo. Quem escolhe é quem assina; a sugestão assistida só semeia a seleção.
+        """
+        acted_by_role = _reviewer_role(principal)
+        if payload.element_ref is not None:
+            raise _problem(
+                "ELEMENT_REF_NOT_ASSIGNABLE",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O element_ref é cunhado pelo servidor: o cliente declara quais propostas "
+                "são o elemento, nunca qual é o nome dele.",
+            )
+        operation = f"review.element.declare:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ReviewElementIdentityResponse.model_validate(existing)
+        current, proposals = _review_element_act_target(
+            session,
+            job_id=job_id,
+            tenant_id=principal.tenant_id,
+            base_version=payload.base_version,
+        )
+        known = {proposal.id for proposal in proposals.proposals}
+        unknown = sorted(set(payload.proposal_ids) - known)
+        if unknown:
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O grupo cita proposta que não pertence ao snapshot desta revisão.",
+                {"proposal_ids": unknown},
+            )
+        if len(set(payload.proposal_ids)) != len(payload.proposal_ids):
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A mesma proposta foi citada duas vezes no grupo.",
+            )
+        declarations = _review_element_declarations(current)
+        taken = {
+            proposal_id
+            for declaration in declarations
+            if declaration.get("status") == "active"
+            for proposal_id in declaration.get("proposal_ids", [])
+        }
+        already = sorted(item for item in payload.proposal_ids if item in taken)
+        if already:
+            # Mover uma proposta de um elemento para outro é DOIS atos: revogar o anterior e
+            # declarar o novo. Reescrever por cima aqui seria a edição silenciosa que o
+            # produto recusa em toda parte.
+            raise _problem(
+                "ELEMENT_ALREADY_DECLARED",
+                status.HTTP_409_CONFLICT,
+                "Proposta já declarada em outro elemento; revogue a identidade antes.",
+                {"proposal_ids": already},
+            )
+        label = _element_label(payload.label)
+        if label is not None:
+            owner = _review_element_label_owner(declarations, label=label)
+            if owner is not None:
+                raise _problem(
+                    "ELEMENT_LABEL_ALREADY_USED",
+                    status.HTTP_409_CONFLICT,
+                    "Já existe um elemento com este rótulo nesta revisão; o casamento por "
+                    "identidade precisa de referente inequívoco.",
+                    {"element_ref": owner},
+                )
+        element_ref = _next_element_ref(session, job_id=job_id, tenant_id=principal.tenant_id)
+        acted_at = datetime.now(UTC)
+        declarations.append(
+            {
+                "element_ref": element_ref,
+                "label": label,
+                "proposal_ids": list(payload.proposal_ids),
+                "status": "active",
+                "declared_by": principal.subject,
+                "declared_role": acted_by_role,
+                "declared_at": acted_at.isoformat(),
+            }
+        )
+        next_review = _persist_review_element_act(
+            session,
+            principal=principal,
+            job_id=job_id,
+            current=current,
+            declarations=declarations,
+            acted_at=acted_at,
+        )
+        response = _review_element_identity_response(
+            act="declared",
+            element_ref=element_ref,
+            label=label,
+            proposal_ids=list(payload.proposal_ids),
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            next_review=next_review,
+            declarations=declarations,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="REVIEW_ELEMENT_IDENTITY_DECLARED",
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
+            # O TEXTO do rótulo não entra na auditoria: ele é conteúdo do croqui do cliente,
+            # e a auditoria guarda o que qualifica o ato. Que houve nome, sim; qual, não.
+            details={"element_ref": element_ref, "labeled": label is not None},
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/elements/revocations",
+        response_model=ReviewElementIdentityResponse,
+        tags=["review"],
+    )
+    async def revoke_review_element(
+        job_id: UUID,
+        payload: RevokeReviewElementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewElementIdentityResponse:
+        """Desfaz a identidade declarada na revisão: ato próprio, com autor e instante.
+
+        Duas coisas que a revogação NÃO faz, e ambas são leitura confirmada no aceite do DAP
+        da F-051: não apaga a entrada do histórico (ela fica `revoked`, e o ref revogado
+        continua fora do estoque de cunhagem), e não desfaz associação já confirmada por ela
+        — corrigir associação é a retificação de decisão que a revisão já tem.
+        """
+        acted_by_role = _reviewer_role(principal)
+        operation = f"review.element.revoke:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ReviewElementIdentityResponse.model_validate(existing)
+        current, _ = _review_element_act_target(
+            session,
+            job_id=job_id,
+            tenant_id=principal.tenant_id,
+            base_version=payload.base_version,
+        )
+        declarations = _review_element_declarations(current)
+        target = _active_review_element(declarations, element_ref=payload.element_ref)
+        acted_at = datetime.now(UTC)
+        target["status"] = "revoked"
+        target["revoked_by"] = principal.subject
+        target["revoked_role"] = acted_by_role
+        target["revoked_at"] = acted_at.isoformat()
+        next_review = _persist_review_element_act(
+            session,
+            principal=principal,
+            job_id=job_id,
+            current=current,
+            declarations=declarations,
+            acted_at=acted_at,
+        )
+        response = _review_element_identity_response(
+            act="revoked",
+            element_ref=payload.element_ref,
+            # O rótulo do ato revogado sai da resposta pelo mesmo motivo da cena: sem
+            # elemento, o nome não nomeia nada. Na entrada da lista ele continua legível,
+            # porque o histórico precisa dizer o que foi revogado.
+            label=None,
+            proposal_ids=list(target.get("proposal_ids", [])),
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            next_review=next_review,
+            declarations=declarations,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="REVIEW_ELEMENT_IDENTITY_REVOKED",
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
+            details={"element_ref": payload.element_ref},
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/elements/labels",
+        response_model=ReviewElementIdentityResponse,
+        tags=["review"],
+    )
+    async def relabel_review_element(
+        job_id: UUID,
+        payload: RelabelReviewElementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewElementIdentityResponse:
+        """Renomeia a identidade da revisão: ato declarado, com autor, instante e revisão nova.
+
+        O rótulo é o nome que a pessoa lê e, aqui, é também por onde o hint da cota-balão
+        procura o referente — por isso ele continua ÚNICO entre as identidades ativas do job
+        depois da renomeação. Renomear não move proposta e não troca `element_ref`; ainda
+        assim é revisão nova, porque quem revisa precisa ver que o nome mudou e por quem.
+        """
+        acted_by_role = _reviewer_role(principal)
+        operation = f"review.element.relabel:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ReviewElementIdentityResponse.model_validate(existing)
+        current, _ = _review_element_act_target(
+            session,
+            job_id=job_id,
+            tenant_id=principal.tenant_id,
+            base_version=payload.base_version,
+        )
+        label = _required_element_label(payload.label)
+        declarations = _review_element_declarations(current)
+        target = _active_review_element(declarations, element_ref=payload.element_ref)
+        owner = _review_element_label_owner(declarations, label=label, ignoring=payload.element_ref)
+        if owner is not None:
+            raise _problem(
+                "ELEMENT_LABEL_ALREADY_USED",
+                status.HTTP_409_CONFLICT,
+                "Já existe um elemento com este rótulo nesta revisão; o casamento por "
+                "identidade precisa de referente inequívoco.",
+                {"element_ref": owner},
+            )
+        target["label"] = label
+        acted_at = datetime.now(UTC)
+        next_review = _persist_review_element_act(
+            session,
+            principal=principal,
+            job_id=job_id,
+            current=current,
+            declarations=declarations,
+            acted_at=acted_at,
+        )
+        response = _review_element_identity_response(
+            act="relabeled",
+            element_ref=payload.element_ref,
+            label=label,
+            proposal_ids=list(target.get("proposal_ids", [])),
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            next_review=next_review,
+            declarations=declarations,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="REVIEW_ELEMENT_LABEL_CHANGED",
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
+            details={"element_ref": payload.element_ref},
         )
         session.commit()
         return response

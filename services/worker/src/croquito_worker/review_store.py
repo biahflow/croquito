@@ -172,6 +172,12 @@ def insert_review_revision_v1(
         "proposals": json.dumps(proposals.model_dump(mode="json")),
         "selected_associations": json.dumps(selected_associations),
         "declared_chains": json.dumps([]),
+        # A revisão 1 nasce sem identidade de elemento declarada: identidade é ato humano
+        # (F-051, ADR-0063 decisão 1), e a semente do worker não pratica ato nenhum. Vazia e
+        # EXPLÍCITA, e não deixada no default do servidor, pelo mesmo motivo do shadow: este
+        # caminho lista as colunas uma a uma, e o que ele não escreve some da revista de
+        # quem lê o INSERT.
+        "element_declarations": json.dumps([]),
         "confidence_shadow": json.dumps(shadow),
         "evidence_refs": json.dumps(evidence_refs),
         "solver_blockers": json.dumps(list(stored_blockers)),
@@ -190,7 +196,7 @@ def insert_review_revision_v1(
             "INSERT INTO review_revisions "
             "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
             "associations_json, proposals_json, selected_associations_json, "
-            "declared_chains_json, confidence_shadow_json, "
+            "declared_chains_json, element_declarations_json, confidence_shadow_json, "
             "calibration_json, proposal_decisions_json, "
             "evidence_refs_json, "
             "solver_request_json, solver_blockers_json, required_blocker_codes_json, "
@@ -201,6 +207,7 @@ def insert_review_revision_v1(
             f"{json_expression(dialect, 'proposals')}, "
             f"{json_expression(dialect, 'selected_associations')}, "
             f"{json_expression(dialect, 'declared_chains')}, "
+            f"{json_expression(dialect, 'element_declarations')}, "
             f"{json_expression(dialect, 'confidence_shadow')}, "
             "NULL, NULL, "
             f"{json_expression(dialect, 'evidence_refs')}, "
@@ -259,6 +266,14 @@ def insert_next_review_revision(
         # de propostas não decide nada sobre cotas, e perder a declaração aqui apagaria em
         # silêncio o que uma pessoa afirmou.
         "declared_chains_json": json_column(base_review["declared_chains_json"]),
+        # Identidade de elemento é ato humano da revisão anterior e viaja verbatim, pelo
+        # mesmo motivo da cadeia declarada: o refresh de propostas não declara nem revoga
+        # identidade nenhuma, e perdê-la aqui apagaria em silêncio o que uma pessoa afirmou.
+        #
+        # `or []` porque a coluna é NOT NULL: uma linha vinda de banco onde a migration
+        # `0031` correu sem o default gravaria `NULL` de volta e estouraria na integridade,
+        # em vez de dizer a verdade sobre ela — que ninguém declarou identidade nenhuma.
+        "element_declarations_json": json_column(base_review["element_declarations_json"]) or [],
         "field_witnesses_json": json_column(base_review["field_witnesses_json"]),
         "field_observations_json": json_column(base_review["field_observations_json"]),
         "calibration_json": calibration_json,
@@ -278,7 +293,8 @@ def insert_next_review_revision(
             "INSERT INTO review_revisions "
             "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
             "associations_json, proposals_json, selected_associations_json, "
-            "declared_chains_json, field_witnesses_json, field_observations_json, "
+            "declared_chains_json, element_declarations_json, "
+            "field_witnesses_json, field_observations_json, "
             "calibration_json, proposal_decisions_json, trace_acceptance_json, "
             "evidence_refs_json, solver_request_json, solver_blockers_json, "
             "required_blocker_codes_json, required_criteria_texts_json, "
@@ -287,6 +303,7 @@ def insert_next_review_revision(
             f"{expressions['packet_json']}, {expressions['associations_json']}, "
             f"{expressions['proposals_json']}, {expressions['selected_associations_json']}, "
             f"{expressions['declared_chains_json']}, "
+            f"{expressions['element_declarations_json']}, "
             f"{expressions['field_witnesses_json']}, "
             f"{expressions['field_observations_json']}, "
             f"{expressions['calibration_json']}, {expressions['proposal_decisions_json']}, "

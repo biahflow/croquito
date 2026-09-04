@@ -1179,6 +1179,124 @@ export type ElementProposalRejection = {
   rejected_at: string;
 };
 
+/**
+ * Uma identidade de elemento declarada na REVISÃO, sobre propostas (F-051 T2, ADR-0063).
+ *
+ * A entrada revogada NÃO some da lista: ela fica `status: "revoked"`, com o rótulo que teve
+ * e o carimbo de quem revogou — o `element_ref` sai de circulação e o histórico continua
+ * dizendo o que foi afirmado. Papel profissional, nunca o subject de quem agiu.
+ */
+export type ReviewElementDeclaration = {
+  element_ref: string;
+  /** O nome legível; `null` quando a identidade foi declarada sem nome. */
+  label: string | null;
+  proposal_ids: string[];
+  status: "active" | "revoked";
+  declared_by_role: string;
+  declared_at: string;
+  revoked_by_role: string | null;
+  revoked_at: string | null;
+};
+
+/**
+ * O ato de identidade da revisão e o estado que ele deixou. `review_version` é o
+ * `base_version` do próximo ato; `declarations` é a lista inteira depois do ato — a leitura
+ * da revisão (`GET /v1/jobs/{id}/review`) não carrega identidade nenhuma.
+ */
+export type ReviewElementIdentityAct = {
+  act: "declared" | "revoked" | "relabeled";
+  element_ref: string;
+  label: string | null;
+  proposal_ids: string[];
+  acted_by_role: string;
+  acted_at: string;
+  review_version: number;
+  declarations: ReviewElementDeclaration[];
+};
+
+/**
+ * Declara que um conjunto de propostas é um elemento (F-051 T2, ADR-0063 decisão 1).
+ *
+ * Como no ato da cena, o corpo NÃO carrega `element_ref` — quem cunha é o servidor, e
+ * mandá-lo daqui é `ELEMENT_REF_NOT_ASSIGNABLE`. O `label` é opcional e único entre as
+ * identidades ativas do job (`ELEMENT_LABEL_ALREADY_USED` aponta o existente); quando a
+ * pessoa não escreve nada, o campo não é enviado, porque `""` é `ELEMENT_LABEL_INVALID`.
+ */
+export async function declareReviewElement(
+  accessToken: string,
+  jobId: string,
+  declaration: {
+    base_version: number;
+    proposal_ids: string[];
+    reason: string;
+    label?: string;
+  },
+): Promise<ReviewElementIdentityAct> {
+  return apiJson<ReviewElementIdentityAct>(
+    `/v1/jobs/${jobId}/review/elements`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(declaration),
+    },
+  );
+}
+
+/**
+ * Renomeia a identidade da revisão. Não move proposta e não troca `element_ref`: só o nome
+ * que a pessoa lê muda, e ainda assim o ato cria revisão nova.
+ */
+export async function relabelReviewElement(
+  accessToken: string,
+  jobId: string,
+  relabel: {
+    base_version: number;
+    element_ref: string;
+    label: string;
+    reason: string;
+  },
+): Promise<ReviewElementIdentityAct> {
+  return apiJson<ReviewElementIdentityAct>(
+    `/v1/jobs/${jobId}/review/elements/labels`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(relabel),
+    },
+  );
+}
+
+/**
+ * Desfaz a identidade declarada na revisão. NÃO desfaz associação já confirmada por ela —
+ * corrigir associação é a retificação de decisão que a revisão já tem.
+ */
+export async function revokeReviewElement(
+  accessToken: string,
+  jobId: string,
+  revocation: { base_version: number; element_ref: string; reason: string },
+): Promise<ReviewElementIdentityAct> {
+  return apiJson<ReviewElementIdentityAct>(
+    `/v1/jobs/${jobId}/review/elements/revocations`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(revocation),
+    },
+  );
+}
+
 export async function listElementProposals(
   accessToken: string,
   jobId: string,
