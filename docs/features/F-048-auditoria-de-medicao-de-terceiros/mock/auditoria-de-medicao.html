@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-048 — Auditoria de medição de terceiros</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"), mesmo conjunto do
+         pacote da F-045 (docs/features/F-045-desfazer-codigo-confirmado/mock/). Nenhuma cor
+         nova: as quatro variáveis --recusa* reúnem, com nomes próprios, as cores que
+         `.app-alert`, `.decision-error` e `.identidade-erro` já usam em apps/web/src/styles.css
+         (linhas 764-779, 2224-2229, 3610-3618); --atencao* é o âmbar de
+         apps/web/src/medicao/styles.css:1726-1728, o mesmo que o pacote da F-045 já
+         reaproveitou do aviso de precedente fraco (F-044). A tabela de proveniência do README
+         repete essa lista com a referência de linha. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --atencao: #7c5210;
+        --atencao-line: #e2c79a;
+        --atencao-soft: #fdf5e8;
+        --recusa: #a33d32;
+        --recusa-ink: #7d2f26;
+        --recusa-line: #e0b4ad;
+        --recusa-soft: #fbeeec;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 80ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px 16px;
+        display: grid;
+        gap: 12px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      /* Idêntica a `.digest` de apps/web/src/medicao/styles.css:1131 e
+         apps/web/src/orcamento/styles.css:397 — monoespaçada porque o digest é conferido
+         caractere a caractere, e a proporcional embaralha 0/O e 1/l onde isso importa. */
+      .digest {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.78em;
+        color: var(--ink-secondary);
+      }
+      .arquivo-linha {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      .arquivo-linha strong {
+        font-size: 13.5px;
+        color: var(--ink);
+      }
+      /* Convite de upload. Sem ícone: a promessa é de achar, não de decorar. */
+      .dropzone {
+        display: grid;
+        gap: 5px;
+        justify-items: center;
+        padding: 30px 20px;
+        text-align: center;
+        border: 2px dashed var(--line);
+        border-radius: 8px;
+        background: var(--surface-subtle);
+      }
+      .dropzone strong {
+        font-size: 13.5px;
+        color: var(--ink);
+      }
+      .dropzone span {
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.atencao {
+        border-color: var(--atencao-line);
+        background: var(--atencao-soft);
+        color: var(--atencao);
+      }
+      .aviso.recusa {
+        border-color: var(--recusa-line);
+        background: var(--recusa-soft);
+        color: var(--recusa-ink);
+      }
+      .aviso strong {
+        color: inherit;
+      }
+      /* Em processamento: neutro, sem barra de progresso — nenhum número finge saber
+         quanto falta numa conferência centavo a centavo. */
+      .processando {
+        display: grid;
+        gap: 10px;
+        padding: 12px 14px;
+        background: var(--surface-subtle);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      /* Veredito no topo dos estados 3 e 4, com o MESMO peso visual nas duas variantes —
+         limpo é resultado, não ausência de resultado (decisão 2 do README). */
+      .veredito {
+        display: grid;
+        gap: 4px;
+        padding: 14px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+      }
+      .veredito .numero {
+        font-size: 20px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+      .veredito .frase {
+        font-size: 13px;
+      }
+      .veredito.furos {
+        border-color: var(--atencao-line);
+        background: var(--atencao-soft);
+      }
+      .veredito.furos .numero {
+        color: var(--atencao);
+      }
+      .veredito.furos .frase {
+        color: var(--atencao);
+      }
+      .veredito.limpo {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+      }
+      .veredito.limpo .numero {
+        color: var(--accent-text);
+      }
+      .veredito.limpo .frase {
+        color: var(--accent-text);
+      }
+      /* Subtítulo de grupo: a classe técnica (quantity_diffs etc.) mora aqui, nunca no
+         título do grupo — decisão 1. */
+      .grupo-titulo {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .grupo-titulo h4 {
+        margin: 0;
+        font-size: 13.5px;
+        color: var(--ink);
+      }
+      .grupo-titulo small {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .tag-classe {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: var(--surface-sunken);
+        color: var(--ink-secondary);
+        font-size: 10.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      td.numero,
+      th.numero {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      td.diferenca {
+        font-weight: 700;
+        color: var(--atencao);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .codigo-servico {
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .codigo-servico + .descricao-servico {
+        display: block;
+        font-weight: 400;
+        color: var(--ink-secondary);
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.limpo {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.furos {
+        border-color: var(--atencao-line);
+        background: var(--atencao-soft);
+        color: var(--atencao);
+      }
+      .selo.recusado {
+        border-color: var(--recusa-line);
+        background: var(--recusa-soft);
+        color: var(--recusa-ink);
+      }
+      button {
+        font: inherit;
+        font-size: 12px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.miudo {
+        font-size: 11.5px;
+        padding: 5px 9px;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-048 — Auditoria de medição de terceiros</h1>
+      <p>
+        Design Approval Package, revisão 1. Jornada nova: alguém sobe uma medição alheia —
+        MAPÃO, boletim ou os dois — e recebe o relatório do que não fecha, com o código, a
+        linha e a diferença em reais.
+      </p>
+      <p>
+        <strong>Decisão que precede este pacote, e não é reaberta aqui:</strong> a auditoria é
+        <strong>produto avulso</strong> (decisão do dono, 2026-09-05). Jornada própria, sem
+        exigir projeto, prancha, contrato ou rodada no croquito — quem entra pode não ser
+        cliente ainda. Este pacote decide só a <em>forma</em> das seis telas.
+      </p>
+      <p>
+        Os três motores por trás da tela (<code>compare_bulletin</code>, a paridade de
+        fórmula e <code>diagnose_contract</code>) já existem, são determinísticos e não mudam
+        de comportamento por causa deste pacote — nenhum ADR fica atrás deste gate.
+      </p>
+      <p>Números, nomes, arquivos e códigos são <strong>sintéticos</strong>, no formato SCO.</p>
+    </header>
+
+    <main>
+      <section class="estado">
+        <h2>
+          1 — Vazio, com convite
+          <small>Diz o que a jornada faz e qual arquivo aceita — nenhuma promessa de correção, só de achar.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Auditoria de medição de terceiros</h3>
+            <p>
+              Suba o MAPÃO ou o boletim da obra e receba o relatório do que não fecha, centavo
+              a centavo. Não é preciso ter projeto, prancha nem contrato no croquito — só o
+              arquivo.
+            </p>
+            <div class="dropzone">
+              <strong>Arraste o arquivo aqui, ou escolha no computador</strong>
+              <span>Aceita planilha .xlsx de MAPÃO ou de boletim de medição.</span>
+            </div>
+            <div class="aviso">
+              Esta auditoria acha o que não fecha. Ela não corrige a medição — corrigir é ato
+              de quem mediu.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          2 — Em processamento
+          <small>Mostra o arquivo e o digest; nenhuma barra de progresso finge saber quanto falta.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Auditoria em andamento</h3>
+            <div class="processando">
+              <div class="arquivo-linha">
+                <strong>Praça-Delta-BM-outubro.xlsx</strong>
+                <span
+                  class="digest"
+                  title="c48e0b9a2d613f7e5b0a184c6d9f2e7b83a15c04e6f9b2d7a4c1e8f05b3d9a76"
+                  >sha256 c48e0b9a2d61</span
+                >
+              </div>
+              <p>
+                Lendo o boletim e conferindo linha a linha contra o motor determinístico. Sem
+                estimativa de tempo: a conferência é centavo a centavo, e não existe "quase
+                pronto" nela.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          3 — Relatório com furos
+          <small>Achados agrupados por consequência: dinheiro que não fecha vem primeiro, do jeito que quem não conhece o sistema entende.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <div class="arquivo-linha">
+              <strong>Praça-Alfa-BM-setembro.xlsx</strong>
+              <span
+                class="digest"
+                title="a91f2c8e93d15b7e04c6a2f8d1b9e3c705a4f6b8d2e0c9a17b3f5d8e6c1a4b02"
+                >sha256 a91f2c8e93d1</span
+              >
+            </div>
+            <div class="veredito furos">
+              <span class="numero">9 achados</span>
+              <span class="frase">R$ 1.356,80 em dinheiro que não fecha</span>
+            </div>
+          </div>
+
+          <div class="painel">
+            <div class="grupo-titulo">
+              <h4>Dinheiro que não fecha</h4>
+              <small>5 achados</small>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Classe</th>
+                  <th>Código</th>
+                  <th>O que o arquivo diz</th>
+                  <th>O que a conta dá</th>
+                  <th class="numero">Diferença</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="tag-classe">quantidade</span></td>
+                  <td>
+                    <span class="codigo-servico">CE07200018(/)</span>
+                    <span class="descricao-servico">Piso intertravado de concreto e=6cm</span>
+                  </td>
+                  <td class="numero">118,40 m²</td>
+                  <td class="numero">128,40 m²</td>
+                  <td class="diferenca">R$ 590,00</td>
+                </tr>
+                <tr>
+                  <td><span class="tag-classe">quantidade</span></td>
+                  <td>
+                    <span class="codigo-servico">BP03100027(B)</span>
+                    <span class="descricao-servico">Guarda-corpo em tubo galvanizado</span>
+                  </td>
+                  <td class="numero">42,00 m</td>
+                  <td class="numero">38,00 m</td>
+                  <td class="diferenca">R$ 167,20</td>
+                </tr>
+                <tr>
+                  <td><span class="tag-classe">preço unitário</span></td>
+                  <td>
+                    <span class="codigo-servico">ET22100014(/)</span>
+                    <span class="descricao-servico">Contrapiso desempenado e=4cm</span>
+                  </td>
+                  <td class="numero">R$ 24,90/m²</td>
+                  <td class="numero">R$ 22,10/m²</td>
+                  <td class="diferenca">R$ 84,00</td>
+                </tr>
+                <tr>
+                  <td><span class="tag-classe">total da linha</span></td>
+                  <td>
+                    <span class="codigo-servico">ES15400036(/)</span>
+                    <span class="descricao-servico">Alambrado h=2,00m com tela losangular</span>
+                  </td>
+                  <td class="numero">R$ 1.254,00</td>
+                  <td class="numero">R$ 1.180,00</td>
+                  <td class="diferenca">R$ 74,00</td>
+                </tr>
+                <tr>
+                  <td><span class="tag-classe">total da obra</span></td>
+                  <td>
+                    <span class="codigo-servico">—</span>
+                    <span class="descricao-servico">total geral do boletim</span>
+                  </td>
+                  <td class="numero">R$ 184.320,50</td>
+                  <td class="numero">R$ 183.878,90</td>
+                  <td class="diferenca">R$ 441,60</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              Sem tolerância: a comparação é exata, sem arredondamento — a menor diferença de
+              um centavo entra na lista do mesmo jeito que uma de R$ 441,60.
+            </p>
+          </div>
+
+          <div class="painel">
+            <div class="grupo-titulo">
+              <h4>Linha que existe de um lado só</h4>
+              <small>3 achados — MAPÃO × BM do mesmo arquivo</small>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Onde falta</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <span class="codigo-servico">CE09400051(B)</span>
+                    <span class="descricao-servico">Regularização de base em brita</span>
+                  </td>
+                  <td>Existe no MAPÃO; não aparece no BM do mesmo arquivo.</td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="codigo-servico">BP11200033(/)</span>
+                    <span class="descricao-servico">Sinalização horizontal em termoplástico</span>
+                  </td>
+                  <td>Existe no MAPÃO; não aparece no BM do mesmo arquivo.</td>
+                </tr>
+                <tr>
+                  <td>
+                    <span class="codigo-servico">ES04100022(/)</span>
+                    <span class="descricao-servico">Banco de concreto pré-moldado</span>
+                  </td>
+                  <td>Existe no BM; não aparece no MAPÃO do mesmo arquivo.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="painel">
+            <div class="grupo-titulo">
+              <h4>Observação</h4>
+              <small>1 achado — não é diff de centavo</small>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>O arquivo usa</th>
+                  <th>A conta usa</th>
+                  <th>Por que não é diferença</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <span class="codigo-servico">ET18300045(/)</span>
+                    <span class="descricao-servico">Contrapiso alisado e=3cm</span>
+                  </td>
+                  <td class="numero">M2</td>
+                  <td class="numero">m²</td>
+                  <td>Quantidade, preço unitário e total são idênticos — só a grafia da unidade muda.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="acoes">
+            <button class="primario">Exportar relatório</button>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          A ordem dos três grupos é a hierarquia (decisão 1): dinheiro primeiro, linha de um
+          lado só depois, observação por último — e cada tabela tem a classe técnica
+          (<code>quantity_diffs</code>, <code>unit_price_diffs</code>, <code>line_total_diffs</code>,
+          <code>bulletin_total_diff</code>, <code>missing_in_reference</code>,
+          <code>missing_in_generated</code>, <code>unit_notes</code>) só como rótulo pequeno, nunca
+          como título de seção.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          4 — Relatório limpo
+          <small>Zero centavo é resultado, não ausência de resultado — e carrega o mesmo peso visual do relatório com furos.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <div class="arquivo-linha">
+              <strong>Obra-Beta-Medicao-08.xlsx</strong>
+              <span
+                class="digest"
+                title="3d70b6aa1f52e8c604b9a1d7f3e6c8b02a5d9f1c7e4b6a80d3c9f2e5b7a1c4d6"
+                >sha256 3d70b6aa1f52</span
+              >
+            </div>
+            <div class="veredito limpo">
+              <span class="numero">Fecha centavo a centavo</span>
+              <span class="frase">nas 187 linhas conferidas</span>
+            </div>
+            <p>
+              187 linhas de serviço, todas com quantidade, preço unitário e total idênticos entre o
+              BM e o MAPÃO do arquivo; nenhum código exclusivo de uma das abas; o total geral bate.
+            </p>
+            <div class="aviso">
+              Uma observação de unidade convive com relatório limpo: <code>ET09100077(/)</code> —
+              arquivo usa "UN", conta usa "un", valores idênticos. Não é diferença de centavo, e
+              por isso não derruba o <code>zero_cent</code>.
+            </div>
+            <div class="acoes">
+              <button class="primario">Exportar relatório</button>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O veredito limpo usa o mesmo componente (<code>.veredito</code>) do relatório com
+          furos, só trocando a cor — nenhum dos dois é menor que o outro. A contagem de linhas
+          conferidas é a informação; "nenhum furo" sozinho não prova que 187 linhas foram
+          olhadas.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          5 — Recusa do arquivo
+          <small>Nunca relatório vazio: o motivo por extenso e o que fazer em seguida.</small>
+        </h2>
+        <div class="corpo">
+          <div class="aviso recusa">
+            O arquivo é recusado com o motivo por extenso, sempre com uma ação possível. Uma
+            tela em branco seria pior do que qualquer uma destas frases.
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Situação</th>
+                <th>O que a tela diz</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Arquivo corrompido ou não é uma planilha</td>
+                <td>
+                  Não conseguimos abrir <code>Praça-Épsilon-BM.xlsx</code> como planilha. Confira
+                  se o arquivo não está corrompido e reenvie em <code>.xlsx</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>Aba do boletim ausente</td>
+                <td>
+                  A planilha não tem a aba "BM" que a auditoria espera. Abas encontradas:
+                  Resumo, Memória de Cálculo. Renomeie a aba correta para "BM" ou informe o nome
+                  dela, e reenvie.
+                </td>
+              </tr>
+              <tr>
+                <td>Linha sem código e sem separador reconhecível</td>
+                <td>
+                  A linha 34 da aba BM não tem código de serviço nem é uma linha separadora
+                  reconhecível. Confira a planilha a partir dessa linha e reenvie.
+                </td>
+              </tr>
+              <tr>
+                <td>Linha de total da obra ausente</td>
+                <td>
+                  A planilha não declara a linha de total do boletim ("TOTAL GERAL"). Confira se
+                  a última linha da aba traz o total da obra e reenvie.
+                </td>
+              </tr>
+              <tr>
+                <td>Célula numérica com texto, fórmula quebrada ou célula mesclada</td>
+                <td>
+                  A célula de quantidade da linha 51 não traz um número. Confira se não há
+                  texto, fórmula quebrada ou célula mesclada ali, e reenvie.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="nota-implementador">
+          Cada linha desta tabela é um motivo real do módulo (<code>BULLETIN_WORKBOOK_UNREADABLE</code>,
+          <code>BULLETIN_SHEET_MISSING</code>, <code>BULLETIN_ROW_UNPARSEABLE</code>,
+          <code>BULLETIN_TOTAL_ROW_MISSING</code>, <code>BULLETIN_CELL_NOT_NUMERIC</code>),
+          traduzido por extenso — a tela nunca repassa o código do erro cru.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          6 — Histórico de auditorias
+          <small>O que já foi auditado, com digest e veredito — é o que permite reconferir.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Arquivo</th>
+                <th>Digest</th>
+                <th>Quem subiu</th>
+                <th>Quando</th>
+                <th>Veredito</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Praça-Alfa-BM-setembro.xlsx</td>
+                <td><span class="digest">a91f2c8e93d1</span></td>
+                <td>Marina Duarte · Consultoria Prisma</td>
+                <td>05/09/2026 09:12</td>
+                <td><span class="selo furos">9 achados · R$ 1.356,80</span></td>
+                <td><button class="miudo">Ver relatório</button></td>
+              </tr>
+              <tr>
+                <td>Obra-Beta-Medicao-08.xlsx</td>
+                <td><span class="digest">3d70b6aa1f52</span></td>
+                <td>Marina Duarte · Consultoria Prisma</td>
+                <td>03/09/2026 17:44</td>
+                <td><span class="selo limpo">fecha centavo a centavo</span></td>
+                <td><button class="miudo">Ver relatório</button></td>
+              </tr>
+              <tr>
+                <td>Contrato-Gama-BM-jul.xlsx</td>
+                <td><span class="digest">5e12ffa07c34</span></td>
+                <td>Ricardo Prado · Auditoria Vetor</td>
+                <td>28/08/2026 11:05</td>
+                <td><span class="selo recusado">recusado · aba ausente</span></td>
+                <td><button class="miudo">Ver detalhe</button></td>
+              </tr>
+              <tr>
+                <td>Praça-Delta-BM-junho.xlsx</td>
+                <td><span class="digest">8b2f61ce0a4d</span></td>
+                <td>Ricardo Prado · Auditoria Vetor</td>
+                <td>29/08/2026 14:20</td>
+                <td><span class="selo furos">3 achados · R$ 212,40</span></td>
+                <td><button class="miudo">Ver relatório</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="nota-implementador">
+          O histórico é o que dá sentido ao digest do estado 3: reconferir é abrir a mesma linha
+          e comparar o relatório de novo contra o mesmo arquivo, pelo mesmo hash.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

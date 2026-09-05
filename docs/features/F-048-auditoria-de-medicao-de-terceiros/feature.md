@@ -118,8 +118,11 @@ projeto, prancha ou rodada no croquito.
 1. ~~**Seleção e prioridade**~~ — **cumprido em 2026-09-05** (Daniel Campos): `HIGH`.
 2. ~~**Decisão do unknown 2** (avulso × dentro da medição)~~ — **cumprido em 2026-09-05**:
    produto avulso.
-3. **Design Approval Package** — `INTERFACE_CHANGE`, jornada nova. **Único gate restante**;
-   o pacote está em produção nesta rodada.
+3. **Design Approval Package** — `INTERFACE_CHANGE`, jornada nova. **Único gate restante.**
+   A [revisão 1 do pacote](mock/README.md) foi produzida em 2026-09-05 e **aguarda
+   aprovação**: seis estados e seis decisões, com uma correção de desenho aplicada na
+   revisão (a comparação avulsa é entre as **camadas do próprio arquivo** do cliente — MAPÃO
+   × BM —, nunca contra uma conferência do croquito, que no modo avulso não existe).
 
 ## References
 
