@@ -2920,6 +2920,12 @@ Cascata vazia, takeoff ainda não revisado por inteiro e nenhuma decisão de có
 sem decisão de código, com `ESTIMATE_ASSIGNMENT_MISSING`. `bdi_percent` ilegível devolve
 `422 ESTIMATE_BDI_INVALID`.
 
+Serviço da matriz **sem nenhuma parcela de elemento** (só `standalone`/`dependent` — o
+canteiro da F-042 e o transporte) não passa pelo portão de decisão de código, então nunca
+tem fonte citada: com **uma única** tabela na cascata ele precifica por ela; com mais de
+uma, a montagem recusa com o mesmo `ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED` — a escolha da
+fonte é da orçamentista, nunca da ordem da cascata.
+
 A resposta não carrega URL: ela é guardada no registro de idempotência, e URL assinada é
 credencial de leitura.
 

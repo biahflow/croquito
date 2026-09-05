@@ -751,6 +751,17 @@ def build_worksite_estimate(
         # Regime da matriz: uma linha por SERVIÇO. A matriz funde as parcelas dos elementos e
         # a quantidade da linha é a soma delas; a fonte de preço é do código (uma por serviço).
         catalog_sha_by_code = _cited_catalog_by_code(assignments)
+        # Serviço SEM elemento de prancha (só parcelas `STANDALONE`/`DEPENDENT` — canteiro e
+        # transporte, F-042) não passa pelo portão de decisão de código, então nunca tem fonte
+        # citada. Com UMA fonte na cascata não há escolha a fazer e ele precifica por ela;
+        # com mais de uma, a recusa continua — a escolha é do orçamentista. Serviço com
+        # parcela de elemento fica de fora do fallback de propósito: a citação dele nasce da
+        # confirmação, e dispensá-la aqui furaria esse portão.
+        codes_without_element = {
+            service.code
+            for service in calc_matrix.services
+            if all(item.source_item_id is None for item in service.contributions)
+        }
         resolved = resolve_calc_matrix(
             included_items,
             assignments,
@@ -759,9 +770,17 @@ def build_worksite_estimate(
             error_prefix="ESTIMATE",
         )
         for service in resolved.services:
+            cited = catalog_sha_by_code.get(service.code)
+            if (
+                cited is None
+                and service.code not in catalog_sha_by_code
+                and service.code in codes_without_element
+                and len(cascade) == 1
+            ):
+                cited = cascade[0].source_sha256
             catalog = _priced_catalog(
                 service.code,
-                catalog_sha_by_code.get(service.code),
+                cited,
                 catalogs_by_digest,
                 cascade,
                 item_id=None,
