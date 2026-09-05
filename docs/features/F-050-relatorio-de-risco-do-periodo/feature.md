@@ -111,7 +111,11 @@ para mandar ao cliente sem edição.
 
 1. ~~**Seleção, prioridade e as respostas dos unknowns 1 e 2**~~ — **cumprido em
    2026-09-05** (Daniel Campos): `MEDIUM`, período de medição, testemunha como observação.
-2. **Design Approval Package** — único gate restante antes do planejamento.
+2. **Design Approval Package** — único gate restante antes do planejamento. A
+   [revisão 1 do pacote](mock/README.md) foi produzida em 2026-09-05 e **aguarda
+   aprovação**: cinco estados e cinco decisões, com as três classes por consequência
+   distinguidas por selo escrito e borda (nunca só por cor) e a testemunha de campo presa à
+   classe observação, como o ADR-0049 exige.
 
 ## References
 

@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-050 — Relatório de risco e pendências do período</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico") e de
+         apps/web/src/medicao/styles.css (família --cena e --atencao da jornada de medição,
+         onde este relatório vive). O que é novo está marcado como NOVO na tabela de
+         proveniência do README — e não há nenhum aqui: as três cores das classes são as
+         MESMAS já usadas em `.decision-error`, `.duplo-diferenca`/`.confronto-divergence_recorded`
+         e na convenção "cinza = observação da máquina" (comentário do mock da F-045). O que é
+         novo é a PAREAÇÃO das três num único selo de severidade por consequência — isso é
+         decisão deste pacote, registrada no README, não cor nova. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        /* --cena: origem "cena aprovada", mesma família de apps/web/src/medicao/styles.css. */
+        --cena: #2b5ea8;
+        --cena-soft: #eef3fb;
+        --cena-line: #b7cde8;
+        --cena-ink: #1f4a86;
+        /* --atencao: âmbar de divergência/aviso, idêntico ao de medicao/styles.css. */
+        --atencao: #7c5210;
+        --atencao-line: #e2c79a;
+        --atencao-soft: #fdf5e8;
+        /* Vermelho de bloqueio: o MESMO hex de `.decision-error` (styles.css) e das leituras
+           rejeitadas/revogadas (`#a33d32`, usado em vários pontos de styles.css e
+           medicao/styles.css). Não é variável nomeada no design system — é hex reaproveitado,
+           como o próprio código já faz em quatro arquivos diferentes. */
+        --bloqueio: #a33d32;
+        --bloqueio-soft: #fbeeec;
+        --bloqueio-ink: #7d2f26;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 82ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 16px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+
+      /* Cabeçalho do documento — repetido nos estados 1, 2, 4 e 5: é o mesmo cabeçalho do
+         relatório em todo estado, porque o documento é sempre o mesmo tipo de artefato. */
+      .doc-cabecalho {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 14px;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-subtle);
+      }
+      .doc-campo {
+        display: grid;
+        gap: 3px;
+      }
+      .doc-campo span {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--ink-secondary);
+        font-weight: 700;
+      }
+      .doc-campo b {
+        font-size: 13.5px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+      .doc-campo code {
+        font-size: 11.5px;
+        color: var(--ink);
+      }
+
+      /* Blocos de classe (impede / muda dinheiro / observação). Cada um tem cor de fundo do
+         cabeçalho E o rótulo por extenso — a cor nunca é o único indicador, aqui nem no item. */
+      .classe-bloco {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .classe-cabeca {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+      }
+      .classe-cabeca .contagem {
+        margin-left: auto;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: none;
+        letter-spacing: normal;
+      }
+      .classe-cabeca .porque {
+        flex-basis: 100%;
+        font-size: 11.5px;
+        font-weight: 400;
+        text-transform: none;
+        letter-spacing: normal;
+        color: inherit;
+        opacity: 0.85;
+      }
+      .classe-impede .classe-cabeca {
+        background: var(--bloqueio-soft);
+        color: var(--bloqueio-ink);
+        border-bottom: 2px solid var(--bloqueio);
+      }
+      .classe-dinheiro .classe-cabeca {
+        background: var(--atencao-soft);
+        color: var(--atencao);
+        border-bottom: 2px solid var(--atencao);
+      }
+      .classe-observacao .classe-cabeca {
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+        border-bottom: 2px solid var(--muted);
+      }
+      .itens-lista {
+        display: grid;
+        gap: 10px;
+        padding: 12px 14px;
+      }
+
+      /* Cada item carrega a própria etiqueta de classe — não só a cor da seção-mãe — porque
+         um item pode ser citado fora do agrupamento (numa reunião, num e-mail) e precisa
+         continuar legível sozinho. */
+      .item-pendencia {
+        border: 1px solid var(--line);
+        border-left-width: 4px;
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 7px;
+        background: var(--surface);
+      }
+      .item-pendencia.impede {
+        border-left-color: var(--bloqueio);
+      }
+      .item-pendencia.dinheiro {
+        border-left-color: var(--atencao);
+      }
+      .item-pendencia.observacao {
+        border-left-color: var(--muted);
+      }
+      .item-topo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .item-titulo {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .item-selo {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 700;
+        border: 1px solid;
+        white-space: nowrap;
+      }
+      .item-selo.impede {
+        border-color: var(--bloqueio);
+        color: var(--bloqueio-ink);
+        background: var(--bloqueio-soft);
+      }
+      .item-selo.dinheiro {
+        border-color: var(--atencao-line);
+        color: var(--atencao);
+        background: var(--atencao-soft);
+      }
+      .item-selo.observacao {
+        border-color: var(--muted);
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      .item-origem {
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .item-confronto {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        align-items: end;
+        margin: 2px 0;
+      }
+      .item-valor {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .item-valor span {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+      }
+      .item-valor b {
+        font-size: 16px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+      .item-diferenca {
+        padding-left: 16px;
+        border-left: 1px solid var(--line);
+      }
+      .item-ato {
+        font-size: 12.5px;
+        color: var(--ink);
+        background: var(--surface-subtle);
+        border-radius: 6px;
+        padding: 7px 10px;
+      }
+      .item-ato strong {
+        color: inherit;
+      }
+      .item-nota {
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .idade-selo {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 700;
+        border: 1px dashed var(--muted);
+        color: var(--ink-secondary);
+        background: var(--surface);
+      }
+
+      /* Estado 2 — período limpo. Mesmo peso visual dos demais estados: não é um toast, é o
+         MESMO documento, só que dizendo que não há pendência. */
+      .periodo-limpo {
+        text-align: center;
+        padding: 36px 24px;
+        display: grid;
+        gap: 10px;
+        justify-items: center;
+      }
+      .periodo-limpo .marca {
+        font-size: 30px;
+        color: var(--accent-text);
+      }
+      .periodo-limpo h3 {
+        margin: 0;
+        font-size: 16px;
+        color: var(--ink);
+      }
+      .periodo-limpo p {
+        max-width: 56ch;
+      }
+      .periodo-limpo .rodadas {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
+        margin-top: 4px;
+      }
+      .rodada-selo {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 11.5px;
+        font-weight: 700;
+        border: 1px solid var(--accent-line);
+        color: var(--accent-text);
+        background: var(--accent-soft);
+      }
+
+      /* Estado 3 — testemunha de campo, painel isolado no vocabulário da F-030. */
+      .testemunha {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-subtle);
+      }
+      .eyebrow {
+        margin: 0;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 12.5px;
+        background: var(--surface);
+        color: var(--ink-secondary);
+      }
+      .aviso.observacao {
+        border-color: var(--muted);
+        background: var(--surface-subtle);
+        color: var(--ink);
+      }
+      .aviso strong {
+        color: inherit;
+      }
+
+      /* Estado 4 — o documento como entrega, ao lado do BM. */
+      .entrega {
+        display: grid;
+        gap: 14px;
+      }
+      .entrega-lado-a-lado {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .artefato-irmao {
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 6px;
+      }
+      .artefato-irmao h4 {
+        margin: 0;
+        font-size: 13px;
+      }
+      .resumo-classes {
+        display: grid;
+        gap: 8px;
+      }
+      .resumo-linha {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font-size: 12.5px;
+      }
+      .resumo-linha.impede {
+        border-left: 4px solid var(--bloqueio);
+      }
+      .resumo-linha.dinheiro {
+        border-left: 4px solid var(--atencao);
+      }
+      .resumo-linha.observacao {
+        border-left: 4px solid var(--muted);
+      }
+      .resumo-linha b {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+      }
+      .rodape-pronto {
+        font-size: 12.5px;
+        color: var(--ink-secondary);
+        border-top: 1px dashed var(--line);
+        padding-top: 10px;
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-050 — Relatório de risco e pendências do período</h1>
+      <p>
+        Design Approval Package, revisão 1. Documento que sai <strong>ao lado do Boletim de
+        Medição</strong> ao fechar um período: agrega as pendências das <strong>seis fontes</strong>
+        que já existem no sistema (nenhuma classe de risco é inventada), classificadas pela
+        <strong>consequência</strong> — impede a exportação, muda dinheiro, ou é observação — e
+        não pela origem técnica do achado, porque quem lê é o cliente, não quem conhece os
+        módulos.
+      </p>
+      <p>
+        <strong>O recorte é o período de medição</strong>, não o mês de calendário: o documento
+        tem número e fecho contratual, e cada pendência pertence a uma rodada. Quando a medição
+        atrasa em relação ao mês, o documento acompanha a medição — é a consequência aceita da
+        decisão do dono (2026-09-05).
+      </p>
+      <p>
+        <strong>A testemunha de campo divergente é sempre observação</strong>, nunca risco:
+        promovê-la contradiria o <strong>ADR-0049</strong>, que a definiu como neutra. O estado 3
+        existe só por causa dela.
+      </p>
+      <p>Contrato, período, elementos, códigos e valores são <strong>sintéticos</strong>.</p>
+    </header>
+
+    <main>
+      <section class="estado" id="estado-01">
+        <h2>
+          1 — Período com pendências: o documento
+          <small
+            >Cada pendência mostra a origem, o número quando houver, e o ato que a resolve —
+            nada aparece só no relatório sem existir na fonte.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="doc-cabecalho">
+            <div class="doc-campo"><span>Contrato</span><b>0142/2026 — Praça do Marimbondo</b></div>
+            <div class="doc-campo"><span>Período</span><b>5ª medição</b></div>
+            <div class="doc-campo"><span>Rodada</span><b>5</b></div>
+            <div class="doc-campo"><span>Fechado em</span><b>05/09/2026 14:32</b></div>
+            <div class="doc-campo"><span>Digest</span><code>8f2c1a…d093</code></div>
+          </div>
+
+          <div class="classe-bloco classe-impede">
+            <div class="classe-cabeca">
+              <span>✕ Impede a exportação</span>
+              <span class="porque"
+                >Travam o fecho do boletim — por isso vêm primeiro.</span
+              >
+              <span class="contagem">2 pendências</span>
+            </div>
+            <div class="itens-lista">
+              <div class="item-pendencia impede">
+                <div class="item-topo">
+                  <span class="item-selo impede">✕ pacote aberto</span>
+                  <span class="item-titulo">Pacote de serviços do elemento el_3f2a</span>
+                </div>
+                <p class="item-origem">
+                  Origem: rodada 5 · prancha PL-03 · elemento <code>el_3f2a</code> ("Piso
+                  intertravado — canteiro 2")
+                </p>
+                <p>
+                  1 de 2 serviços confirmados (<code>PI04200030(B)</code>); o pacote ainda não
+                  recebeu o ato de fechamento.
+                </p>
+                <p class="item-ato">
+                  <strong>Ato que resolve:</strong> fechar o pacote de serviços do elemento
+                  <code>el_3f2a</code> — ou confirmar o segundo código que falta.
+                </p>
+              </div>
+              <div class="item-pendencia impede">
+                <div class="item-topo">
+                  <span class="item-selo impede">✕ boletim vencido</span>
+                  <span class="item-titulo">Boletim de Medição nº 0088</span>
+                </div>
+                <p class="item-origem">Origem: rodada 5 · aprovação nominal do boletim</p>
+                <p>
+                  Assinado em 02/09/2026 sobre o digest <code>71ac9e…4e02</code>; a rodada mudou
+                  depois (retificação do item <code>ti_5510</code>), e o conteúdo atual tem o
+                  digest <code>9d1fa3…c730</code>. A assinatura não cobre mais o que está gravado.
+                </p>
+                <p class="item-ato">
+                  <strong>Ato que resolve:</strong> assinar de novo o boletim sobre o conteúdo
+                  atual.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="classe-bloco classe-dinheiro">
+            <div class="classe-cabeca">
+              <span>⚠ Muda dinheiro</span>
+              <span class="porque"
+                >Alteram o valor da medição, sem travar o fecho do boletim.</span
+              >
+              <span class="contagem">2 pendências</span>
+            </div>
+            <div class="itens-lista">
+              <div class="item-pendencia dinheiro">
+                <div class="item-topo">
+                  <span class="item-selo dinheiro">⚠ fora da tolerância</span>
+                  <span class="item-titulo">Divergência de quantidade — item ti_9c14</span>
+                </div>
+                <p class="item-origem">
+                  Origem: rodada 5 · prancha PL-02 · item <code>ti_9c14</code> ("Alambrado
+                  galvanizado")
+                </p>
+                <div class="item-confronto">
+                  <span class="item-valor"><span>Legenda</span><b>62,00 m</b></span>
+                  <span class="item-valor"><span>Cena aprovada</span><b>68,20 m</b></span>
+                  <span class="item-diferenca item-valor"
+                    ><span>Diferença</span><b>6,20 m (10,0%)</b></span
+                  >
+                </div>
+                <p>Tolerância nomeada: 1% × 62,00 m = 0,62 m. A diferença passa da tolerância.</p>
+                <p class="item-ato">
+                  <strong>Ato que resolve:</strong> decidir, entre os dois números, a quantidade
+                  do item <code>ti_9c14</code>.
+                </p>
+              </div>
+              <div class="item-pendencia dinheiro">
+                <div class="item-topo">
+                  <span class="item-selo dinheiro">⚠ código revogado</span>
+                  <span class="item-titulo">Código revogado no período — elemento el_18d0</span>
+                </div>
+                <p class="item-origem">
+                  Origem: rodada 5 · elemento <code>el_18d0</code> · código
+                  <code>CE07100040(/)</code>
+                </p>
+                <p>
+                  Revogado em 28/08/2026 ("entrou junto no aceite do precedente; não se aplica a
+                  este elemento"). O serviço saiu do orçamento: R$ 32,10/m² a menos na medição.
+                </p>
+                <p class="item-ato">
+                  <strong>Ato que resolve:</strong> conferir se o elemento <code>el_18d0</code>
+                  precisa de um código no lugar do revogado.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="classe-bloco classe-observacao">
+            <div class="classe-cabeca">
+              <span>○ Observação</span>
+              <span class="porque">Não travam nem mudam valor; informam.</span>
+              <span class="contagem">2 pendências</span>
+            </div>
+            <div class="itens-lista">
+              <div class="item-pendencia observacao">
+                <div class="item-topo">
+                  <span class="item-selo observacao">○ takeoff não decidido</span>
+                  <span class="item-titulo">Item de takeoff ti_7b21</span>
+                </div>
+                <p class="item-origem">
+                  Origem: rodada 5 · prancha PL-04 · item <code>ti_7b21</code> ("Piso podotátil —
+                  calçada leste")
+                </p>
+                <p>Proposto pela extração; aguarda decisão do orçamentista.</p>
+                <p class="item-ato">
+                  <strong>Ato que resolve:</strong> decidir (confirmar ou rejeitar) o item de
+                  takeoff <code>ti_7b21</code>.
+                </p>
+              </div>
+              <div class="item-pendencia observacao">
+                <div class="item-topo">
+                  <span class="item-selo observacao">○ testemunha divergente</span>
+                  <span class="item-titulo">Cota 12 — trecho da mureta oeste</span>
+                </div>
+                <p class="item-origem">Origem: rodada 5 · leitura da prancha, cota confirmada</p>
+                <div class="item-confronto">
+                  <span class="item-valor"><span>Cota da prancha</span><b>19,75 m</b></span>
+                  <span class="item-valor"><span>Trena em campo</span><b>19,78 m</b></span>
+                  <span class="item-diferenca item-valor"><span>Diferença</span><b>0,03 m</b></span>
+                </div>
+                <p class="item-nota">
+                  Ver estado 3 — a testemunha não confirma a cota, não bloqueia a exportação e não
+                  escolhe um valor vencedor.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado" id="estado-02">
+        <h2>
+          2 — Período limpo
+          <small
+            >Ausência de pendência tem o mesmo peso do estado 1: um mês limpo é informação, e a
+            ausência de relatório não a transmite.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="doc-cabecalho">
+            <div class="doc-campo"><span>Contrato</span><b>0142/2026 — Praça do Marimbondo</b></div>
+            <div class="doc-campo"><span>Período</span><b>6ª medição</b></div>
+            <div class="doc-campo"><span>Rodadas</span><b>4</b></div>
+            <div class="doc-campo"><span>Fechado em</span><b>03/10/2026 09:10</b></div>
+            <div class="doc-campo"><span>Digest</span><code>c41e07…5b2f</code></div>
+          </div>
+          <div class="periodo-limpo">
+            <span class="marca">✓</span>
+            <h3>As 4 rodadas do período estão fechadas, sem pendência.</h3>
+            <p>
+              Nenhum pacote de serviços aberto, nenhum boletim vencido, nenhuma divergência de
+              quantidade acima da tolerância, nenhum código revogado, nenhum item de takeoff
+              pendente e nenhuma testemunha de campo divergente neste período.
+            </p>
+            <div class="rodadas">
+              <span class="rodada-selo">✓ rodada 6</span>
+              <span class="rodada-selo">✓ rodada 7</span>
+              <span class="rodada-selo">✓ rodada 8</span>
+              <span class="rodada-selo">✓ rodada 9</span>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O documento existe e diz que está limpo, com a mesma estrutura do estado 1 — cabeçalho,
+          digest — em vez de simplesmente não ser gerado. É essa a diferença entre "limpo" e
+          "silêncio".
+        </p>
+      </section>
+
+      <section class="estado" id="estado-03">
+        <h2>
+          3 — A testemunha de campo, sempre observação
+          <small
+            >A decisão mais delicada do pacote: a testemunha não bloqueia a exportação e não
+            escolhe um valor vencedor (ADR-0049).</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="testemunha">
+            <p class="eyebrow">TESTEMUNHA DE CAMPO · CLASSE OBSERVAÇÃO</p>
+            <div class="item-confronto">
+              <span class="item-valor"><span>Cota da prancha</span><b>19,75 m</b></span>
+              <span class="item-valor"><span>Trena em campo</span><b>19,78 m</b></span>
+              <span class="item-diferenca item-valor"><span>Diferença</span><b>0,03 m</b></span>
+            </div>
+            <p>
+              Medida por Marcos Lima em 19/08/2026, trena a laser, confirmada no aparelho.
+              Associada a esta leitura por Ana Ribeiro em 23/08/2026.
+            </p>
+            <div class="aviso observacao">
+              <strong>A testemunha não confirma a cota, não bloqueia a exportação e não escolhe
+              um valor vencedor.</strong> Quem decide continua sendo quem revisa e assina a
+              aprovação — a mesma linguagem do painel da F-030. Promovê-la a risco contradiria o
+              ADR-0049, que a definiu como neutra desde o começo.
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          Esta é a única fonte das seis sem "ato que resolve": ela é informação, não pergunta em
+          aberto. As outras cinco pedem uma decisão; esta não pede nenhuma.
+        </p>
+      </section>
+
+      <section class="estado" id="estado-04">
+        <h2>
+          4 — O documento como entrega
+          <small
+            >A forma que vai ao cliente, ao lado do BM: cabeçalho com contrato, período e
+            instante, o digest, e as três classes — sem edição.</small
+          >
+        </h2>
+        <div class="corpo entrega">
+          <div class="doc-cabecalho">
+            <div class="doc-campo"><span>Contrato</span><b>0142/2026 — Praça do Marimbondo</b></div>
+            <div class="doc-campo"><span>Período</span><b>5ª medição</b></div>
+            <div class="doc-campo"><span>Emitido em</span><b>05/09/2026 14:32</b></div>
+            <div class="doc-campo"><span>Digest</span><code>8f2c1a…d093</code></div>
+          </div>
+          <div class="entrega-lado-a-lado">
+            <div class="artefato-irmao">
+              <h4>boletim-medicao-0088.xlsx</h4>
+              <p>O BM da mesma rodada, mesmo digest de origem.</p>
+            </div>
+            <div class="artefato-irmao">
+              <h4>relatorio-risco-0088.pdf</h4>
+              <p>Este documento — as três classes abaixo, prontas para o cliente.</p>
+            </div>
+          </div>
+          <div class="resumo-classes">
+            <div class="resumo-linha impede">
+              ✕ Impede a exportação — pacote aberto, boletim vencido <b>2 pendências</b>
+            </div>
+            <div class="resumo-linha dinheiro">
+              ⚠ Muda dinheiro — divergência de quantidade, código revogado <b>2 pendências</b>
+            </div>
+            <div class="resumo-linha observacao">
+              ○ Observação — takeoff não decidido, testemunha de campo <b>2 pendências</b>
+            </div>
+          </div>
+          <p class="rodape-pronto">
+            Pronto para mandar ao cliente sem edição. Regerar sobre o mesmo estado produz o mesmo
+            conteúdo e o mesmo digest.
+          </p>
+        </div>
+      </section>
+
+      <section class="estado" id="estado-05">
+        <h2>
+          5 — Pendência que atravessa períodos
+          <small
+            >Pendência que se repete é informação diferente de pendência nova — a idade vai
+            escrita.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="doc-cabecalho">
+            <div class="doc-campo"><span>Contrato</span><b>0142/2026 — Praça do Marimbondo</b></div>
+            <div class="doc-campo"><span>Período</span><b>5ª medição</b></div>
+            <div class="doc-campo"><span>Fechado em</span><b>05/09/2026 14:32</b></div>
+            <div class="doc-campo"><span>Digest</span><code>8f2c1a…d093</code></div>
+          </div>
+          <div class="classe-bloco classe-impede">
+            <div class="classe-cabeca">
+              <span>✕ Impede a exportação</span>
+              <span class="contagem">1 pendência recorrente</span>
+            </div>
+            <div class="itens-lista">
+              <div class="item-pendencia impede">
+                <div class="item-topo">
+                  <span class="item-selo impede">✕ pacote aberto</span>
+                  <span class="item-titulo">Pacote de serviços do elemento el_2b77</span>
+                  <span class="idade-selo">aberta desde a 2ª medição</span>
+                </div>
+                <p class="item-origem">
+                  Origem: rodada 5 · prancha PL-01 · elemento <code>el_2b77</code> ("Muro de
+                  arrimo")
+                </p>
+                <p>
+                  Aberto há 4 medições consecutivas (2ª, 3ª, 4ª e 5ª) — nenhuma trouxe o ato de
+                  fechamento.
+                </p>
+                <p class="item-ato">
+                  <strong>Ato que resolve:</strong> fechar o pacote de serviços do elemento
+                  <code>el_2b77</code> — ou registrar por que ele ainda não fecha.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          A idade é contada em medições, não em dias corridos — é a mesma unidade do recorte do
+          documento (decisão 2). Uma pendência de 4 medições não é a mesma notícia que uma
+          pendência nova, ainda que a descrição do achado seja idêntica.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
