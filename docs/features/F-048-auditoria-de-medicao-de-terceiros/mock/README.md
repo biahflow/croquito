@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **aguarda aprovação**  
+Status: **Approved — revisão 1 (2026-09-05)**  
 Date: 2026-09-05  
 Produced by: agente (Claude Code)
 
@@ -31,8 +31,8 @@ da feature exige explicitamente que os goldens deles sigam byte-idênticos.
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição dos seis estados e as seis decisões abaixo |
-| Aprovado por | *(preencher)* |
-| Data | *(preencher)* |
+| Aprovado por | Daniel Campos |
+| Data | 2026-09-05 |
 | Revisão | 1 |
 | Explicitamente **não** aprovado | a copy final; os números, rótulos, arquivos e códigos das capturas, que são sintéticos; corrigir a medição alheia (fora do escopo do contrato); a decisão de preço/empacotamento comercial da jornada |
 

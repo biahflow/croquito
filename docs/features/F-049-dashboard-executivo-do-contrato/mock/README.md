@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE
 Revision: 1
-Status: **aguarda aprovação**
+Status: **Approved — revisão 1 (2026-09-05)**
 Date: 2026-09-05
 Produced by: agente (Claude Code)
 
@@ -23,8 +23,8 @@ de mostrar o que esses três ADRs já governam. Se um deles mudar, o pacote muda
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição dos seis estados e as seis decisões abaixo |
-| Aprovado por | *(em branco)* |
-| Data | *(em branco)* |
+| Aprovado por | Daniel Campos |
+| Data | 2026-09-05 |
 | Revisão | 1 |
 
 ## Artefato

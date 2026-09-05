@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Aguarda aprovação**  
+Status: **Approved — revisão 1 (2026-09-05)**  
 Date: 2026-09-05  
 Produced by: agente (Claude Code)
 
@@ -39,8 +39,8 @@ fonte, este pacote muda com ele.
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | os cinco estados do documento e as cinco decisões abaixo |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-09-05 |
 | Revisão | 1 |
 
 ## Artefato
