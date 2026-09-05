@@ -106,15 +106,20 @@ projeto, prancha ou rodada no croquito.
 1. **Quanto do relatório é compreensível sem contexto da obra.** Os oito erros de centavo
    são óbvios; `BALANCE_NEGATIVE` em 548 linhas exige explicação. A tela precisa de
    hierarquia de gravidade que ainda não existe — é decisão do pacote de design.
-2. **Se a auditoria vira produto avulso ou parte da jornada de medição.** Avulso alcança
-   quem não usa o croquito (o pitch comercial); dentro da jornada é mais barato. Decisão do
-   dono, e ela muda o desenho da tela.
+2. ~~**Se a auditoria vira produto avulso ou parte da jornada de medição.**~~ **Respondido
+   em 2026-09-05** (Daniel Campos): **produto avulso** — jornada própria, sem exigir
+   projeto, prancha, contrato ou rodada no croquito. É a escolha que faz a auditoria
+   alcançar quem ainda não é cliente, que é o pitch comercial; o custo aceito é a casca
+   nova de jornada. Vincular a auditoria a uma rodada existente fica como fatia posterior,
+   se e quando fizer sentido.
 
 ## Human Gates
 
 1. ~~**Seleção e prioridade**~~ — **cumprido em 2026-09-05** (Daniel Campos): `HIGH`.
-2. **Design Approval Package** — `INTERFACE_CHANGE`, jornada nova.
-3. **Decisão do unknown 2** (avulso × dentro da medição) antes do planejamento.
+2. ~~**Decisão do unknown 2** (avulso × dentro da medição)~~ — **cumprido em 2026-09-05**:
+   produto avulso.
+3. **Design Approval Package** — `INTERFACE_CHANGE`, jornada nova. **Único gate restante**;
+   o pacote está em produção nesta rodada.
 
 ## References
 
