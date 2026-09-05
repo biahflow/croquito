@@ -2,7 +2,14 @@
 
 ## Status
 
-`READY_FOR_SPEC`
+`READY_FOR_PLANNING`
+
+> **Os dois unknowns respondidos e a prioridade definida por ato humano em 2026-09-05**
+> (Daniel Campos): o documento é do **período de medição** — sai junto do BM, com número e
+> fecho contratual, que é o recorte que o sistema já tem —, a **testemunha de campo
+> divergente entra como observação** (nunca em "impede exportação" ou "muda dinheiro",
+> preservando a decisão do ADR-0049 de que ela é neutra), e a prioridade é `MEDIUM`, depois
+> da F-049. Resta o Design Approval Package antes do planejamento.
 
 > Registrada como candidata em 2026-09-03, da análise de posicionamento da Orvia, e
 > **especificada em 2026-09-05** por seleção humana. Fica em `READY_FOR_SPEC` pela mesma
@@ -16,9 +23,9 @@ Approval Package antes do planejamento.
 
 ## Priority
 
-A definir pelo dono. A recomendação é `MEDIUM`, e **depois** da F-049: as duas apresentam o
-que já existe, mas o dashboard responde a pergunta que se faz toda semana ("como vai o
-contrato?") e este documento, a que se faz uma vez por mês, junto do boletim.
+`MEDIUM` — **definida por ato humano em 2026-09-05**, e **depois** da F-049: as duas
+apresentam o que já existe, mas o dashboard responde a pergunta que se faz toda semana
+("como vai o contrato?") e este documento, a que se faz uma vez por mês, junto do boletim.
 
 ## Problem
 
@@ -90,17 +97,21 @@ para mandar ao cliente sem edição.
 
 ## Unknowns
 
-1. **Se o documento é do período de medição ou do mês corrido.** Não são a mesma coisa: a
-   medição tem número e fecho contratual; o mês é calendário. A escolha muda o recorte e o
-   público — e precede o Design Approval Package.
-2. **Se testemunha divergente entra.** Ela é observacional por decisão (F-030, ADR-0049) e
-   não impede nada; entrar como "risco" pode contradizer essa decisão. Precisa de resposta
-   explícita antes do desenho.
+1. ~~**Se o documento é do período de medição ou do mês corrido.**~~ **Respondido em
+   2026-09-05: período de medição.** Ele tem número e fecho contratual, cada pendência
+   pertence a uma rodada, e o documento sai junto do BM — nada precisa ser inventado. A
+   consequência aceita: quando a medição atrasa em relação ao mês, o documento acompanha a
+   medição, não o calendário.
+2. ~~**Se testemunha divergente entra.**~~ **Respondido em 2026-09-05: entra como
+   observação**, nunca nas classes "impede exportação" ou "muda dinheiro". Preserva a
+   decisão do ADR-0049 (a testemunha é neutra e não escolhe vencedor) e ainda informa quem
+   lê o documento.
 
 ## Human Gates
 
-1. **Seleção, prioridade e as respostas dos unknowns 1 e 2** — decisão do dono.
-2. **Design Approval Package**, depois delas.
+1. ~~**Seleção, prioridade e as respostas dos unknowns 1 e 2**~~ — **cumprido em
+   2026-09-05** (Daniel Campos): `MEDIUM`, período de medição, testemunha como observação.
+2. **Design Approval Package** — único gate restante antes do planejamento.
 
 ## References
 
