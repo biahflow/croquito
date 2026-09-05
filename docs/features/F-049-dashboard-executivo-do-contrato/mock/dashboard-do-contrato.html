@@ -1,0 +1,870 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-049 — Dashboard executivo do contrato</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico") e das famílias de
+         domínio já em uso em apps/web/src/medicao/styles.css (reajuste/roxo, F-039; RE-RA/
+         petróleo, F-040). Nenhuma cor é nova — ver a tabela de proveniência no README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        /* Âmbar de atenção — apps/web/src/medicao/styles.css, .aviso-atencao / --atencao. */
+        --atencao: #7c5210;
+        --atencao-line: #e2c79a;
+        --atencao-soft: #fdf5e8;
+        /* Vermelho de recusa — o mesmo `#a33d32` usado em apps/web/src/styles.css para borda
+           de issue crítica, e o mesmo trio de `.app-alert`/`.login-alert` para o banner. */
+        --recusa: #a33d32;
+        --recusa-banner-ink: #7d2f26;
+        --recusa-banner-bg: #fbeeec;
+        --recusa-banner-line: #e0b4ad;
+        /* Roxo do reajuste (F-039) — apps/web/src/medicao/styles.css,
+           .reajuste-do-contrato/.selo-reajuste. */
+        --reajuste: #6b4ba1;
+        --reajuste-line: #d3c1e2;
+        --reajuste-soft: #f3eefb;
+        --reajuste-ink: #3f2d63;
+        /* Petróleo da RE-RA (F-040) — apps/web/src/medicao/styles.css, .selo-rera. */
+        --rera: #1f6f7a;
+        --rera-line: #9cc9d1;
+        --rera-soft: #e6f2f4;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 82ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      code {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.94em;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      .numero {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+
+      /* Cabeçalho de quatro números do contrato — o corte "totais depois" da decisão 1. */
+      .metricas {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+      .metrica {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        background: var(--surface);
+        display: grid;
+        gap: 4px;
+      }
+      .metrica .rotulo {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--ink-secondary);
+        font-weight: 700;
+      }
+      .metrica .valor {
+        font-size: 20px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .metrica .nota {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      /* Lista por item — o corte "saldo primeiro" da decisão 1. */
+      .itens-lista {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+      .item-linha {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 6px;
+        background: var(--surface);
+      }
+      .item-cabeca {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .item-identidade {
+        display: grid;
+        gap: 1px;
+      }
+      .item-grupo {
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--muted);
+      }
+      .item-titulo {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .item-titulo code {
+        font-weight: 400;
+        color: var(--ink-secondary);
+        margin-left: 4px;
+      }
+      .item-saldo {
+        text-align: right;
+        font-size: 12.5px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .item-saldo small {
+        display: block;
+        font-weight: 400;
+        color: var(--ink-secondary);
+        font-size: 11px;
+      }
+      .barra {
+        height: 6px;
+        border-radius: 999px;
+        background: var(--surface-sunken);
+        overflow: hidden;
+      }
+      .barra > span {
+        display: block;
+        height: 100%;
+        background: var(--ink-secondary);
+      }
+      .item-rodape {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11.5px;
+        color: var(--ink-secondary);
+        flex-wrap: wrap;
+      }
+      .item-rodape a {
+        color: var(--accent-text);
+        text-decoration: none;
+        font-weight: 700;
+      }
+      .item-rodape a:hover {
+        text-decoration: underline;
+      }
+
+      /* Carimbo do reajuste — fator e período NÃO viram coluna da tabela (decisão do estado 4). */
+      .carimbo {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--reajuste-line);
+        background: var(--reajuste-soft);
+        color: var(--reajuste-ink);
+        font-size: 12px;
+        width: fit-content;
+      }
+      .carimbo strong {
+        font-size: 12.5px;
+      }
+      .carimbo .selo-reajuste {
+        border-color: var(--reajuste-line);
+        background: #ffffff;
+        color: var(--reajuste);
+      }
+
+      /* As duas curvas nunca se fundem num percentual só (decisão 3). */
+      .curvas {
+        display: grid;
+        gap: 10px;
+      }
+      .curva {
+        display: grid;
+        gap: 4px;
+      }
+      .curva .rotulo-curva {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .curva .rotulo-curva strong {
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .curva.fisico .barra > span {
+        background: var(--ink);
+      }
+      .curva.financeiro .barra > span {
+        background: var(--reajuste);
+      }
+
+      /* RE-RA: contratado e vigente lado a lado, delta e citação — o original nunca some. */
+      .duas-rera {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 14px;
+        align-items: center;
+      }
+      .rera-num {
+        display: grid;
+        gap: 2px;
+        text-align: center;
+      }
+      .rera-num .rotulo {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--ink-secondary);
+      }
+      .rera-num .valor {
+        font-size: 19px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .rera-seta {
+        font-size: 20px;
+        color: var(--rera);
+      }
+      .selo-rera {
+        border-color: var(--rera-line);
+        background: var(--rera-soft);
+        color: var(--rera);
+      }
+      .rera-citacao {
+        border: 1px dashed var(--rera-line);
+        border-radius: 8px;
+        padding: 9px 11px;
+        background: #ffffff;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+      }
+      .rera-citacao strong {
+        color: var(--rera);
+      }
+
+      /* A recusa é estado de primeira classe: o mesmo vermelho de `.app-alert`/`.login-alert`. */
+      .recusa-painel {
+        border: 1px solid var(--recusa-banner-line);
+        border-left: 4px solid var(--recusa);
+        background: var(--recusa-banner-bg);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 8px;
+        color: var(--recusa-banner-ink);
+      }
+      .recusa-painel h3 {
+        margin: 0;
+        font-size: 14px;
+        color: inherit;
+      }
+      .recusa-painel p {
+        color: inherit;
+      }
+      .recusa-codigo {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        background: #ffffff;
+        border: 1px solid var(--recusa-banner-line);
+        border-radius: 4px;
+        padding: 2px 7px;
+        display: inline-block;
+        color: var(--recusa-banner-ink);
+        width: fit-content;
+      }
+      .recusa-detalhes {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        background: #ffffff;
+        border: 1px solid var(--recusa-banner-line);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .recusa-detalhes th,
+      .recusa-detalhes td {
+        text-align: left;
+        padding: 6px 9px;
+        border-bottom: 1px solid var(--recusa-banner-line);
+        color: var(--recusa-banner-ink);
+      }
+      .recusa-detalhes tr:last-child td {
+        border-bottom: 0;
+      }
+      .recusa-detalhes .campo {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-049 — Dashboard executivo do contrato</h1>
+      <p>
+        Design Approval Package, revisão 1. Superfície nova na jornada de medição: uma tela por
+        <strong>contrato</strong> que responde, sem exportar nada, quanto foi contratado, quanto
+        vigora hoje, quanto já foi medido, quanto sobra, e como isso andou entre os períodos —
+        com cada número apontando para a medição que o produziu.
+      </p>
+      <p>
+        <strong>Este pacote está atrás de gates de domínio já aceitos.</strong> A F-049 não
+        introduz semântica nova: ela decide a <em>forma</em> de mostrar o que
+        <code>croquito_valuation.contract</code> já valida e recomputa na leitura — a
+        consolidação e o saldo (<strong>ADR-0018</strong>), o reajuste declarado
+        (<strong>ADR-0055</strong>, F-039) e a RE-RA declarada (<strong>ADR-0056</strong>, F-040),
+        todos <code>Accepted</code>.
+      </p>
+      <p>
+        <strong>A tela é do gestor do contrato na empresa executora</strong> — quem usa o
+        croquito todo dia e responde pelo contrato. Não é a tela do diretor (totais de reunião)
+        nem a do fiscal (acesso externo).
+      </p>
+      <p>Nome do contrato, códigos, descrições e valores são <strong>sintéticos</strong>.</p>
+    </header>
+
+    <main>
+      <!-- ESTADO 1 -->
+      <section class="estado" id="estado-1">
+        <h2>
+          1 — Contrato sem medição lançada
+          <small>O acumulado é zero e o saldo é o contrato inteiro. Isto se diz por extenso, não com um gráfico vazio.</small>
+        </h2>
+        <div class="corpo">
+          <div class="metricas">
+            <div class="metrica">
+              <span class="rotulo">Contratado</span>
+              <span class="valor">R$ 668.215,50</span>
+              <span class="nota">Σ quantidade contratada × preço contratado</span>
+            </div>
+            <div class="metrica">
+              <span class="rotulo">Vigente</span>
+              <span class="valor">R$ 668.215,50</span>
+              <span class="nota">nenhuma RE-RA declarada ainda</span>
+            </div>
+            <div class="metrica">
+              <span class="rotulo">Medido acumulado</span>
+              <span class="valor">R$ 0,00</span>
+              <span class="nota">nenhum período lançado</span>
+            </div>
+            <div class="metrica">
+              <span class="rotulo">Saldo</span>
+              <span class="valor">R$ 668.215,50</span>
+              <span class="nota">100% do vigente</span>
+            </div>
+          </div>
+          <div class="painel">
+            <p>
+              <strong>Contrato de execução 014/2025 — Praça Vista Alegre.</strong> Consolidado
+              importado, cinco itens contratados, nenhuma medição lançada. O saldo de cada item é
+              a própria quantidade contratada, item a item — não há ainda o que ordenar por risco
+              de teto, porque nada foi consumido. A próxima medição a lançar é a
+              <strong>1ª</strong>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ESTADO 2 -->
+      <section class="estado" id="estado-2">
+        <h2>
+          2 — A visão principal
+          <small>Saldo por item primeiro, ordenado pelo que está mais perto do teto. Totais depois — a tela do diretor seria o inverso.</small>
+        </h2>
+        <div class="corpo">
+          <div class="metricas">
+            <div class="metrica">
+              <span class="rotulo">Contratado</span>
+              <span class="valor">R$ 668.215,50</span>
+              <span class="nota">5 itens, sem RE-RA</span>
+            </div>
+            <div class="metrica">
+              <span class="rotulo">Vigente</span>
+              <span class="valor">R$ 668.215,50</span>
+              <span class="nota">= contratado, sem RE-RA</span>
+            </div>
+            <div class="metrica">
+              <span class="rotulo">Medido acumulado</span>
+              <span class="valor">R$ 547.082,80</span>
+              <span class="nota">até a 3ª medição · próxima: 4ª</span>
+            </div>
+            <div class="metrica">
+              <span class="rotulo">Saldo</span>
+              <span class="valor">R$ 121.132,70</span>
+              <span class="nota">18,1% do vigente</span>
+            </div>
+          </div>
+
+          <ul class="itens-lista">
+            <li class="item-linha">
+              <div class="item-cabeca">
+                <div class="item-identidade">
+                  <span class="item-grupo">Pavimentação</span>
+                  <span class="item-titulo">Piso intertravado de concreto, espessura 8 cm <code>PV20401060(A)</code></span>
+                </div>
+                <div class="item-saldo">
+                  300,00 m² <small>de 4.200,00 m² contratados</small>
+                </div>
+              </div>
+              <div class="barra"><span style="width: 92.9%"></span></div>
+              <div class="item-rodape">
+                <span><strong>7,1% restante</strong> — acumulado 3.900,00 m² até a 3ª medição</span>
+                <a href="#estado-3">Ver a série completa deste item ↓</a>
+              </div>
+            </li>
+            <li class="item-linha">
+              <div class="item-cabeca">
+                <div class="item-identidade">
+                  <span class="item-grupo">Drenagem</span>
+                  <span class="item-titulo">Tubulação de drenagem em PEAD Ø300mm <code>DR40607080(B)</code></span>
+                </div>
+                <div class="item-saldo">
+                  93,00 m <small>de 620,00 m contratados</small>
+                </div>
+              </div>
+              <div class="barra"><span style="width: 85%"></span></div>
+              <div class="item-rodape">
+                <span><strong>15,0% restante</strong> — acumulado 527,00 m até a 3ª medição</span>
+              </div>
+            </li>
+            <li class="item-linha">
+              <div class="item-cabeca">
+                <div class="item-identidade">
+                  <span class="item-grupo">Terraplenagem</span>
+                  <span class="item-titulo">Escavação mecanizada de vala <code>TE10203040(B)</code></span>
+                </div>
+                <div class="item-saldo">
+                  230,00 m³ <small>de 850,00 m³ contratados</small>
+                </div>
+              </div>
+              <div class="barra"><span style="width: 72.9%"></span></div>
+              <div class="item-rodape">
+                <span><strong>27,1% restante</strong> — acumulado 620,00 m³ até a 3ª medição</span>
+              </div>
+            </li>
+            <li class="item-linha">
+              <div class="item-cabeca">
+                <div class="item-identidade">
+                  <span class="item-grupo">Paisagismo</span>
+                  <span class="item-titulo">Plantio de grama esmeralda em placas <code>PJ30105020(/)</code></span>
+                </div>
+                <div class="item-saldo">
+                  1.900,00 m² <small>de 3.800,00 m² contratados</small>
+                </div>
+              </div>
+              <div class="barra"><span style="width: 50%"></span></div>
+              <div class="item-rodape">
+                <span><strong>50,0% restante</strong> — acumulado 1.900,00 m² até a 3ª medição</span>
+              </div>
+            </li>
+            <li class="item-linha">
+              <div class="item-cabeca">
+                <div class="item-identidade">
+                  <span class="item-grupo">Playground e Equipamentos</span>
+                  <span class="item-titulo">Fornecimento e instalação de playground infantil completo <code>PL55021090(/)</code></span>
+                </div>
+                <div class="item-saldo">
+                  2,00 un <small>de 3,00 un contratados</small>
+                </div>
+              </div>
+              <div class="barra"><span style="width: 33.3%"></span></div>
+              <div class="item-rodape">
+                <span><strong>66,7% restante</strong> — acumulado 1,00 un até a 3ª medição</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <p class="nota-implementador">
+          A ordenação é por saldo relativo ao contratado (saldo da linha ÷ quantidade contratada
+          da linha), crescente — não por saldo absoluto, que penalizaria item de preço alto sem
+          motivo. A cor da barra é neutra e única: não há limiar de "vira alerta âmbar" definido
+          por produto, e a ordenação já resolve a pergunta do gestor sem precisar de um limiar —
+          ver questão aberta no README. Cada item é uma linha do consolidado (par grupo+código);
+          o grupo aparece sempre — ver a questão aberta sobre contrato × obra no README.
+        </p>
+      </section>
+
+      <!-- ESTADO 3 -->
+      <section class="estado" id="estado-3">
+        <h2>
+          3 — A série por período
+          <small>Uma linha por medição lançada: quantidade, valor e o preço vigente naquele período — a leitura honesta depois de reajuste.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Piso intertravado de concreto, espessura 8 cm <code>PV20401060(A)</code> — Pavimentação</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Período</th>
+                  <th class="numero">Quantidade</th>
+                  <th class="numero">Valor do período</th>
+                  <th>Preço vigente no período</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1ª medição</td>
+                  <td class="numero">1.500,00 m²</td>
+                  <td class="numero">R$ 144.450,00</td>
+                  <td>R$ 96,30 (contratado)</td>
+                </tr>
+                <tr>
+                  <td>2ª medição</td>
+                  <td class="numero">1.400,00 m²</td>
+                  <td class="numero">R$ 134.820,00</td>
+                  <td>R$ 96,30 (contratado)</td>
+                </tr>
+                <tr>
+                  <td>3ª medição</td>
+                  <td class="numero">1.000,00 m²</td>
+                  <td class="numero">R$ 96.300,00</td>
+                  <td>R$ 96,30 (contratado)</td>
+                </tr>
+                <tr>
+                  <td><strong>Acumulado</strong></td>
+                  <td class="numero"><strong>3.900,00 m²</strong></td>
+                  <td class="numero"><strong>R$ 375.570,00</strong></td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          "R$ 96,30 (contratado)" não é um valor lido de um campo — é a leitura honesta de
+          <code>PeriodProgress.unit_price</code> <strong>ausente</strong>: o modelo só grava o
+          preço do período quando ele difere do contratado (depois de reajuste). Ausente
+          significa "medido pelo preço contratado", e a tela precisa dizer isso por extenso, não
+          inventar um preço para preencher a coluna.
+        </p>
+      </section>
+
+      <!-- ESTADO 4 -->
+      <section class="estado" id="estado-4">
+        <h2>
+          4 — Com reajuste declarado
+          <small>Quantidade acumulada e dinheiro acumulado divergem quando o preço muda. Duas curvas, nunca uma só.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Fornecimento e instalação de banco de concreto pré-moldado <code>MU60708090(/)</code> — Mobiliário urbano</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Período</th>
+                  <th class="numero">Quantidade</th>
+                  <th class="numero">Valor do período</th>
+                  <th>Preço vigente no período</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1ª medição</td>
+                  <td class="numero">10 un</td>
+                  <td class="numero">R$ 8.900,00</td>
+                  <td>R$ 890,00 (contratado)</td>
+                </tr>
+                <tr>
+                  <td>2ª medição</td>
+                  <td class="numero">12 un</td>
+                  <td class="numero">R$ 10.680,00</td>
+                  <td>R$ 890,00 (contratado)</td>
+                </tr>
+                <tr>
+                  <td>3ª medição</td>
+                  <td class="numero">8 un</td>
+                  <td class="numero">R$ 7.689,60</td>
+                  <td>R$ 961,20 (reajustado)</td>
+                </tr>
+                <tr>
+                  <td><strong>Acumulado</strong></td>
+                  <td class="numero"><strong>30 un</strong></td>
+                  <td class="numero"><strong>R$ 27.269,60</strong></td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="carimbo">
+              <strong>Reajuste por índice</strong>
+              <span class="selo selo-reajuste">INCC-M (FGV) · fator 1,0800</span>
+              <span>Período de referência: 08/2025 a 07/2026</span>
+              <span>Declarado por Secretaria de Obras em 15/08/2026</span>
+            </div>
+
+            <div class="curvas">
+              <div class="curva fisico">
+                <div class="rotulo-curva">
+                  <span>Quantidade acumulada (físico)</span>
+                  <strong>30 un de 40 un contratados — 75,0%</strong>
+                </div>
+                <div class="barra"><span style="width: 75%"></span></div>
+              </div>
+              <div class="curva financeiro">
+                <div class="rotulo-curva">
+                  <span>Dinheiro acumulado (financeiro)</span>
+                  <strong>R$ 27.269,60 de R$ 35.600,00 ao preço contratado — 76,6%</strong>
+                </div>
+                <div class="barra"><span style="width: 76.6%"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          As duas curvas nunca viram um "percentual de avanço" único: 75,0% físico e 76,6%
+          financeiro são leituras diferentes e as duas ficam à vista. Um número só escolheria
+          uma das duas em silêncio — e a diferença entre elas é exatamente o efeito que a F-039
+          (ADR-0055) tornou visível.
+        </p>
+      </section>
+
+      <!-- ESTADO 5 -->
+      <section class="estado" id="estado-5">
+        <h2>
+          5 — Com RE-RA declarada
+          <small>Contratado e vigente lado a lado, com o delta e a citação da RE-RA. O contratado original nunca é sobrescrito.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Plantio de árvores nativas de médio porte <code>PC70809010(/)</code> — Paisagismo complementar</h3>
+            <div class="duas-rera">
+              <div class="rera-num">
+                <span class="rotulo">Contratado (original)</span>
+                <span class="valor">60 un</span>
+                <span class="nota">R$ 20.400,00</span>
+              </div>
+              <span class="rera-seta">→</span>
+              <div class="rera-num">
+                <span class="rotulo">Vigente</span>
+                <span class="valor">75 un</span>
+                <span class="nota">R$ 25.500,00</span>
+              </div>
+            </div>
+            <div class="rera-citacao">
+              <span class="selo selo-rera">RE-RA 03/2026 · +15 un / +R$ 5.100,00</span>
+              <span>
+                <strong>Processo administrativo nº 2026/04521</strong> — acréscimo de área verde
+                complementar ao projeto original.
+              </span>
+              <span>Declarado por Secretaria de Obras.</span>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          "Contratado (original)" continua sendo 60 un para sempre — a RE-RA soma um delta ao
+          lado, nunca substitui o campo (ADR-0056, decisão 3: vigente é derivado, não gravado por
+          cima do contratual). Uma citação errada não apaga a RE-RA original: cria uma RE-RA nova.
+        </p>
+      </section>
+
+      <!-- ESTADO 6 -->
+      <section class="estado" id="estado-6">
+        <h2>
+          6 — Consolidado que não fecha
+          <small>O domínio recusa. A tela mostra a recusa nomeada — nunca um número aproximado.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Compactação mecânica de aterro <code>TE10203050(/)</code> — Terraplenagem</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Período</th>
+                  <th class="numero">Quantidade</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1ª medição</td>
+                  <td class="numero">180,00 m³</td>
+                </tr>
+                <tr>
+                  <td>2ª medição</td>
+                  <td class="numero">140,00 m³</td>
+                </tr>
+                <tr>
+                  <td><strong>Soma dos períodos lançados</strong></td>
+                  <td class="numero"><strong>320,00 m³</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Acumulado declarado no consolidado</strong></td>
+                  <td class="numero"><strong>350,00 m³</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="recusa-painel">
+              <h3>O consolidado não abre esta linha</h3>
+              <span class="recusa-codigo">CONTRACT_ACCUMULATED_MISMATCH</span>
+              <p>Acumulado declarado não confere com a soma dos períodos.</p>
+              <table class="recusa-detalhes">
+                <tbody>
+                  <tr><td class="campo">item_number</td><td>1.2</td></tr>
+                  <tr><td class="campo">code</td><td>TE10203050(/)</td></tr>
+                  <tr><td class="campo">field</td><td>accumulated_quantity</td></tr>
+                  <tr><td class="campo">expected</td><td>320.00</td></tr>
+                  <tr><td class="campo">declared</td><td>350.00</td></tr>
+                </tbody>
+              </table>
+              <p>
+                Nenhum outro número deste item aparece na tela enquanto esta linha não fechar —
+                não há saldo aproximado nem "quase certo" para mostrar no lugar.
+              </p>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O painel de recusa reproduz literalmente <code>code</code>, <code>message</code> e
+          <code>details</code> de <code>ValuationValidationError</code>
+          (<code>contract.py</code>, <code>validate_accumulated</code>) — inclusive o formato cru
+          dos números (ponto decimal, não vírgula), porque é exatamente isso que o domínio
+          recusou, não uma paráfrase da tela.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

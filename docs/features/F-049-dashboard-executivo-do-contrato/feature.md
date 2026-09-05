@@ -110,7 +110,10 @@ número apontando para a medição que o produziu.
 
 1. ~~**Seleção, prioridade e a resposta do unknown 1**~~ — **cumprido em 2026-09-05**
    (Daniel Campos): `MEDIUM`, e a tela é do gestor do contrato na executora.
-2. **Design Approval Package** — único gate restante antes do planejamento.
+2. **Design Approval Package** — único gate restante antes do planejamento. A
+   [revisão 1 do pacote](mock/README.md) foi produzida em 2026-09-05 e **aguarda
+   aprovação**: seis estados e seis decisões, no corte do gestor do contrato, com físico e
+   financeiro sempre em duas curvas separadas e a recusa do consolidado como estado próprio.
 
 ## References
 
