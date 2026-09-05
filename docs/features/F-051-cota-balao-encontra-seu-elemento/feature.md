@@ -2,14 +2,27 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
-> **As sete tarefas estão na `main`** (2026-09-04, PRs #161, #162, #164, #165, #167 e #169;
-> a T7 é a entrega corrente). A evidência consolidada, com atribuição por tarefa, está em
+> **Gate 3 cumprido com achado por ato humano em 2026-09-05** (Daniel Campos, pelo chat) —
+> o aceite contra o croqui real do Campo da Toca, com a execução do
+> [roteiro](evidencia/ROTEIRO-GATE-3.md) delegada à bancada e o veredito do dono. A cadeia
+> inteira funcionou contra o job real: `EL-001 "B"` declarado sobre o fecho da área de
+> lazer, hint corrigido pela própria decisão (pacote pré-T1, caminho previsto), candidata
+> por identidade confirmada pelo portão de sempre, e a `C=56` **entrou no solver** — o
+> blocker residual da revisão conjunta limpou, e após o keep_apart da disputa 55×56 a cota
+> amarrou **exata**. O achado é a
+> [issue #174](https://github.com/biahflow/croquito/issues/174) (o vão amarra por projeção
+> no eixo, e o fecho inclinado disputa com a largura — mecanismo anterior à F-051, com o
+> keep_apart do consultor como saída de um clique). Dívida declarada: a identidade na cena
+> do job real espera o solve limpar de uma disputa pré-existente alheia (trio da
+> arquibancada 2); está provada em fixture. Registro completo no
+> [evidence.md](evidence.md).
+
+> Histórico: **as sete tarefas estão na `main`** (2026-09-04, PRs #161, #162, #164, #165,
+> #167 e #169; a T7 pelo #172). A evidência consolidada, com atribuição por tarefa, está em
 > [evidence.md](evidence.md), e a validação de navegador em
-> [evidencia/](evidencia/README.md). **Falta o gate 3** — o aceite contra o croqui real do
-> Campo da Toca, ato do dono, com o passo a passo em
-> [evidencia/ROTEIRO-GATE-3.md](evidencia/ROTEIRO-GATE-3.md). A feature não é `DONE` sem ele.
+> [evidencia/](evidencia/README.md).
 >
 > **ADR-0063 aceito em 2026-09-04** (Daniel Campos, pelo chat) — gate 1 cumprido.
 >
