@@ -2,7 +2,26 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`PLANNING`
+
+> **Plano de execução escrito em 2026-09-05** ([plan.md](plan.md)): sete tarefas em cadeia
+> sequencial (T1→T7), sem paralelismo inventado. O planejamento achou **duas lacunas entre
+> o contrato e o código**, e as duas estão declaradas lá em vez de contornadas:
+>
+> 1. **De que layout é a planilha que entra** (`ARCHITECTURE_DECISION_REQUIRED`). Os três
+>    motores exigem um `WorkbookTemplate` obrigatório e nenhum adivinha layout — e a API
+>    nunca recebeu um. O precedente do M2.1 pesa: fazer o MAPÃO real do cliente importar
+>    **exigiu autorar um template**. O plano recomenda começar só pelo layout que o produto
+>    já lê (serve ao mercado-alvo, onde o padrão se repete) e declarar "template como
+>    artefato de plataforma" como fatia seguinte — mas a escolha é do dono.
+> 2. **O comparador não serve ao avulso como está**: `compare_bulletin` exige um `Valuation`
+>    gerado pelo croquito, que no modo avulso não existe. Isso não bloqueia — é a T1, e
+>    realiza no código a correção que a revisão do pacote de design já tinha aplicado no
+>    desenho.
+>
+> Um terceiro achado é gate antes da T4: **não existe quarta jornada** hoje (`Journey` é um
+> `Literal` de três valores no servidor e na web); a auditoria entra no mecanismo da F-034
+> ou fica fora de jornada, gated por papel, como `/v1/platform` e `/v1/surveys`.
 
 > Registrada como candidata em 2026-09-03, da análise de posicionamento da Orvia
 > (controladoria independente de obra), e **especificada em 2026-09-05** por seleção humana,
