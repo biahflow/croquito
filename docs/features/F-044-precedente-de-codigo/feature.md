@@ -2,8 +2,44 @@
 
 ## Status
 
-`IN_PROGRESS`
+`DONE`
 
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), sobre a rodada
+> `REVIEW_PASS` de 2026-09-04. O aceite exerceu as três decisões que estavam declaradas:
+>
+> 1. **O unknown 3 segue sem limiar por ora.** A contagem de praças visível em cada
+>    precedente é o controle; fixar um número com um corpus de três orçamentos seria chute.
+>    Reabre quando houver mais praças reais atravessadas.
+> 2. **O aceite continua do pacote inteiro** — a decisão 4 do pacote de design fica como
+>    está. O selo âmbar do minoritário (T3c) é o controle, e o erro sem volta é a lacuna
+>    que a [F-045](../F-045-desfazer-codigo-confirmado/feature.md) fecha; reabrir a
+>    decisão 4 exigiria evidência de que a marca sozinha não bastou.
+> 3. **A copy fica como está**, inclusive o prefixo "Value error, " do Pydantic na recusa
+>    nomeada — apará-lo seria a tela editando mensagem do servidor por regra sobre o
+>    formato de um framework de terceiro — e as duas frases da T3c escritas fora do pacote.
+>    Revisita com uso real.
+>
+> Nenhuma das três gerou trabalho novo; a primeira permanece como dívida declarada com
+> condição de reabertura escrita.
+
+> Histórico — **revisão concluída em 2026-09-04, com reparo no meio.** A revisão linha a linha do núcleo
+> (índice de precedentes, aceite em lote, contagem da tela) não achou defeito de código —
+> mas achou a feature `INTERFACE_CHANGE` **sem nenhuma evidência de navegador**
+> (`REVIEW_EVIDENCE_INCOMPLETE`). A evidência produzida (PR #154, 8 estados do pacote
+> aprovado) reprovou o ato central: **o aceite em lote nunca gravou** — a tela omitia
+> `catalog_sha256`, a rota o exige, e cada lado tinha teste verde do próprio contrato
+> (`REVIEW_FINDINGS`). O reparo (PR #156) fez o corpo citar a fonte que o bloco converge,
+> deu voz à recusa de contrato (o motivo era descartado no TRANSPORTE — a validação de
+> esquema sai no envelope nativo do FastAPI, sem código estável) e reprovou o defeito byte a
+> byte no fio antes de provar o conserto até o banco. Nova rodada: **`REVIEW_PASS`**.
+>
+> As três dívidas que o aceite de 2026-09-05 decidiu estavam registradas assim: (1) o
+> unknown 3 — quantas praças fazem um precedente confiável (a tela mostra a contagem e não
+> impõe limiar); (2) se o código minoritário pode sair do pacote antes de confirmar
+> (mudaria a decisão 4 do pacote de design); (3) a copy final — inclusive o prefixo
+> "Value error, " do Pydantic na recusa nomeada e as duas variantes de frase que a
+> implementação escreveu fora do pacote. Nenhuma das três bloqueava o uso.
+>
 > Nasce em 2026-08-28, da mesma medição de ROI que originou a
 > [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md) e a
 > [F-043](../F-043-planilha-no-gabarito-da-prefeitura/feature.md). O pedido original do dono

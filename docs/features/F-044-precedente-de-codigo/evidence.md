@@ -234,22 +234,28 @@ Validação: `npm --workspace @croquito/web run test -- src/orcamento/precedente
 
 - **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
   Com três praças, o caso de "uma praça só" é comum e é justamente o que o desenho marca com
-  aviso. A T2 não decide limiar: ela devolve a contagem, e quem a usa é a T3.
+  aviso. A T2 não decide limiar: ela devolve a contagem, e quem a usa é a T3. **Decisão do
+  aceite de 2026-09-05: sem limiar por ora** — a contagem visível é o controle, e o unknown
+  reabre quando houver mais praças reais atravessadas.
 - ~~**A prioridade da feature**~~ — **elevada para `HIGH` em 2026-08-28** (Daniel Campos),
   junto com a decisão de trazer a semeadura para o escopo. A divergência que a T2 registrou
   entre o contrato dela e o [`feature.md`](feature.md)/[roadmap](../../product/ROADMAP.md)
   existia porque a worktree da T2 saiu antes desse commit; os três estão alinhados agora.
 - ~~**A mudança na shortlist e a tela**~~ — T3a, T3b e T3c entregues.
 - **Desfazer um par `(item, código)` confirmado — não existe hoje, e é candidato a fatia
-  própria.** As rotas de `code-assignments` são `GET`, `decisions` e `closures`; a decisão é
+  própria** — a fatia nasceu: é a
+  [F-045](../F-045-desfazer-codigo-confirmado/feature.md), `READY_FOR_REVIEW` quando o
+  aceite desta feature foi exercido. As rotas de `code-assignments` são `GET`, `decisions` e `closures`; a decisão é
   do par e a rota recusa item já decidido. Enquanto isso não existir, o único conserto de um
   aceite errado é a rodada seguinte. Vale como fatia própria porque não é do precedente: é da
   etapa de códigos inteira, e a F-038 a deixou de fora pelo mesmo motivo. Registrado aqui
   porque foi a revisão 2 da F-044 que a expôs — o aceite em um clique aumenta o que se grava
   por ato, e portanto o custo de não poder desfazer.
-- **Se o código minoritário deveria poder sair do pacote antes de confirmar.** A revisão 2
+- ~~**Se o código minoritário deveria poder sair do pacote antes de confirmar.**~~ A revisão 2
   decide marcar, não decide desmarcar — retirar um código do aceite mudaria a decisão 4 e
-  precisa da evidência de que a marca sozinha não bastou.
+  precisa da evidência de que a marca sozinha não bastou. **Decidido no aceite de
+  2026-09-05: o pacote continua inteiro**, com o selo âmbar como controle; reabrir exige a
+  evidência de que a marca não bastou.
 - ~~**O aceite em lote não grava**~~ — achado da evidência de navegador de 2026-09-04, descrito
   na seção abaixo. **Reparado no mesmo dia**: a arbitragem foi pelo contrato da rota (a tela
   passou a citar `catalog_sha256`), e a re-verificação de navegador gravou os três pares numa
@@ -493,3 +499,15 @@ e nenhum deles tocou arquivo do repositório:
 Os três foram desfeitos ao fim da rodada: o cliente voltou às duas URIs do realm, o usuário
 sintético foi removido e o *user profile* voltou ao padrão. O `.env.local` da raiz, o
 `apps/web/.env.local` e `keycloak/croquito-realm.json` não foram editados.
+
+## Human Gate 4 — o aceite
+
+**Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), sobre a rodada
+`REVIEW_PASS` de 2026-09-04 — a revisão com reparo no meio descrita na seção anterior. O
+aceite exerceu as três decisões declaradas, registradas com o porquê no
+[`feature.md`](feature.md): o unknown 3 segue **sem limiar** (a contagem visível é o
+controle; reabre com corpus maior), o aceite **continua do pacote inteiro** (decisão 4
+mantida; o erro sem volta é a lacuna da
+[F-045](../F-045-desfazer-codigo-confirmado/feature.md)) e a **copy fica como está**,
+inclusive o prefixo "Value error, " do Pydantic na recusa nomeada. Nenhuma das três gerou
+trabalho novo.
