@@ -21,7 +21,7 @@ furos. Exige Design Approval Package antes do planejamento.
 
 ## Priority
 
-`HIGH` — decisão humana pendente na seleção; a recomendação é `HIGH` por três razões
+`HIGH` — **definida por ato humano em 2026-09-05** (Daniel Campos), por três razões
 independentes: é a única das três candidatas cujo núcleo está pronto e provado contra
 documento real; é a que casa com a estratégia comercial registrada (vender para empresas
 de engenharia, não para a prefeitura); e é a que produz valor **sem depender de o cliente
@@ -112,7 +112,7 @@ projeto, prancha ou rodada no croquito.
 
 ## Human Gates
 
-1. **Seleção e prioridade** — decisão do dono (a recomendação é `HIGH`).
+1. ~~**Seleção e prioridade**~~ — **cumprido em 2026-09-05** (Daniel Campos): `HIGH`.
 2. **Design Approval Package** — `INTERFACE_CHANGE`, jornada nova.
 3. **Decisão do unknown 2** (avulso × dentro da medição) antes do planejamento.
 

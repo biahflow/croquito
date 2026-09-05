@@ -2,7 +2,16 @@
 
 ## Status
 
-`READY_FOR_SPEC`
+`READY_FOR_PLANNING`
+
+> **Unknown 1 respondido e prioridade definida por ato humano em 2026-09-05** (Daniel
+> Campos): a tela é do **gestor do contrato na empresa executora** — quem usa o croquito
+> todo dia e responde pelo contrato —, e a prioridade é `MEDIUM`. O corte que isso fixa:
+> saldo por item, o que dá para medir no próximo período, e onde o acumulado se aproxima do
+> contratado. **Não** é a tela do diretor (totais de reunião) nem a do fiscal (que exigiria
+> jornada e autorização externas, e vira feature própria se um dia for pedida). Com a
+> pergunta respondida, o único gate restante antes do planejamento é o Design Approval
+> Package.
 
 > Registrada como candidata em 2026-09-03, da análise de posicionamento da Orvia, e
 > **especificada em 2026-09-05** por seleção humana. Continua `READY_FOR_SPEC` — e não
@@ -17,8 +26,9 @@ Package antes do planejamento.
 
 ## Priority
 
-A definir pelo dono. A recomendação é `MEDIUM`, abaixo da F-048: esta feature **apresenta**
-o que já existe, enquanto a F-048 **acha erro de dinheiro** — e o que se vende é o segundo.
+`MEDIUM` — **definida por ato humano em 2026-09-05**, abaixo da F-048: esta feature
+**apresenta** o que já existe, enquanto a F-048 **acha erro de dinheiro** — e o que se vende
+é o segundo.
 
 ## Problem
 
@@ -88,18 +98,19 @@ número apontando para a medição que o produziu.
 
 ## Unknowns
 
-1. **Para quem é esta tela.** O dono da obra, o gestor do contrato na empresa executora e o
-   fiscal da prefeitura querem cortes diferentes dos mesmos números — e a tela para os três
-   é a tela para ninguém. Esta é a pergunta que **precede o Design Approval Package**, e é
-   por isso que a feature fica em `READY_FOR_SPEC`.
+1. ~~**Para quem é esta tela.**~~ **Respondido em 2026-09-05**: o **gestor do contrato na
+   empresa executora**. O dono da obra e o fiscal da prefeitura ficam de fora — o primeiro
+   por querer totais de reunião sobre os mesmos dados (corte próprio, não esta tela), o
+   segundo por exigir acesso externo, que é jornada e autorização novas.
 2. **Se a visão é por contrato ou por obra.** Um contrato licitado cobre várias praças; o
    croquito organiza por praça. Agregar por contrato é o que o executivo pede, e exige
    decidir o que fazer quando as praças de um contrato estão em estágios diferentes.
 
 ## Human Gates
 
-1. **Seleção, prioridade e a resposta do unknown 1** — decisão do dono.
-2. **Design Approval Package**, depois do unknown 1 respondido.
+1. ~~**Seleção, prioridade e a resposta do unknown 1**~~ — **cumprido em 2026-09-05**
+   (Daniel Campos): `MEDIUM`, e a tela é do gestor do contrato na executora.
+2. **Design Approval Package** — único gate restante antes do planejamento.
 
 ## References
 
