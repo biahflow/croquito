@@ -1159,3 +1159,140 @@ def test_run_build_estimate_refuses_plan_and_matrix_together(tmp_path: Path) -> 
         )
 
     assert raised.value.code == "CALC_PLAN_AND_MATRIX_DECLARED"
+
+
+def _canteiro_parcel(label: str = "WC QUIMICO") -> CalcContribution:
+    return CalcContribution(
+        label=label,
+        basis=ContributionBasis.STANDALONE,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[
+            CalcOperand(name="QTD", value=Decimal("1")),
+            CalcOperand(name="MESES", value=Decimal("2"), unit="meses"),
+        ],
+    )
+
+
+_CANTEIRO_CODE = "AD19050500(/)"
+
+
+def _sco_catalog_with_canteiro() -> PriceCatalog:
+    base = _sco_catalog()
+    return base.model_copy(
+        update={
+            "entries": [
+                *base.entries,
+                _entry(
+                    code=_CANTEIRO_CODE,
+                    description="BANHEIRO QUIMICO SINTETICO",
+                    unit="un.mês",
+                    unit_price="480.00",
+                    origin=PriceOrigin.SCO,
+                ),
+            ]
+        }
+    )
+
+
+def test_standalone_service_prices_by_the_single_source_without_assignment() -> None:
+    """F-042: parcela de canteiro vira linha SEM decisão de código quando a fonte é única.
+
+    O serviço `STANDALONE` não passa pelo portão de confirmação (não tem elemento), então
+    nunca tem fonte citada. Com uma tabela só na cascata não há escolha a fazer — recusar
+    aqui deixava as parcelas do acervo sem preço por construção, que foi exatamente o que a
+    bancada do gate 4 encontrou.
+    """
+    items = [_confirmed_item(_PAVEMENT_ITEM, label="PISO A", quantity="10.00")]
+    assignments = _assignment_set(
+        [_assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST)]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE, contributions=[_full_parcel(_PAVEMENT_ITEM, "10.00")]
+            ),
+            ServiceContributions(code=_CANTEIRO_CODE, contributions=[_canteiro_parcel()]),
+        ]
+    )
+
+    result = build_worksite_estimate(
+        _packet(items),
+        assignments,
+        (_sco_catalog_with_canteiro(),),
+        worksite_key=_WORKSITE_KEY,
+        worksite_name=_WORKSITE_NAME,
+        bdi_percent=_BDI_PERCENT,
+        calc_matrix=matrix,
+    )
+
+    canteiro = next(line for line in result.estimate.lines if line.code == _CANTEIRO_CODE)
+    assert canteiro.quantity == Decimal("2.00")
+    assert canteiro.catalog_sha256 == _SCO_DIGEST
+    assert canteiro.price_origin == PriceOrigin.SCO
+
+
+def test_standalone_service_with_many_sources_still_requires_the_choice() -> None:
+    """Com mais de uma tabela a escolha é do orçamentista: o fallback não decide por ela."""
+    items = [_confirmed_item(_PAVEMENT_ITEM, label="PISO A", quantity="10.00")]
+    assignments = _assignment_set(
+        [_assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST)]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE, contributions=[_full_parcel(_PAVEMENT_ITEM, "10.00")]
+            ),
+            ServiceContributions(code=_CANTEIRO_CODE, contributions=[_canteiro_parcel()]),
+        ]
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_estimate(
+            _packet(items),
+            assignments,
+            (_sco_catalog_with_canteiro(), _emop_catalog()),
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+            bdi_percent=_BDI_PERCENT,
+            calc_matrix=matrix,
+        )
+    assert raised.value.code == "ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED"
+
+
+def test_element_service_without_confirmation_never_uses_the_fallback() -> None:
+    """Parcela de ELEMENTO sem código confirmado continua recusando, mesmo com fonte única.
+
+    O fallback existe para quem não tem portão de decisão; o elemento da prancha tem, e o
+    portão dele fecha ANTES: item confirmado sem decisão de código recusa como
+    `ESTIMATE_ASSIGNMENT_MISSING`, e o fallback nem é alcançável por parcela de elemento.
+    """
+    items = [
+        _confirmed_item(_PAVEMENT_ITEM, label="PISO A", quantity="10.00"),
+        _confirmed_item(_LAWN_ITEM, label="PISO B", quantity="20.00"),
+    ]
+    assignments = _assignment_set(
+        [_assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST)]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE, contributions=[_full_parcel(_PAVEMENT_ITEM, "10.00")]
+            ),
+            ServiceContributions(
+                code=_CANTEIRO_CODE,
+                contributions=[_full_parcel(_LAWN_ITEM, "20.00")],
+            ),
+        ]
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_estimate(
+            _packet(items),
+            assignments,
+            (_sco_catalog_with_canteiro(),),
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+            bdi_percent=_BDI_PERCENT,
+            calc_matrix=matrix,
+        )
+    assert raised.value.code == "ESTIMATE_ASSIGNMENT_MISSING"
