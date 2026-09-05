@@ -2,7 +2,24 @@
 
 ## Status
 
-`READY_FOR_REVIEW`
+`DONE`
+
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), sobre a rodada de
+> revisão da mesma data: revisão linha a linha do núcleo (`apply_code_revocation` fail-closed
+> — o par sai da lista em vez de ganhar status, o fechamento cai junto, o mesmo par volta a
+> ser decidível; a compensação do precedente na mesma transação, com escopo de uma praça e
+> origem `round`; a fonte de preço lida antes de o par sair) terminou **`REVIEW_PASS`**, sem
+> achado de código. A assimetria entre as jornadas foi conferida e é deliberada: no orçamento
+> a D7 recusa revogar pós-aprovação porque o digest da assinatura não caduca; na medição a
+> caducidade por digest de fontes já acusa a divergência e bloqueia o export. O código está
+> integrado desde os PRs #117 e #118.
+>
+> O aceite fechou o **unknown 1**: **a recusa da D7 vira definitiva** — revogar depois da
+> aprovação do orçamento continua recusado (`ASSIGNMENT_REVOCATION_AFTER_APPROVAL`), e quem
+> aprovou desaprova primeiro ou refaz a rodada. Liberar no futuro segue sendo apagar uma
+> checagem, com a mesma reversibilidade de sempre. Dívida declarada: nenhum desfazer real de
+> orçamentista atravessou ainda; o ato inverso (desfazer uma rejeição) permanece fora de
+> escopo, registrado.
 
 > Implementada em 2026-08-28, com os dois gates de decisão cumpridos no mesmo dia: ADR-0061
 > aceito e pacote de design revisão 1 aprovado (Daniel Campos).
@@ -120,9 +137,10 @@ aconteceu: ela fica no histórico, revogada por um ato tão rastreável quanto o
 1. **O que fazer quando o orçamento já foi aprovado.** Aprovar é gate humano, e a aprovação
    amarra por digest o conteúdo do orçamento; revogar **não** remonta o orçamento, então a
    assinatura continuaria conferindo enquanto os códigos por baixo dela mudaram.
-   > **Estado**: a implementação **recusa** (`ASSIGNMENT_REVOCATION_AFTER_APPROVAL`), como
-   > posição provisória e fail-closed — ver ADR-0061 D7. Isso **não** decide o unknown: se o
-   > dono decidir permitir, apaga-se a checagem. O contrário não é reversível.
+   > **Estado**: a implementação **recusa** (`ASSIGNMENT_REVOCATION_AFTER_APPROVAL`) — e a
+   > recusa deixou de ser provisória: **decidida como definitiva em 2026-09-05** (Daniel
+   > Campos, no aceite da feature). Quem aprovou desaprova primeiro ou refaz a rodada; se um
+   > dia for liberada, continua sendo apagar uma checagem.
 2. **Se a revogação deve reabrir o pacote ou exigir reabertura explícita.** Esta feature
    propõe reabrir junto, por não criar beco sem saída; a alternativa é uma rota de
    reabertura própria, que é mais cerimônia para o mesmo efeito.
@@ -142,9 +160,9 @@ aconteceu: ela fica no histórico, revogada por um ato tão rastreável quanto o
 1. ~~**ADR da semântica da revogação**~~ — [ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md)
    **aceito em 2026-08-28** (Daniel Campos), com as sete decisões.
 2. ~~**Design Approval Package**~~ — revisão 1 **aprovada em 2026-08-28** (Daniel Campos).
-3. **Unknown 1** (revogar depois da aprovação do orçamento) — **continua aberto**. O aceite
-   do ADR incluiu a D7, que **recusa** enquanto a decisão não vem; liberar depois é apagar
-   uma checagem.
+3. ~~**Unknown 1** (revogar depois da aprovação do orçamento)~~ — **fechado em 2026-09-05**
+   (Daniel Campos): a recusa da D7 vira **definitiva**. Quem aprovou desaprova primeiro ou
+   refaz a rodada; liberar no futuro segue sendo apagar uma checagem.
 
 ## References
 

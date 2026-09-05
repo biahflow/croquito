@@ -23,7 +23,8 @@ O que se conferiu antes de afirmar isso, e vale como linha de base:
 | --- | --- |
 | [ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md) — semântica da revogação | **`Accepted`** em 2026-08-28 (Daniel Campos) |
 | [Design Approval Package](mock/README.md) revisões 1 e 2 | **Aprovadas** em 2026-08-28 (Daniel Campos) — a 2 é a superfície da medição |
-| Unknown 1 — revogar depois da aprovação do orçamento | **Aberto**; a implementação recusa provisoriamente (ADR-0061 D7, aceita junto com o ADR) |
+| Unknown 1 — revogar depois da aprovação do orçamento | **Fechado em 2026-09-05** (Daniel Campos, no aceite): a recusa da D7 (`ASSIGNMENT_REVOCATION_AFTER_APPROVAL`) é **definitiva** — quem aprovou desaprova primeiro ou refaz a rodada |
+| Revisão e aceite | ✅ Rodada de revisão de **2026-09-05** (linha a linha sobre o núcleo integrado, `REVIEW_PASS` sem achado); **aceita por ato humano na mesma data** (Daniel Campos, pelo chat), com a dívida declarada de que nenhum desfazer real de orçamentista atravessou |
 
 A implementação foi autorizada pelo dono na mesma conversa e correu **antes** dos dois
 aceites, que vieram sobre o que os artefatos descreviam. Nada nela era irreversível: rota
@@ -74,7 +75,7 @@ duas. Na **medição** (T4, revisão 2 do pacote) a frase do pacote virou lista,
 
 ## O que continua aberto
 
-- **Unknown 1** — o único gate da tabela que continua aberto.
+- ~~**Unknown 1**~~ — **fechado em 2026-09-05**: a recusa da D7 é definitiva (tabela acima).
 - **Desfazer a rejeição de um item** — o ato inverso do outro lado, fora do escopo desta
   feature.
 - **Rollback de revisão** — outra feature, para outro problema.
