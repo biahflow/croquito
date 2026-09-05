@@ -2,7 +2,24 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`DONE`
+
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat). A auditoria do fecho
+> descobriu que as **oito tarefas foram executadas em 2026-08-25 e mergeadas na `main` pelo
+> [PR #29](https://github.com/biahflow/croquito/pull/29)** — enquanto este contrato e o
+> roadmap permaneceram em `READY_FOR_BUILD` por duas semanas (o mesmo padrão código-à-frente
+> das F-046/F-047; a corrente de commits dos BUILD REPORTs foi recuperada e conferida contra
+> a `main`, inclusive o ADR-0051 e a retenção por classe no Terraform, que também já estão
+> lá). O que faltava de verdade saiu em 2026-09-05: a **evidência de navegador**
+> (`INTERFACE_CHANGE`, pacote rev. 3) — painel de evidência com foto avulsa ancorada e valor
+> lido no visor, vínculo do levantamento pela tela, as **duas testemunhas empilhadas com
+> diferença neutra** (0,05 e 0,03; "a testemunha não confirma a cota") e a observação humana
+> registrada com lineage, tudo provado até o banco — e a **revisão focada**, `REVIEW_PASS`.
+> Registro completo em [evidence.md](evidence.md).
+>
+> Dívidas declaradas: a **rodada paga única de classificação** (corpus de 6 fotos rotuladas
+> + autorização ≤ US$ 5, atos do dono), o **apply do Terraform** da retenção e a fumaça em
+> HML (ambiente derrubado por decisão do dono).
 
 > Selecionada por decisão humana de 2026-08-23, saindo de `READY_FOR_SPEC`. Estava registrada
 > sem contrato desde 2026-08-21, quando nasceu por seleção humana na sessão da

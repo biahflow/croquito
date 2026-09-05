@@ -2,7 +2,19 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`DONE`
+
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat). A auditoria do fecho
+> descobriu que a feature já estava **implementada e integrada desde 2026-08-26**
+> ([PR #114](https://github.com/biahflow/croquito/pull/114)) — rotas de plataforma, migração
+> `0020`, teto próprio de 64 MiB, braço por fonte, degradação declarada, telas testadas e a
+> VAL-12 da rastreabilidade corrigida — enquanto este contrato, escrito dois dias depois,
+> permaneceu dizendo `READY_FOR_PLANNING`. A evidência de navegador saiu em 2026-09-05
+> (publicação de tabela e índice pela tela, recálculo degradando com o motivo por extenso) e
+> a revisão focada terminou `REVIEW_PASS`. Registro completo em [evidence.md](evidence.md).
+>
+> Dívidas declaradas: **publicar o índice real** (40,7 MB, no disco do operador) e o
+> **recompute pago real** — os atos de operador que este contrato já listava.
 
 > Nasce em 2026-08-28, de uma pergunta do dono do produto olhando a aba "Códigos" do
 > orçamento: *"aqui você tinha ativado o braço semântico com embeddings, onde foram parar

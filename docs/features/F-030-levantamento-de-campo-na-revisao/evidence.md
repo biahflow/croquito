@@ -1,8 +1,18 @@
 # F-030 — Evidência de execução
 
+Estado: `DONE` — **aceita por ato humano em 2026-09-05**; integrada na `main` desde
+2026-08-25 pelo [PR #29](https://github.com/biahflow/croquito/pull/29).
+
 Review Evidence Package da F-030 (levantamento de campo na revisão do escritório). Fontes
 primárias: os BUILD REPORTs de cada task em [`tasks/`](tasks/), os commits da branch
 `feat/f-030-t5-t7` e os logs de portões da sessão.
+
+> **Nota de 2026-09-05**: o texto abaixo foi escrito na sessão de execução e dizia "branch
+> local, sem push". A integração aconteceu logo depois (PR #29, 2026-08-25, inclusive o
+> ADR-0051 e a retenção por classe no Terraform), mas este documento e o roadmap não foram
+> atualizados — a auditoria do fecho recuperou a corrente de commits pelos SHAs dos BUILD
+> REPORTs e conferiu, arquivo a arquivo, que tudo está na `main`. As seções ao fim registram
+> a evidência de navegador, a revisão e o aceite.
 
 ## Contexto de execução
 
@@ -69,3 +79,49 @@ nesta sessão:
 
 Enquanto esses passos não ocorrem, a F-030 permanece **code-complete com rollout pendente**;
 nenhum estado de conclusão foi fabricado.
+
+## Evidência de navegador (2026-09-05)
+
+`INTERFACE_CHANGE` com Design Approval Package revisão 3 — a evidência renderizada não
+existia, e foi produzida pela bancada delegada pelo dono (Chromium/Playwright, sessão OIDC
+real como `engenheiro.local`, banco próprio `croquito_f030`, floci e worker reais, providers
+**desligados** — nenhuma chamada paga). A semeadura espelhou o e2e da T8 pelo caminho de
+produção: upload do PDF sintético → worker → `seed_review` do bundle amarrado por digest →
+três cotas confirmadas → levantamento COMPLETED → foto avulsa por presign/PUT/confirm →
+leitura de máquina PROCESSED injetada offline → valor confirmado. Capturas em
+`output/f030-fecho/` (retenção local de 7 dias):
+
+1. **O painel "Evidência de campo"**: a foto avulsa com a âncora declarada ("Muro dos
+   fundos, junto ao portão"), o filtro por âncora com a frase de que ele não associa nada, o
+   **valor confirmado em foto** (25,85 m, "confirmado aqui, associado lá") e a **proposta da
+   IA a confirmar** com o lineage por extenso (prompt, schema, provider, modelo).
+2. **O vínculo do levantamento pela tela**: "Levantamento vinculado · 1 foto".
+3. **As duas testemunhas empilhadas** na cota confirmada de 25,90 — visor fotografado
+   25,85 (diferença 0,05) e trena em campo 25,93 (diferença 0,03) — com a copy do pacote
+   palavra por palavra: "a diferença é informação neutra […] não confirma a leitura, não
+   bloqueia a exportação e não escolhe um valor vencedor". Nenhum estado de
+   concordância/alerta, como a decisão de tolerância de 2026-08-23 exige.
+4. **A observação humana sobre a classificação** registrada pela tela ("Confirmo: é muro,
+   não alambrado") e o estado ativo com "Corrigir observação".
+
+Prova no banco: a revisão corrente carrega **2 testemunhas** (`photo_reading` +
+`survey_measurement`) e **1 observação `ACTIVE`** — e o e2e da T8 já provava que nada disso
+move a cena nem os blockers.
+
+## Revisão (2026-09-05)
+
+Focada sobre o código integrado: `FieldWitnessResponse` não tem campo de status/concordância
+— a diferença é subtração pura, com identidade e relógio do servidor; as fontes são um
+`Literal` fechado com `survey_id` obrigatório na medida do app; a associação é ato humano
+explícito (nenhum caminho a infere); e a suíte completa (incluindo
+`test_review_field_witnesses.py`, `test_review_field_observations.py`,
+`test_field_evidence.py` e o e2e) está verde na `main` corrente. **`REVIEW_PASS`**.
+
+## O aceite (2026-09-05)
+
+**Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), com as dívidas
+declaradas: a **rodada paga única de classificação** (corpus humano de 6 fotos rotuladas +
+autorização ≤ US$ 5), o **apply do Terraform** da retenção por classe (ADR-0051 aceito e
+código na `main`; o apply é gate humano) e a **fumaça em HML** (ambiente derrubado por
+decisão do dono). São os gates 1–3 que a própria T8 listou; o gate 4 — este documento, o
+roadmap e o aceite — fecha aqui.
