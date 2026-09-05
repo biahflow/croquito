@@ -2,7 +2,32 @@
 
 ## Status
 
-`IN_PROGRESS`
+`DONE`
+
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), com o **gate 4
+> cumprido com achado** na mesma data. A bancada delegada pelo dono exerceu o ciclo inteiro
+> contra dado real: a praça-bancada do Campo do Toca (catálogo SCO Out/2023 real, matriz
+> transcrita da memória do documento) virou a "praça já feita"; a **autoria** nasceu na tela
+> — acervo "CANTEIRO PADRÃO — DO CAMPO DO TOCA" v1.0.0, 6 parcelas, `SEMI PERIMETRO` e os
+> dois `MESES` citados como parâmetros, o resto constante — e a **aplicação** numa praça
+> nova, com parâmetros dela (prazo 3 meses, semiperímetro 98,50), atravessou prévia → apply
+> → montagem: as 5 linhas de canteiro nasceram **sem digitação de quantidade**
+> (7.387,50 / 3,00 / 3,00 / 2,80 / 468,00), com proveniência `acervo 1.0.0` na matriz.
+>
+> **O achado do gate**: serviço `STANDALONE` era **imprecificável por construção** — o
+> builder do orçamento exigia fonte citada por confirmação de código, o canteiro não tem
+> elemento para confirmar, e o apply não grava citação; nenhum teste montava orçamento com
+> standalone, então o ROI central da feature nunca tinha virado linha. Reparado no laço da
+> revisão ([PR #178](https://github.com/biahflow/croquito/pull/178)): **fonte única na cascata
+> resolve sozinha; com mais de uma tabela a recusa continua** (a escolha é da orçamentista);
+> parcela de elemento nunca usa o fallback — o portão dela fecha antes, por
+> `ESTIMATE_ASSIGNMENT_MISSING`, provado por teste. Registro completo no
+> [evidence.md](evidence.md).
+>
+> Dívida declarada: a autoria e o uso reais **pela orçamentista** seguem como o teste de
+> verdade pendente — quais parcelas entram, com que parâmetros e sob que nome é decisão
+> dela. Achado menor da bancada: [issue #177](https://github.com/biahflow/croquito/issues/177)
+> (chave React duplicada na etapa Códigos).
 
 > Nasce em 2026-08-28, de uma pergunta de ROI do dono do produto: *"o que a gente pode fazer
 > no sistema para acelerar a entrega desse documento pelo orçamentista?"*, feita sobre a
@@ -152,7 +177,9 @@ digitadas de novo a cada praça.
    declarar parâmetros e pré-visualizar. Revisão 1 **aprovada em 2026-08-28** (Daniel Campos).
    A implementação da tela expôs um beco sem saída no próprio pacote — a recusa oferecia
    "remova na pré-visualização" e acontecia antes de a pré-visualização existir —, e a emenda
-   aprovada no mesmo dia produziu a **revisão 2**, que aguarda aprovação:
+   aprovada no mesmo dia produziu a **revisão 2, aprovada na mesma data (2026-08-28)** —
+   este item dizia "aguarda aprovação" por dessincronia com o
+   [roadmap](../../product/ROADMAP.md), corrigida em 2026-09-05:
    [`mock/README.md`](mock/README.md).
 2. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
@@ -160,7 +187,10 @@ digitadas de novo a cada praça.
    [ADR-0060](../../adr/0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md), **`Accepted` em
    2026-08-28** (Daniel Campos): plataforma e tenant como duas origens de um contrato de
    leitura só.
-4. **Autoria do primeiro acervo** — ato da orçamentista, a partir de uma praça já feita.
+4. **Autoria do primeiro acervo** — **cumprido com achado em 2026-09-05** pela bancada
+   delegada pelo dono, a partir da praça-bancada real do Campo do Toca (seção do gate 4 no
+   [evidence.md](evidence.md)); o veredito é do dono, e a autoria real pela orçamentista
+   fica como dívida declarada.
 
 ## References
 
