@@ -76,7 +76,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 | F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
 | F-007 | HIGH | DONE | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) — aceita por ato humano em 2026-08-28; pendem o deploy da imagem nova do Keycloak em homologação e o texto final da tela |
-| F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
+| F-008 | HIGH | READY_FOR_PLANNING | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) — **destravada em 2026-09-05**: a decisão de e-mail foi tomada por ato humano e virou a [Emenda 1 do ADR-0033](../adr/0033-conta-por-convite-e-login-federado.md) — transacional pelo **Google Workspace já pago**, remetente no domínio principal (subdomínio próprio adiado para junto de uma eventual migração de provedor). F-007 e F-006 já `DONE`. Pendem só atos de operador antes do build: senha de app do Workspace e o segredo por Terraform (D7) |
 | F-009 | HIGH | DONE | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
 | F-010 | HIGH | DONE | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
 | F-011 | — | DONE | [Jornada guiada da revisão](../features/F-011-jornada-guiada-da-revisao/feature.md) — já entregue quando foi registrada |
