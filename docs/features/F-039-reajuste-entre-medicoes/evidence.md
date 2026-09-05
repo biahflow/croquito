@@ -1,8 +1,8 @@
 # F-039 — Evidência
 
 Feature: [Reajuste de preços entre medições](feature.md)  
-Estado: `READY_FOR_REVIEW`  
-Data: 2026-08-27
+Estado: `DONE` — revisão `REVIEW_PASS` e aceite por ato humano em 2026-09-05  
+Data: 2026-08-27 · aceite em 2026-09-05
 
 ## Gates humanos
 
@@ -81,6 +81,15 @@ Os números batem com os do pacote aprovado: 62,40 → 65,09 e 118,00 → 123,09
 
 ## Decisões humanas pendentes
 
-- Revisão do PR e merge (o merge é ato humano).
-- Aceite numa medição real com contrato reajustado.
-- Decidir se o fator vira coluna da tabela (desvio 2).
+Todas exercidas:
+
+- ~~Revisão do PR e merge~~ — o merge é o [PR #107](https://github.com/biahflow/croquito/pull/107)
+  (ato humano); a rodada de revisão correu em **2026-09-05**, linha a linha sobre o núcleo
+  já integrado na `main`, e terminou **`REVIEW_PASS`** sem achado de código.
+- ~~Decidir se o fator vira coluna da tabela (desvio 2)~~ — **decidido em 2026-09-05**
+  (Daniel Campos): o fator **fica na linha da declaração**; o desvio é aceito como melhoria,
+  porque o fator é um só para o contrato inteiro e a composição não tem fator único por
+  linha.
+- ~~Aceite~~ — **aceita por ato humano em 2026-09-05**, com a dívida declarada de que
+  nenhuma medição real com contrato reajustado atravessou: o aceite é sobre o mecanismo, e
+  o primeiro uso real é o teste de verdade.

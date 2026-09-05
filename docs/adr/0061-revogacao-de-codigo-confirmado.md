@@ -69,6 +69,10 @@ de códigos por baixo dele mudou, e o portão de exportação — que leria a di
 dono decidir permitir, apaga-se a checagem; o caminho contrário — descobrir depois que uma
 assinatura aponta para um conjunto que mudou — não tem volta.
 
+> **Decidido em 2026-09-05** (Daniel Campos, no aceite da F-045): a recusa é **definitiva**,
+> não mais provisória. Quem aprovou desaprova primeiro ou refaz a rodada; liberar no futuro
+> segue sendo apagar uma checagem, com a mesma reversibilidade descrita acima.
+
 ## Consequências
 
 - Existe, pela primeira vez, um ato que **retira** algo do conjunto corrente. Todo consumidor

@@ -2,7 +2,21 @@
 
 ## Status
 
-`READY_FOR_REVIEW`
+`DONE`
+
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), sobre a rodada de
+> revisão da mesma data: revisão linha a linha do núcleo (composição e truncamento único do
+> `current_unit_price`, o passado intocável via `PeriodProgress.unit_price`, a resolução da
+> declaração na API com identidade/relógio/preços do servidor, o portão comparando com o
+> vigente) terminou **`REVIEW_PASS`**, sem achado de código; os 84 testes dirigidos das
+> áreas tocadas estão verdes na `main` corrente. O código está integrado desde o PR #107.
+>
+> O aceite exerceu a decisão que estava pendente: **o fator fica na linha da declaração**,
+> não como coluna da tabela — o desvio 2 do pacote de design é aceito como melhoria, porque
+> o fator é um só para o contrato inteiro e, com reajustes compostos, não existe um único
+> fator por linha a imprimir. Dívida declarada que o aceite carrega: **nenhuma medição real
+> com contrato reajustado atravessou** — o aceite é sobre o mecanismo, e o primeiro uso real
+> é o teste de verdade.
 
 > Registrada em 2026-08-27, por seleção humana, a partir da
 > [issue #99](https://github.com/biahflow/croquito/issues/99). Três decisões de domínio foram
