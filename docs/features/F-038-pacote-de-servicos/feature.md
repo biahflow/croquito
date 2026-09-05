@@ -2,7 +2,27 @@
 
 ## Status
 
-`IN_PROGRESS`
+`DONE`
+
+> **Aceita por ato humano em 2026-09-05** (Daniel Campos, pelo chat), sobre a bancada
+> delegada que exerceu o que faltava contra o dado real: numa praça-bancada do Campo do
+> Toca com o catálogo SCO Out/2023 **real** (4.964 entradas), o pacote do PISO EM CONCRETO
+> foi montado **na tela** — busca por código, seis "Confirmar código" um a um, "Fechar
+> pacote de serviços" — e gravado até o banco; a matriz transcrita da memória real montou o
+> orçamento com o arquivo como oráculo. Os critérios numéricos do contrato fecharam todos:
+> `PISO EM CONCRETO` gera **6 linhas**; `BP04050350(/)` = **478,74 m²** somando as quatro
+> parcelas rotuladas (inclusive a zerada do campo, mantida como no documento);
+> `BP09100050(B)` = **418,12 m²**; pacote aberto aparece como **pendente** até o fechamento
+> (TC 365,86 e digest estável já verdes por teste, #83/#74). Bancada e capturas em
+> `output/f038-f042-fecho/` (retenção local de 7 dias — dado de cliente não se versiona);
+> o registro completo do exercício está na seção do gate 4 do
+> [evidence da F-042](../F-042-acervo-de-parcelas-de-canteiro/evidence.md), que usou esta
+> praça como a "praça feita".
+>
+> Dívida declarada: **a extração e o aceite reais pela orçamentista** seguem como o teste
+> de verdade pendente — o aceite é sobre o mecanismo provado contra o documento, não sobre
+> o uso em produção pelo ofício. Achado menor da bancada:
+> [issue #177](https://github.com/biahflow/croquito/issues/177).
 
 > Nasce em 2026-08-25, da leitura do orçamento real que a prefeitura envia à empresa antes
 > da obra (Praça Campo do Toca, SCO-PCRJ Out/2023). O dono do produto trouxe o arquivo
@@ -20,9 +40,10 @@
 > Design Approval Package — autoria de matriz e declaração `PARTIAL` — foi **aprovada por
 > ato humano em 2026-08-26** ([mock/rev2/README.md](mock/rev2/README.md)).
 >
-> **O que falta não é código, e por isso o status não é `DONE`**: a extração e o aceite
-> reais do pacote do Campo do Toca pela orçamentista, com a planilha como oráculo do
-> golden. `DONE` é decisão humana, não consequência de merge.
+> Histórico — **o que faltava não era código**: a extração e o aceite reais do pacote do
+> Campo do Toca, com a planilha como oráculo do golden. O aceite de 2026-09-05 exerceu isso
+> pela bancada delegada (bloco acima); o uso real pela orçamentista fica como dívida
+> declarada.
 >
 > Princípio desta feature, fixado pelo dono do produto: **a planilha é a fonte da verdade**.
 > Em qualquer dúvida de modelagem, regra ou preço, o comportamento do arquivo manda —
@@ -175,7 +196,8 @@ O oráculo é o arquivo, não a intuição:
 | Gate | Estado |
 |---|---|
 | ADR-0053 aceito | **Cumprido em 2026-08-25** (Daniel Campos) |
-| Design Approval Package aprovado | **Cumprido em 2026-08-26** (Daniel Campos), revisão 1 |
+| Design Approval Package aprovado | **Cumprido em 2026-08-26** (Daniel Campos), revisão 1; revisão 2 em 2026-08-26 |
+| Extração e aceite contra o documento real | **Cumprido em 2026-09-05** (Daniel Campos, pelo chat) — bancada delegada, critérios numéricos batidos com o arquivo como oráculo; o uso real pela orçamentista é a dívida declarada |
 
 ## References
 

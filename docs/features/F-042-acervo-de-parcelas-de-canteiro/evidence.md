@@ -117,7 +117,54 @@ porque ele era o bloqueio direto da evidência que a T6 exigia.
    data. Ver [`mock/README.md`](mock/README.md).
 2. ~~Aceite do ADR-0059~~ — cumprido em 2026-08-28.
 3. ~~Decisão do unknown 1 (onde o acervo vive)~~ — cumprido em 2026-08-28: ADR-0060 `Accepted`.
-4. **Autoria do primeiro acervo** — **pendente**. É ato da orçamentista, e desde a T6 ele tem
-   caminho na tela: o estado 09 está no ar e foi exercido de ponta a ponta contra uma praça
-   sintética. As cinco parcelas acima são o rascunho que o documento real sustenta; quais
-   entram, com que parâmetros e sob que nome, continua sendo decisão dela.
+4. **Autoria do primeiro acervo** — **cumprido com achado em 2026-09-05** (seção abaixo).
+   A execução foi da bancada delegada pelo dono; o veredito foi dele, pelo chat. A autoria
+   real pela orçamentista — quais parcelas entram, com que parâmetros e sob que nome —
+   segue como a dívida declarada do aceite.
+
+## Human Gate 4 — a autoria e a aplicação, contra dado real (2026-09-05)
+
+**Cumprido com achado por ato humano em 2026-09-05** (Daniel Campos, pelo chat). A bancada
+(Playwright, sessão OIDC real como `orcamentista.local`, banco próprio `croquito_f038f042`,
+API em `127.0.0.1:8010`) exerceu o ciclo inteiro sobre dado real:
+
+1. **A praça feita.** A praça-bancada do Campo do Toca nasceu pelo caminho de produção:
+   catálogo SCO-Rio Out/2023 **real** (4.964 entradas) instalado por upload, takeoff com os
+   elementos reais, pacotes de código decididos (o do PISO na tela, pela bancada da F-038),
+   e a matriz transcrita da memória do documento — inclusive as **6 parcelas de canteiro
+   `STANDALONE`** com os operandos como o arquivo os nomeia (`SEMI PERIMETRO 132,21 ×
+   ALTURA 3 × IDA E VOLTA 1 × DIST 25`, as duas parcelas do VIGIA, etc.).
+2. **O achado.** Ao montar o orçamento da praça feita, o serviço `STANDALONE` recusou com
+   `ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED`: o builder exige fonte citada por confirmação de
+   código, o canteiro não tem elemento para confirmar, e o apply não grava citação. Nenhum
+   teste do repositório montava orçamento com contribuição standalone — o ROI central da
+   feature (24 linhas sem digitação) nunca tinha chegado a uma linha. A própria mensagem
+   de erro carregava o desenho pretendido ("**com mais de uma tabela**, quem escolhe a
+   fonte é o orçamentista").
+3. **O reparo** (laço de revisão, [PR #178](https://github.com/biahflow/croquito/pull/178)):
+   serviço sem NENHUMA confirmação de código e sem parcela de elemento precifica pela
+   **fonte única** da cascata; com mais de uma tabela, a recusa continua; parcela de
+   elemento nunca alcança o fallback — o portão dela fecha antes, por
+   `ESTIMATE_ASSIGNMENT_MISSING` (os três casos têm teste em
+   `tests/valuation/test_estimate.py`). Com o reparo, o orçamento da praça feita saiu com
+   **11 linhas** — as 6 do PISO e as 5 do canteiro, todas batendo a memória real.
+4. **A autoria, na tela** (estado 09): "Guardar como acervo" sobre a praça feita, modo
+   acervo novo, nome "CANTEIRO PADRÃO — DO CAMPO DO TOCA", versão 1.0.0;
+   `SEMI PERIMETRO` e os dois `MESES` citados como parâmetros (`semi_perimetro`,
+   `prazo_meses`), todo o resto constante. O banco confirma o documento: 6 parcelas,
+   `origin` tenant, `source_label` = a praça de origem.
+5. **A aplicação, na tela**, numa praça nova: escolher o acervo (cartão com "6 parcelas ·
+   cita 2 parâmetros de obra"), declarar `semi_perimetro = 98,50` e `prazo_meses = 3`,
+   rever a prévia com a conta viva (`98,50 × 3 × 1 × 25 = 7.387,50`) e aplicar. A matriz
+   da praça nova gravou as 6 parcelas com proveniência `acervo 1.0.0` e os parâmetros
+   resolvidos, e a montagem produziu as 5 linhas de canteiro **sem digitação de
+   quantidade**: 7.387,50 m².km · 3,00 · 3,00 · 2,80 m² · 468,00 h.
+
+Achado menor registrado: [issue #177](https://github.com/biahflow/croquito/issues/177) —
+a etapa Códigos rende o mesmo takeoff item duas vezes (warning de chave duplicada do
+React); o dado gravado não é afetado.
+
+Rastros verificáveis: banco local `croquito_f038f042` (rodadas `01a070b1…` e `01a070bf…`,
+kit em `site_setup_kits`); capturas e scripts das fases em `output/f038-f042-fecho/`
+(retenção local de 7 dias — as quantidades e rótulos vêm do documento real do cliente e
+não são versionados).
