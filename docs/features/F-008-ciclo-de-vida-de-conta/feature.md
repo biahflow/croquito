@@ -2,17 +2,29 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_PLANNING`
+
+> **Destravada em 2026-09-05**: a decisão que a bloqueava foi tomada por ato humano (Daniel
+> Campos, pelo chat) e está registrada como **Emenda 1 do
+> [ADR-0033](../../adr/0033-conta-por-convite-e-login-federado.md)** — o transacional sai
+> pelo **Google Workspace que a empresa já paga**, com remetente no **domínio principal do
+> Workspace**. O subdomínio próprio (`mail.…`) foi considerado e adiado: o Workspace só envia
+> como domínio registrado nele, e o ganho de reputação isolada só aparece em volume — volta à
+> mesa junto com uma eventual migração para provedor transacional dedicado.
+>
+> As outras duas dependências caíram sozinhas: a [F-007](../F-007-tela-de-login/feature.md)
+> está `DONE` (tema de login entregue) e a [F-006](../F-006-hml-conserto/feature.md) também.
+> O ambiente de homologação está derrubado por decisão de custo do dono — o que **não**
+> bloqueia o planejamento nem a implementação; bloqueia só a verificação em HML, que é ato
+> de operador como nas demais features.
+>
+> **O que o dono ainda precisa fazer antes do build** (atos de operador, minutos):
+> criar a senha de app do Workspace (exige verificação em duas etapas na conta) e provisionar
+> o segredo por Terraform — pela D7 do ADR, credencial nunca entra por console.
 
 > Selecionada por decisão humana de 2026-08-18, a partir de uma observação de produto: cada
 > acesso novo e cada senha esquecida viram chamado de suporte. O objetivo é esse — o desenho
 > abaixo é o que a evidência do repositório permite.
->
-> Bloqueada por **uma decisão** e **duas features**: falta escolher o provedor de e-mail e o
-> domínio remetente (sem isso nenhum dos três fluxos existe, e um Planner só poderia inventar);
-> a [F-007](../F-007-tela-de-login/feature.md) entrega o tema sobre o qual estas páginas
-> aparecem; e a [F-006](../F-006-hml-conserto/feature.md) devolve o ambiente onde tudo se
-> verifica. Decidido o provedor e entregue a F-007, o estado passa a `READY_FOR_PLANNING`.
 
 ## Priority
 

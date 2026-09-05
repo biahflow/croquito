@@ -91,6 +91,38 @@ efeitos de custo, entregabilidade e propriedade de DNS que não são de arquitet
 houver escolha, a [F-008](../features/F-008-ciclo-de-vida-de-conta/feature.md) permanece
 `BLOCKED`.
 
+> ### Emenda 1 — a escolha (2026-09-05)
+>
+> **Decidido por ato humano em 2026-09-05** (Daniel Campos, pelo chat): o transacional sai
+> pelo **Google Workspace que a empresa já paga**, com remetente no **domínio principal do
+> Workspace** (`nao-responda@<domínio do Workspace>`). A F-008 deixa de estar `BLOCKED`
+> por esta decisão.
+>
+> **Por que basta.** O volume desta feature é convite, recuperação de senha e verificação —
+> eventos raros, por pessoa. O relay do Workspace entrega 10.000 destinatários/dia por
+> usuário licenciado, e o SMTP autenticado por senha de app, 2.000/dia: as duas ordens de
+> grandeza acima do que uma base de escritórios de engenharia gera. Custo marginal zero, e
+> SPF/DKIM do domínio já publicados pelo próprio Google — que é metade do trabalho de
+> entregabilidade de um provedor novo.
+>
+> **Por que o domínio principal, e não um subdomínio.** A intenção era isolar a reputação do
+> transacional em `mail.biahflow.ai`. O Workspace, porém, só envia como domínio registrado
+> nele: o subdomínio teria de ser adicionado como domínio secundário e verificado no DNS,
+> virando mais um domínio a administrar para um ganho que só aparece em volume. Decisão de
+> 2026-09-05: fica o domínio principal; **o subdomínio próprio volta à mesa junto com a
+> migração de provedor**, se e quando o volume justificar (é o mesmo ato).
+>
+> **O que isso NÃO muda.** A D7 continua valendo integralmente: a senha de app do Workspace
+> é segredo, entra por Terraform no mecanismo do
+> [ADR-0031](0031-segredo-de-homologacao-gerenciado-por-terraform.md), e nunca por ato manual
+> no console do Keycloak. O `smtpServer` dos realms passa a ser configuração versionada.
+>
+> **Limitação declarada.** Provedor de caixa de correio não é provedor transacional: não há
+> webhook de bounce nem painel de entregabilidade por mensagem. Se a operação passar a
+> precisar disso — ou se um convite sumir sem explicação —, a troca por um transacional
+> dedicado (Resend, SES, Postmark) é ADR novo, e a única coisa que muda é o `smtpServer` e
+> o segredo. É por isso que esta escolha é barata de reverter.
+
 ## Alternativas
 
 **Autocadastro aberto.** É o pedido original e a via mais direta para "não gerar chamado".

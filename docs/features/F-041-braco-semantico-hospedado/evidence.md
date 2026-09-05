@@ -72,8 +72,12 @@ verde na `main` corrente no mesmo dia.
 
 ## Dívidas declaradas
 
-- **Publicar o índice REAL** (os 40,7 MB construídos por US$ 0,03 em 2026-08-25, hoje no
-  disco do operador) pela tela de Plataforma — ato do operador.
+- **Publicar o índice REAL** pela tela de Plataforma — ato do operador, com
+  [roteiro próprio](ROTEIRO-ATOS-DE-OPERADOR.md). **Achado de 2026-09-05**: o índice de
+  40,7 MB construído em 2026-08-25 **não existe mais** — foi escrito em `output/`, que tem
+  retenção local de sete dias, e não está em lugar nenhum do disco. Reconstruí-lo custa
+  outra chamada paga (~US$ 0,03). O episódio é a própria tese da feature: enquanto o índice
+  for arquivo no disco de uma pessoa, ele se perde; publicado, é artefato da plataforma.
 - **O recompute pago real**, com o braço híbrido de verdade (o golden mede 12/12 contra
   9/12 do léxico) — primeira rodada é ato humano com autorização de gasto.
 - Nada disso roda em HML enquanto o ambiente estiver derrubado por decisão do dono.
